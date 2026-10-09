@@ -228,7 +228,7 @@ const pickText = () => picked.size ? `${picked.size} order${picked.size > 1 ? 's
 function viewMine() {
   const os = S.orders;
   const me = custOf(profile.customer_id);
-  return `<div class="row spread"><div><h1>My orders</h1><p class="sub">${esc(me?.name || '')}${me?.cid != null ? ` · CID ${esc(me.cid)}` : ''}</p></div><button class="primary" onclick="go('entry')">New order</button></div>
+  return `<div class="row spread"><div>${me?.name ? `<p class="custname">${esc(me.name)}${me.cid != null ? ` <span class="pill">CID ${esc(me.cid)}</span>` : ''}</p>` : ''}<h1>My orders</h1></div><button class="primary" onclick="go('entry')">New order</button></div>
     ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Required</th><th class="num">Lines</th><th>Status</th><th></th></tr></thead><tbody>${os.map(o => orderRow(o, { customer: false })).join('')}</tbody></table></div>`
       : `<div class="card empty">You haven’t placed any orders yet. Press <b>New order</b> to start one.</div>`}`;
 }

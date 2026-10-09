@@ -106,3 +106,6 @@ th.pick,td.pick{width:36px;text-align:center;padding-inline:8px}
 .pickbar{margin:0 0 8px;font-size:13px;color:var(--muted)}
 .pill.emailed{background:var(--sunk);color:var(--accent)}
 #dlg .sumlist li{font-size:12px}
+.custname{font:700 34px/1.15 var(--f-display);color:var(--accent);margin:14px 0 8px;display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.custname .pill{font:600 13px/1 var(--f-body,inherit);padding:5px 10px}
+@media (max-width:520px){.custname{font-size:28px}}
