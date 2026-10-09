@@ -565,7 +565,7 @@ async function formPdf(o, s) {
     let page = 1, by = top; doc.setPage(1);
     const need = h => { if (by + h > BOTTOM) { page++; if (page > doc.getNumberOfPages()) doc.addPage(); doc.setPage(page); by = M + 6; } };
     for (const sec of list) {
-      const n = Math.max(1, sec.packs.length), CW = 15, PW = Math.min(16, (bw - CW - 26) / n), NW = bw - CW - n * PW;
+      const n = Math.max(1, sec.packs.length), CW = 15, PW = Math.min(16, (bw - CW - 30) / n), NW = bw - CW - n * PW;
       doc.setFont('helvetica', 'bold'); doc.setFontSize(5.8);
       const heads = sec.packs.map(pk => doc.splitTextToSize(pk, PW - 1.5));
       doc.setFontSize(8.5); const title = doc.splitTextToSize(sec.name, CW + NW - 2); doc.setFontSize(5.8);
@@ -594,8 +594,10 @@ async function formPdf(o, s) {
     }
     if (page > lastPage || (page === lastPage && by > lastY)) { lastPage = page; lastY = by; }
   };
-  const bw = right.length ? (W - 2 * M - GAP) / 2 : W - 2 * M;
-  block(left, M, bw); if (right.length) block(right, M + bw + GAP, bw);
+  // Share the page width by how many pack columns each side needs, so a 6-column block isn't squeezed.
+  const want = list => 15 + 34 + 13 * Math.max(1, ...list.map(x => x.packs.length)), room = W - 2 * M - GAP;
+  const bl = right.length ? room * want(left) / (want(left) + want(right)) : W - 2 * M;
+  block(left, M, bl); if (right.length) block(right, M + bl + GAP, room - bl);
   doc.setPage(lastPage); doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5);
   text(`${lines} line${lines === 1 ? '' : 's'} · ${units} in total · Grey boxes are not available`, M, Math.min(lastY + 3, BOTTOM + 6));
   return { buf: doc.output('arraybuffer'), lines };
