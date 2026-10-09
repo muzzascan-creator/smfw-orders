@@ -4,7 +4,7 @@
 const cfg = window.SMFW_CONFIG || {};
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
 
-const S = { customers: [], suppliers: [], products: [], orders: [], profiles: [] };
+const S = { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], emailsMissing: false };
 let session = null, profile = null, view = null, draft = null, listFilter = 'all', search = '', authMode = 'signin', authMsg = '', ordersChannel = null;
 
 // ---------- helpers ----------
@@ -43,9 +43,12 @@ async function loadAll() {
   const prods = sb.from('products').select('id,supplier_id,code,name,section,sort,active,product_packs(id,name,sid,outer_multiple,available,sort)');
   const orders = sb.from('orders').select('*').order('number', { ascending: false });
   if (isAdmin()) {
-    const [c, s, p, o, u] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at')]);
+    const [c, s, p, o, u, m] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort')]);
     for (const r of [c, s, p, o, u]) if (r.error) toast(friendly(r.error));
     S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; S.orders = o.data || []; S.profiles = u.data || [];
+    // The order-emails table arrives with migrations/002; until it is run, fall back to the addresses on each supplier.
+    S.emailsMissing = !!m.error; S.emails = m.data || [];
+    if (m.error && !['42P01', 'PGRST205'].includes(m.error.code)) toast(friendly(m.error));
   } else {
     const [c, p, o] = await Promise.all([sb.from('customers').select('id,cid,name'), prods.eq('active', true), orders]);
     for (const r of [c, p, o]) if (r.error) toast(friendly(r.error));
@@ -158,7 +161,7 @@ function renderPending() {
 // ---------- navigation ----------
 function navItems() {
   return isAdmin()
-    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['customers', 'Customers'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['users', 'Logins']]
+    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['customers', 'Customers'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['emails', 'Emails'], ['users', 'Logins']]
     : [['mine', 'My orders'], ['entry', 'New order']];
 }
 function inboxCount() { return S.orders.filter(o => o.status === 'submitted').length; }
@@ -170,7 +173,7 @@ $('#nav').addEventListener('click', async e => { const b = e.target.closest('but
 function render() {
   const nav = $('#nav');
   nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" aria-current="${v === view && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
-  const views = { inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, suppliers: viewSuppliers, users: viewUsers };
+  const views = { inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers };
   if (!views[view] || (!isAdmin() && !['mine', 'entry'].includes(view))) view = isAdmin() ? 'inbox' : 'mine';
   if (view === 'entry' && !draft) draft = blankOrder();
   $('#app').innerHTML = views[view]();
@@ -370,7 +373,7 @@ function viewSuppliers() {
   const ss = S.suppliers.slice().sort(byName);
   return `<div class="row spread"><div><h1>Suppliers</h1><p class="sub">Who you buy from. Customers never see this list.</p></div><button class="primary" onclick="editSupplier()">Add supplier</button></div>
   ${ss.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Order emails</th><th>Cut-off</th><th class="num">Products</th><th></th></tr></thead><tbody>
-    ${ss.map(s => `<tr><td><b>${esc(s.name)}</b>${s.notes ? `<div class="muted" style="font-size:12px">${esc(s.notes)}</div>` : ''}</td><td class="mono">${(s.emails || []).map(esc).join('<br>')}</td><td>${esc(s.cutoff)}</td><td class="num">${S.products.filter(p => p.supplier_id === s.id).length}</td><td class="num"><button class="ghost" onclick="editSupplier('${s.id}')">Edit</button></td></tr>`).join('')}
+    ${ss.map(s => `<tr><td><b>${esc(s.name)}</b>${s.notes ? `<div class="muted" style="font-size:12px">${esc(s.notes)}</div>` : ''}</td><td class="mono">${recipientsHtml(s)}</td><td>${esc(s.cutoff)}</td><td class="num">${S.products.filter(p => p.supplier_id === s.id).length}</td><td class="num"><button class="ghost" onclick="editSupplier('${s.id}')">Edit</button></td></tr>`).join('')}
   </tbody></table></div>` : `<div class="card empty">No suppliers yet.</div>`}`;
 }
 function viewProducts() {
@@ -396,6 +399,63 @@ function viewUsers() {
     <td>${u.approved ? '<span class="pill complete">Active</span>' : '<span class="pill draft">Waiting</span>'}</td>
     <td class="num">${u.id === profile.id ? '<span class="muted">You</span>' : `<button class="ghost" onclick="editLogin('${u.id}')">${u.approved ? 'Edit' : 'Approve'}</button>`}</td></tr>`).join('')}
   </tbody></table></div>`;
+}
+
+// ---------- admin: order emails ----------
+// Each supplier has many outgoing addresses. Each one goes as To, CC or BCC and can be switched off without deleting it.
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const SEND_AS = { to: 'To', cc: 'CC', bcc: 'BCC' };
+const emailsOf = sid => S.emails.filter(e => e.supplier_id === sid).sort((a, b) => a.sort - b.sort);
+function recipientsHtml(s) {
+  if (S.emailsMissing) return (s.emails || []).map(esc).join('<br>');
+  const on = emailsOf(s.id).filter(e => e.active);
+  return on.length ? on.map(e => `${e.send_as === 'to' ? '' : `<span class="muted">${SEND_AS[e.send_as]}</span> `}${esc(e.email)}`).join('<br>') : '<span class="muted">None yet</span>';
+}
+function emailRow(e = {}) {
+  return `<div class="emrow" data-id="${esc(e.id || '')}">
+    <input name="eaddr" type="email" placeholder="name@supplier.com.au" aria-label="Email address" value="${esc(e.email ?? '')}" class="mono">
+    <input name="ename" placeholder="Who (optional)" aria-label="Who this is" value="${esc(e.name ?? '')}">
+    <select name="eas" aria-label="Send as">${Object.entries(SEND_AS).map(([v, l]) => `<option value="${v}" ${(e.send_as || 'to') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <label class="emon"><input type="checkbox" name="eon" ${e.active === false ? '' : 'checked'}> Send</label>
+    <button type="button" class="ghost" title="Remove this address" aria-label="Remove this address" onclick="this.parentElement.remove()">✕</button></div>`;
+}
+function emailSummary(sid) {
+  const on = emailsOf(sid).filter(e => e.active);
+  if (!on.length) return 'No addresses switched on, so this supplier’s orders have nowhere to go yet.';
+  return Object.keys(SEND_AS).map(k => { const l = on.filter(e => e.send_as === k); return l.length ? `<b>${SEND_AS[k]}:</b> ${l.map(e => esc(e.email)).join(', ')}` : ''; }).filter(Boolean).join(' · ');
+}
+function viewEmails() {
+  const head = `<h1>Order emails</h1><p class="sub">Where each supplier’s completed orders are sent. Add as many addresses as you need, choose To, CC or BCC for each, and untick <b>Send</b> to pause one without deleting it.</p>`;
+  if (S.emailsMissing) return head + `<div class="card"><p style="margin-top:0"><b>One step first.</b> This section needs a new table in your database. In Supabase open <b>SQL Editor</b>, paste in <a href="https://raw.githubusercontent.com/muzzascan-creator/smfw-orders/main/supabase/migrations/002_supplier_emails.sql" target="_blank" rel="noopener">002_supplier_emails.sql</a> and press <b>Run</b>, then reload this page. Your existing supplier addresses are carried across.</p></div>`;
+  const ss = S.suppliers.slice().sort(byName);
+  if (!ss.length) return head + `<div class="card empty">Add a supplier first, under <b>Suppliers</b>.</div>`;
+  return head + ss.map(s => `<section class="card" style="margin-bottom:14px"><div class="row spread"><h2>${esc(s.name)}</h2><span class="muted" style="font-size:13px">${esc(s.cutoff || '')}</span></div>
+    <p class="muted" style="font-size:13px;margin:6px 0 12px" id="emsum-${s.id}">${emailSummary(s.id)}</p>
+    <div class="grid" style="gap:8px" id="emrows-${s.id}">${emailsOf(s.id).map(emailRow).join('') || emailRow()}</div>
+    <div class="row spread" style="margin-top:12px"><button type="button" onclick="document.getElementById('emrows-${s.id}').insertAdjacentHTML('beforeend', emailRow())">Add address</button>
+    <button type="button" class="primary" onclick="saveEmails('${s.id}', this)">Save</button></div></section>`).join('');
+}
+async function saveEmails(sid, btn) {
+  const rows = [...document.querySelectorAll(`#emrows-${sid} .emrow`)].map((r, i) => ({
+    id: r.dataset.id || null, email: r.querySelector('[name=eaddr]').value.trim().toLowerCase(), name: r.querySelector('[name=ename]').value.trim(),
+    send_as: r.querySelector('[name=eas]').value, active: r.querySelector('[name=eon]').checked, sort: i + 1 })).filter(r => r.email);
+  const bad = rows.find(r => !EMAIL_RE.test(r.email)); if (bad) { toast('Check this email address: ' + bad.email); return; }
+  const dup = rows.find((r, i) => rows.findIndex(x => x.email === r.email) !== i); if (dup) { toast(dup.email + ' is listed twice.'); return; }
+  btn.disabled = true;
+  const keep = new Set(rows.filter(r => r.id).map(r => r.id));
+  const gone = emailsOf(sid).filter(e => !keep.has(e.id)).map(e => e.id);
+  let ok = !gone.length || await run(sb.from('supplier_emails').delete().in('id', gone));
+  // Park changed addresses on placeholders first, so swapping two addresses doesn't trip the one-address-per-supplier rule.
+  const changed = rows.filter(r => r.id && emailsOf(sid).find(e => e.id === r.id)?.email !== r.email);
+  for (const r of changed) if (ok) ok = await run(sb.from('supplier_emails').update({ email: `moving-${r.id}@placeholder.invalid` }).eq('id', r.id));
+  for (const r of rows) {
+    if (!ok) break;
+    const body = { supplier_id: sid, email: r.email, name: r.name || null, send_as: r.send_as, active: r.active, sort: r.sort };
+    ok = await run(r.id ? sb.from('supplier_emails').update(body).eq('id', r.id) : sb.from('supplier_emails').insert(body));
+  }
+  btn.disabled = false;
+  await loadAll(); render();
+  if (ok) toast('Order emails saved');
 }
 
 // ---------- edit dialogs ----------
@@ -433,13 +493,17 @@ function editSupplier(id) {
   const s = id ? S.suppliers.find(x => x.id === id) : {};
   openDialog(id ? 'Edit supplier' : 'Add supplier',
     fld('name', 'Supplier name', s.name, 'text', 'required') +
-    `<label class="f">Order email addresses (one per line)<textarea name="emails" id="f-emails">${esc((s.emails || []).join('\n'))}</textarea></label>` +
+    (S.emailsMissing ? `<label class="f">Order email addresses (one per line)<textarea name="emails" id="f-emails">${esc((s.emails || []).join('\n'))}</textarea></label>`
+      : `<p class="muted" style="margin:0;font-size:13px">Order email addresses are set under <b>Emails</b>.</p>`) +
     fld('cutoff', 'Order cut-off', s.cutoff, 'text', 'placeholder="e.g. Orders by 9am for same-day processing"') +
     `<label class="f">Notes<textarea name="notes" id="f-notes">${esc(s.notes)}</textarea></label>`,
     f => {
-      const emails = f.get('emails').split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
-      const bad = emails.find(e => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)); if (bad) { toast('Check this email address: ' + bad); return false; }
-      const row = { name: f.get('name').trim(), emails, cutoff: f.get('cutoff').trim(), notes: f.get('notes').trim() };
+      const row = { name: f.get('name').trim(), cutoff: f.get('cutoff').trim(), notes: f.get('notes').trim() };
+      if (S.emailsMissing) {
+        const emails = f.get('emails').split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
+        const bad = emails.find(e => !EMAIL_RE.test(e)); if (bad) { toast('Check this email address: ' + bad); return false; }
+        row.emails = emails;
+      }
       return run(id ? sb.from('suppliers').update(row).eq('id', id) : sb.from('suppliers').insert(row), 'Supplier saved');
     },
     id && !S.products.some(p => p.supplier_id === id) ? () => run(sb.from('suppliers').delete().eq('id', id), 'Supplier deleted') : null);

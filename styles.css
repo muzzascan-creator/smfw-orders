@@ -98,3 +98,6 @@ dialog::backdrop{background:rgb(0 0 0 / .35)}
 .packrow{display:grid;grid-template-columns:80px minmax(0,1fr) 80px 130px 32px;gap:8px;align-items:center}
 @media (max-width:520px){.packrow{grid-template-columns:70px minmax(0,1fr) 64px;}.packrow select{grid-column:1/3}}
 .packhead{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.emrow{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) 80px 76px 32px;gap:8px;align-items:center}
+.emon{display:flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap}
+@media (max-width:620px){.emrow{grid-template-columns:minmax(0,1fr) 80px 32px;grid-template-areas:"a s x" "n o o"}.emrow [name=eaddr]{grid-area:a}.emrow [name=ename]{grid-area:n}.emrow select{grid-area:s}.emrow .emon{grid-area:o}.emrow button{grid-area:x}.emrow{padding-bottom:10px;border-bottom:1px solid var(--line)}}

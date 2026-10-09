@@ -30,3 +30,4 @@ To give another staff member full access, approve their login with the role **Ad
 | `styles.css` | Look and layout, light and dark |
 | `config.js` | Which Supabase project to use |
 | `supabase/schema.sql` | Tables, logins and access rules |
+| `supabase/migrations/` | Changes to run on an existing database, in number order |
