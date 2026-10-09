@@ -119,6 +119,11 @@ begin
     new.source := 'customer';
     new.customer_id := public.my_customer_id();
     if tg_op = 'INSERT' then new.created_by := auth.uid(); else new.created_by := old.created_by; new.number := old.number; end if;
+    -- Customers order Organic only; Conventional is ordered through the admin app.
+    if exists (select 1 from jsonb_array_elements(new.lines) l join public.products p on p.id::text = l->>'product_id'
+               where p.product_group <> 'Organic') then
+      raise exception 'Conventional products can only be ordered by SMFW';
+    end if;
   end if;
   return new;
 end $$;
@@ -142,11 +147,11 @@ create policy admin_all on public.product_packs for all using (public.is_admin()
 create policy admin_all on public.profiles for all using (public.is_admin()) with check (public.is_admin());
 create policy admin_all on public.orders for all using (public.is_admin()) with check (public.is_admin());
 
--- Approved customers see the active product list, but not suppliers.
-create policy customer_read on public.products for select using (active and public.my_customer_id() is not null);
+-- Approved customers see the active Organic product list, but not suppliers. Conventional is admin only.
+create policy customer_read on public.products for select using (active and product_group = 'Organic' and public.my_customer_id() is not null);
 create policy customer_read on public.product_packs for select using (
   public.my_customer_id() is not null
-  and exists (select 1 from public.products p where p.id = product_id and p.active));
+  and exists (select 1 from public.products p where p.id = product_id and p.active and p.product_group = 'Organic'));
 
 -- Customers see their own business record and their own login.
 create policy customer_read_own on public.customers for select using (id = public.my_customer_id());

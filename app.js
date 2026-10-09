@@ -300,10 +300,9 @@ function viewEntry() {
       return `<section class="supplier-block"><div class="supplier-head"><h2>${esc(s.name)}</h2><span>${esc(s.cutoff || '')}</span></div><div class="sections">${gridHtml(secs, dis)}</div></section>`;
     }).join('') || `<div class="card empty" style="margin-top:16px">No ${g} products are set up yet. Add them under <b>Products</b>.</div>`;
   } else {
-    blocks = GROUPS.map(g => {
-      const secs = sectionsFor(S.products.filter(p => groupOf(p) === g)); if (!secs.length) return '';
-      return `<section class="supplier-block"><div class="supplier-head"><h2>${g}</h2><span>Fill in the boxes you need. Grey boxes aren’t available.</span></div><div class="sections">${gridHtml(secs, dis)}</div></section>`;
-    }).join('');
+    // Customers only ever order the Organic range; Conventional is ordered through the admin app.
+    const secs = sectionsFor(S.products.filter(p => groupOf(p) === 'Organic'));
+    blocks = secs.length ? `<section class="supplier-block"><div class="supplier-head"><h2>Organic</h2><span>Fill in the boxes you need. Grey boxes aren’t available.</span></div><div class="sections">${gridHtml(secs, dis)}</div></section>` : '';
   }
   const custField = admin
     ? `<label class="f">Customer<select id="e-cust" ${dis}><option value="">Choose a customer…</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === d.customer_id ? 'selected' : ''}>${c.cid != null ? esc(c.cid) + ' · ' : ''}${esc(c.name)}</option>`).join('')}</select></label>
