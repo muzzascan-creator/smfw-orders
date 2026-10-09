@@ -4,8 +4,11 @@
 const cfg = window.SMFW_CONFIG || {};
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
 
-const S = { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], emailsMissing: false };
+const S = { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], emailsMissing: false, groupsMissing: false };
+const GROUPS = ['Organic', 'Conventional'];
+const groupOf = p => p.product_group || 'Organic';
 let session = null, profile = null, view = null, draft = null, listFilter = 'all', search = '', authMode = 'signin', authMsg = '', ordersChannel = null;
+let groupFilter = 'all';
 const picked = new Set(); // orders ticked on the Orders tab for emailing
 
 // ---------- helpers ----------
@@ -41,7 +44,11 @@ async function run(promise, okMsg) { const { data, error } = await promise; if (
 
 // ---------- data ----------
 async function loadAll() {
-  const prods = sb.from('products').select('id,supplier_id,code,name,section,sort,active,product_packs(id,name,sid,outer_multiple,available,sort)');
+  // product_group arrives with migrations/004; until it is run, load without it and treat everything as Organic.
+  const cols = g => `id,supplier_id,code,name,section,sort,active${g ? ',product_group' : ''},product_packs(id,name,sid,outer_multiple,available,sort)`;
+  let probe = await sb.from('products').select('product_group').limit(1);
+  S.groupsMissing = !!probe.error && /product_group/.test(probe.error.message || '');
+  const prods = sb.from('products').select(cols(!S.groupsMissing));
   const orders = sb.from('orders').select('*').order('number', { ascending: false });
   if (isAdmin()) {
     const [c, s, p, o, u, m] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort')]);
@@ -282,13 +289,15 @@ function viewEntry() {
   const dis = editable ? '' : 'disabled';
   let blocks;
   if (admin) {
-    blocks = S.suppliers.slice().sort(byName).map(s => {
-      const secs = sectionsFor(S.products.filter(p => p.supplier_id === s.id)); if (!secs.length) return '';
-      return `<section class="supplier-block"><div class="supplier-head"><h2>${esc(s.name)}</h2><span>${esc(s.cutoff || '')}</span></div><div class="sections">${gridHtml(secs, dis)}</div></section>`;
-    }).join('');
+    blocks = S.suppliers.slice().sort(byName).flatMap(s => GROUPS.map(g => {
+      const secs = sectionsFor(S.products.filter(p => p.supplier_id === s.id && groupOf(p) === g)); if (!secs.length) return '';
+      return `<section class="supplier-block"><div class="supplier-head"><h2>${esc(s.name)} <span class="pill grp-${g.toLowerCase()}">${g}</span></h2><span>${esc(s.cutoff || '')}</span></div><div class="sections">${gridHtml(secs, dis)}</div></section>`;
+    })).join('');
   } else {
-    const secs = sectionsFor(S.products);
-    blocks = secs.length ? `<section class="supplier-block"><div class="supplier-head"><h2>Order form</h2><span>Fill in the boxes you need. Grey boxes aren’t available.</span></div><div class="sections">${gridHtml(secs, dis)}</div></section>` : '';
+    blocks = GROUPS.map(g => {
+      const secs = sectionsFor(S.products.filter(p => groupOf(p) === g)); if (!secs.length) return '';
+      return `<section class="supplier-block"><div class="supplier-head"><h2>${g}</h2><span>Fill in the boxes you need. Grey boxes aren’t available.</span></div><div class="sections">${gridHtml(secs, dis)}</div></section>`;
+    }).join('');
   }
   const custField = admin
     ? `<label class="f">Customer<select id="e-cust" ${dis}><option value="">Choose a customer…</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === d.customer_id ? 'selected' : ''}>${c.cid != null ? esc(c.cid) + ' · ' : ''}${esc(c.name)}</option>`).join('')}</select></label>
@@ -397,15 +406,19 @@ function viewSuppliers() {
 }
 function viewProducts() {
   const blocks = S.suppliers.slice().sort(byName).map(s => {
-    const ps = S.products.filter(p => p.supplier_id === s.id).sort(bySort); if (!ps.length) return '';
-    return `<h2 style="margin:20px 0 8px">${esc(s.name)}</h2><div class="tablewrap"><table><thead><tr><th>Code</th><th>Product</th><th>Section</th><th>Pack types · SID · outer</th><th></th></tr></thead><tbody>
-    ${ps.map(p => `<tr${p.active === false ? ' class="muted"' : ''}><td class="mono">${esc(p.code)}</td><td>${esc(p.name)}${p.active === false ? ' <span class="pill">Hidden</span>' : ''}</td><td>${esc(p.section)}</td>
+    const ps = S.products.filter(p => p.supplier_id === s.id && (groupFilter === 'all' || groupOf(p) === groupFilter)).sort(bySort); if (!ps.length) return '';
+    return `<h2 style="margin:20px 0 8px">${esc(s.name)}</h2><div class="tablewrap"><table><thead><tr><th>Code</th><th>Product</th><th>Group</th><th>Section</th><th>Pack types · SID · outer</th><th></th></tr></thead><tbody>
+    ${ps.map(p => `<tr${p.active === false ? ' class="muted"' : ''}><td class="mono">${esc(p.code)}</td><td>${esc(p.name)}${p.active === false ? ' <span class="pill">Hidden</span>' : ''}</td><td><span class="pill grp-${groupOf(p).toLowerCase()}">${groupOf(p)}</span></td><td>${esc(p.section)}</td>
       <td>${(p.product_packs || []).map(k => `<div><span class="mono muted">SID ${esc(k.sid)}</span> ${esc(k.name)} <span class="mono muted">· outer ${outerOf(k)}</span>${k.available ? '' : ' <span class="pill">Not available</span>'}</div>`).join('')}</td>
       <td class="num"><button class="ghost" onclick="editProduct('${p.id}')">Edit</button></td></tr>`).join('')}
     </tbody></table></div>`;
   }).join('');
+  const n = g => g === 'all' ? S.products.length : S.products.filter(p => groupOf(p) === g).length;
+  const filters = `<div class="row" style="margin-bottom:4px">${['all', ...GROUPS].map(g => `<button class="${groupFilter === g ? 'primary' : ''}" onclick="groupFilter='${g}';render()">${g === 'all' ? 'All' : g} (${n(g)})</button>`).join('')}</div>`;
+  const note = S.groupsMissing ? `<div class="banner">To use the Organic and Conventional groups, run <a href="https://raw.githubusercontent.com/muzzascan-creator/smfw-orders/main/supabase/migrations/004_product_groups.sql" target="_blank" rel="noopener">004_product_groups.sql</a> in Supabase’s SQL Editor, then reload. Until then every product counts as Organic.</div>` : '';
   return `<div class="row spread"><div><h1>Products</h1><p class="sub">Grouped by supplier, in the same sections as their order forms.</p></div>${S.suppliers.length ? `<button class="primary" onclick="editProduct()">Add product</button>` : ''}</div>
-  ${blocks || `<div class="card empty">No products yet.${S.suppliers.length ? '' : ' Add a supplier first.'}</div>`}`;
+  ${note}${S.products.length ? filters : ''}
+  ${blocks || `<div class="card empty">${S.products.length ? 'No products in this group yet.' : `No products yet.${S.suppliers.length ? '' : ' Add a supplier first.'}`}</div>`}`;
 }
 function viewUsers() {
   const us = S.profiles.slice().sort((a, b) => (a.approved - b.approved) || (a.email || '').localeCompare(b.email || ''));
@@ -500,7 +513,9 @@ async function formPdf(o, s) {
   const doc = new window.jspdf.jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const W = 210, M = 10, BOTTOM = 284, GAP = 4;
   const qty = {}; (o.lines || []).forEach(l => { if (l.pack_id) qty[l.pack_id] = l.qty; });
-  const secs = sectionsFor(S.products.filter(p => p.supplier_id === s.id));
+  // Organic sections first, then Conventional; when a supplier has both, section titles say which group they belong to.
+  const own = S.products.filter(p => p.supplier_id === s.id), mixed = new Set(own.filter(p => p.active !== false).map(groupOf)).size > 1;
+  const secs = GROUPS.flatMap(g => sectionsFor(own.filter(p => groupOf(p) === g)).map(x => mixed && !x.name.toLowerCase().startsWith(g.toLowerCase()) ? { ...x, name: `${g} ${x.name}` } : x));
   // Two side-by-side blocks: sections fill the left until it holds about half the rows.
   const rowsOf = x => x.products.length + 2, half = secs.reduce((a, x) => a + rowsOf(x), 0) / 2;
   const left = [], right = []; let acc = 0;
@@ -701,6 +716,7 @@ function editProduct(id) {
   openDialog(id ? 'Edit product' : 'Add product',
     `<label class="f">Supplier<select name="supplier_id" id="f-supplier_id">${S.suppliers.slice().sort(byName).map(s => `<option value="${s.id}" ${s.id === p.supplier_id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label>
     <div class="grid g2">${fld('code', 'Supplier code', p.code)}${fld('name', 'Product name', p.name, 'text', 'required')}</div>
+    ${S.groupsMissing ? '' : `<label class="f">Product group<select name="product_group" id="f-product_group">${GROUPS.map(g => `<option ${groupOf(p) === g ? 'selected' : ''}>${g}</option>`).join('')}</select></label>`}
     <label class="f">Section on the form<input name="section" id="f-section" list="seclist" value="${esc(p.section)}"><datalist id="seclist">${secs.map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>
     <div class="grid" style="gap:6px"><div class="packrow packhead"><span>SID</span><span>Pack type (match the form’s column heading)</span><span>Outer</span><span>Availability</span><span></span></div>
       <div class="grid" style="gap:6px" id="packrows">${packs.map(packRow).join('')}</div>
@@ -723,6 +739,7 @@ function editProduct(id) {
       }
       if (!rows.length) { toast('Add at least one pack type.'); return false; }
       const prow = { supplier_id: f.get('supplier_id'), code: f.get('code').trim(), name, section: f.get('section').trim(), sort: f.get('sort') === '' ? 999 : +f.get('sort'), active: f.get('active') === '1' };
+      if (!S.groupsMissing) prow.product_group = f.get('product_group');
       const saved = await run(id ? sb.from('products').update(prow).eq('id', id).select().single() : sb.from('products').insert(prow).select().single());
       if (!saved) return false;
       const pid = saved.id;

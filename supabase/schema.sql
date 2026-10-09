@@ -32,6 +32,7 @@ create table public.products (
   section text,
   sort integer not null default 999,
   active boolean not null default true,
+  product_group text not null default 'Organic' check (product_group in ('Organic','Conventional')),
   created_at timestamptz not null default now()
 );
 
