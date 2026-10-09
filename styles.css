@@ -109,3 +109,14 @@ th.pick,td.pick{width:36px;text-align:center;padding-inline:8px}
 .custname{font:700 34px/1.15 var(--f-display);color:var(--accent);margin:14px 0 8px;display:flex;flex-wrap:wrap;align-items:center;gap:10px}
 .custname .pill{font:600 13px/1 var(--f-body,inherit);padding:5px 10px}
 @media (max-width:520px){.custname{font-size:28px}}
+/* iPhone: 16px text stops Safari zooming into fields; respect the notch and home bar. */
+@media (hover:none) and (pointer:coarse){input,select,textarea{font-size:16px}.sec td.q input{width:64px;padding:8px 4px}nav button{padding:12px 12px}}
+body{padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px);padding-bottom:env(safe-area-inset-bottom,0px);-webkit-text-size-adjust:100%}
+.hometip{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--accent-soft);color:var(--fg);border-radius:8px;padding:8px 8px 8px 14px;margin:0 0 12px;font-size:14px}
+@media (max-width:600px){
+  nav{order:3;flex-basis:100%}
+  .who{padding-bottom:0;padding-top:4px}
+  .tablewrap td,.tablewrap th{white-space:nowrap;padding:8px 10px}
+  .tablewrap .lines,.tablewrap .openc{display:none}
+}
+tr.rowlink{cursor:pointer}tr.rowlink:hover td{background:var(--sunk)}

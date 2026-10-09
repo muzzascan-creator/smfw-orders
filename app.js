@@ -185,21 +185,21 @@ function render() {
 // ---------- order lists ----------
 function orderRow(o, opts = {}) {
   const c = custOf(o.customer_id);
-  return `<tr>
+  return `<tr class="rowlink" onclick="openOrder('${o.id}')">
     <td class="mono">${esc(orderNo(o.number))}</td>
     ${opts.customer === false ? '' : `<td>${c?.cid != null ? `<span class="mono muted">${esc(c.cid)}</span> ` : ''}${esc(c?.name || 'Unknown customer')}</td>`}
     <td>${esc(fmtDate(o.required_date))}</td>
     ${opts.sent ? `<td>${esc(fmtWhen(o.submitted_at))}</td>` : ''}
     ${opts.source ? `<td>${o.source === 'customer' ? 'Customer' : 'SMFW'}</td>` : ''}
-    <td class="num">${(o.lines || []).length}</td>
+    <td class="num lines">${(o.lines || []).length}</td>
     <td><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>${opts.pick && o.emailed_at ? ` <span class="pill emailed" title="Emailed ${esc(fmtWhen(o.emailed_at))}">Emailed</span>` : ''}</td>
-    <td class="num"><button class="ghost" onclick="openOrder('${o.id}')">Open</button></td>
-    ${opts.pick ? `<td class="pick"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
+    <td class="num openc"><button class="ghost" onclick="event.stopPropagation();openOrder('${o.id}')">Open</button></td>
+    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
 }
 function viewInbox() {
   const os = S.orders.filter(o => o.status === 'submitted').sort((a, b) => (a.submitted_at || '').localeCompare(b.submitted_at || ''));
   return `<h1>Inbox</h1><p class="sub">Orders customers have sent that still need processing. Open one to check it and mark it complete.</p>
-    ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>Sent</th><th>From</th><th class="num">Lines</th><th>Status</th><th></th></tr></thead><tbody>${os.map(o => orderRow(o, { sent: true, source: true })).join('')}</tbody></table></div>`
+    ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>Sent</th><th>From</th><th class="num lines">Lines</th><th>Status</th><th class="openc"></th></tr></thead><tbody>${os.map(o => orderRow(o, { sent: true, source: true })).join('')}</tbody></table></div>`
       : `<div class="card empty">No orders waiting. New customer orders appear here as soon as they’re sent.</div>`}`;
 }
 function viewOrders() {
@@ -214,7 +214,7 @@ function viewOrders() {
       <input class="search" id="osearch" placeholder="Search order no., customer or CID" value="${esc(search)}">
     </div>
     ${os.length ? `<div class="pickbar row spread"><span id="pickcount">${pickText()}</span><div class="row"><button id="pickclear" ${picked.size ? '' : 'hidden'} onclick="picked.clear();render()">Clear</button><button class="primary" id="pickmail" ${picked.size ? '' : 'disabled'} onclick="emailPicked()">Email selected</button></div></div>
-      <div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num">Lines</th><th>Status</th><th></th><th class="pick"><input type="checkbox" id="pickall" aria-label="Select all orders shown" ${os.every(o => picked.has(o.id)) ? 'checked' : ''}></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true, pick: true })).join('')}</tbody></table></div>`
+      <div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num lines">Lines</th><th>Status</th><th class="openc"></th><th class="pick"><input type="checkbox" id="pickall" aria-label="Select all orders shown" ${os.every(o => picked.has(o.id)) ? 'checked' : ''}></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true, pick: true })).join('')}</tbody></table></div>`
       : `<div class="card empty">${S.orders.length ? 'No orders match this filter.' : 'No orders yet.'}</div>`}`;
 }
 function wireOrderSearch() {
@@ -225,11 +225,20 @@ function wireOrderSearch() {
   const all = $('#pickall'); if (all) all.onchange = () => { boxes.forEach(b => { b.checked = all.checked; all.checked ? picked.add(b.dataset.pick) : picked.delete(b.dataset.pick); }); sync(); };
 }
 const pickText = () => picked.size ? `${picked.size} order${picked.size > 1 ? 's' : ''} selected` : 'Tick orders on the right to email them to the supplier.';
+// On an iPhone or iPad in Safari, suggest adding the site to the home screen so it opens like an app.
+const isIos = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+function homeTip() {
+  let hidden = false; try { hidden = localStorage.getItem('smfw-hometip') === 'off'; } catch (e) {}
+  if (hidden || !isIos() || isStandalone()) return '';
+  return `<div class="hometip" id="hometip"><span>Tip: tap <b>Share</b> <span aria-hidden="true">⬆︎</span> then <b>Add to Home Screen</b> to open SMFW Orders like an app.</span><button class="ghost" aria-label="Hide this tip" onclick="try{localStorage.setItem('smfw-hometip','off')}catch(e){};document.getElementById('hometip').remove()">✕</button></div>`;
+}
 function viewMine() {
   const os = S.orders;
   const me = custOf(profile.customer_id);
   return `<div class="row spread"><div>${me?.name ? `<p class="custname">${esc(me.name)}${me.cid != null ? ` <span class="pill">CID ${esc(me.cid)}</span>` : ''}</p>` : ''}<h1>My orders</h1></div><button class="primary" onclick="go('entry')">New order</button></div>
-    ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Required</th><th class="num">Lines</th><th>Status</th><th></th></tr></thead><tbody>${os.map(o => orderRow(o, { customer: false })).join('')}</tbody></table></div>`
+    ${homeTip()}
+    ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Required</th><th class="num lines">Lines</th><th>Status</th><th class="openc"></th></tr></thead><tbody>${os.map(o => orderRow(o, { customer: false })).join('')}</tbody></table></div>`
       : `<div class="card empty">You haven’t placed any orders yet. Press <b>New order</b> to start one.</div>`}`;
 }
 function openOrder(id) {
