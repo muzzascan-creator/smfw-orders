@@ -7,6 +7,9 @@ const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
 const S = { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], emailsMissing: false, groupsMissing: false };
 const GROUPS = ['Organic', 'Conventional'];
 const groupOf = p => p.product_group || 'Organic';
+// An order's group comes from its products: Organic unless every line is Conventional.
+const orderGroups = o => [...new Set((o.lines || []).map(l => prodOf(l.product_id)).filter(Boolean).map(groupOf))];
+const orderGroup = o => { const g = orderGroups(o); return g.length === 1 ? g[0] : 'Organic'; };
 let session = null, profile = null, view = null, draft = null, listFilter = 'all', search = '', authMode = 'signin', authMsg = '', ordersChannel = null;
 let groupFilter = 'all';
 const picked = new Set(); // orders ticked on the Orders tab for emailing
@@ -193,7 +196,7 @@ function render() {
 function orderRow(o, opts = {}) {
   const c = custOf(o.customer_id);
   return `<tr class="rowlink" onclick="openOrder('${o.id}')">
-    <td class="mono">${esc(orderNo(o.number))}</td>
+    <td class="mono">${esc(orderNo(o.number))}${!S.groupsMissing && orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conv.</span>' : ''}</td>
     ${opts.customer === false ? '' : `<td>${c?.cid != null ? `<span class="mono muted">${esc(c.cid)}</span> ` : ''}${esc(c?.name || 'Unknown customer')}</td>`}
     <td>${esc(fmtDate(o.required_date))}</td>
     ${opts.sent ? `<td>${esc(fmtWhen(o.submitted_at))}</td>` : ''}
@@ -253,11 +256,12 @@ function openOrder(id) {
   draft = { id, number: o.number, customer_id: o.customer_id, order_date: o.order_date, required_date: o.required_date || '', special: o.special || '', status: o.status, source: o.source, submitted_at: o.submitted_at, qty: {} };
   (o.lines || []).forEach(l => { if (l.pack_id) draft.qty[l.pack_id] = l.qty; });
   draft.missing = (o.lines || []).filter(l => !packOf(l.pack_id));
+  draft.group = orderGroup(o);
   go('entry', false);
 }
 
 // ---------- order entry ----------
-function blankOrder() { return { id: null, number: null, customer_id: isAdmin() ? '' : profile?.customer_id, order_date: today(), required_date: '', special: '', status: 'draft', source: isAdmin() ? 'admin' : 'customer', qty: {}, missing: [] }; }
+function blankOrder() { return { id: null, number: null, customer_id: isAdmin() ? '' : profile?.customer_id, order_date: today(), required_date: '', special: '', status: 'draft', source: isAdmin() ? 'admin' : 'customer', qty: {}, missing: [], group: 'Organic' }; }
 const outerOf = k => Number(k.outer_multiple) || 1;
 const offMultiple = (q, k) => +q > 0 && +q % outerOf(k) !== 0;
 function sectionsFor(products) {
@@ -289,10 +293,12 @@ function viewEntry() {
   const dis = editable ? '' : 'disabled';
   let blocks;
   if (admin) {
-    blocks = S.suppliers.slice().sort(byName).flatMap(s => GROUPS.map(g => {
+    // Admins enter one group at a time: the form shows only the Organic or only the Conventional products.
+    const g = d.group || 'Organic';
+    blocks = S.suppliers.slice().sort(byName).map(s => {
       const secs = sectionsFor(S.products.filter(p => p.supplier_id === s.id && groupOf(p) === g)); if (!secs.length) return '';
-      return `<section class="supplier-block"><div class="supplier-head"><h2>${esc(s.name)} <span class="pill grp-${g.toLowerCase()}">${g}</span></h2><span>${esc(s.cutoff || '')}</span></div><div class="sections">${gridHtml(secs, dis)}</div></section>`;
-    })).join('');
+      return `<section class="supplier-block"><div class="supplier-head"><h2>${esc(s.name)}</h2><span>${esc(s.cutoff || '')}</span></div><div class="sections">${gridHtml(secs, dis)}</div></section>`;
+    }).join('') || `<div class="card empty" style="margin-top:16px">No ${g} products are set up yet. Add them under <b>Products</b>.</div>`;
   } else {
     blocks = GROUPS.map(g => {
       const secs = sectionsFor(S.products.filter(p => groupOf(p) === g)); if (!secs.length) return '';
@@ -310,6 +316,7 @@ function viewEntry() {
   return `<div class="row spread"><div><h1>${d.id ? 'Order ' + esc(orderNo(d.number)) : 'New order'}</h1><p class="sub">${note}</p></div>
       <span class="pill ${d.status}">${STATUS[d.status]}</span></div>${missing}
     <div class="entry"><div>
+      ${admin ? `<div class="grpswitch" role="radiogroup" aria-label="Order type">${GROUPS.map(g => `<button type="button" role="radio" aria-checked="${(d.group || 'Organic') === g}" class="${(d.group || 'Organic') === g ? 'on' : ''}" ${dis} onclick="setGroup('${g}')">${g} order</button>`).join('')}</div>` : ''}
       <div class="card grid g2">
         ${custField}
         <label class="f">Today’s date<input type="date" id="e-date" ${dis} value="${esc(d.order_date)}"></label>
@@ -320,6 +327,14 @@ function viewEntry() {
       ${blocks || '<div class="card empty" style="margin-top:16px">No products are set up yet.</div>'}
     </div>
     <aside class="card summary" id="summary">${summaryHtml()}</aside></div>`;
+}
+function setGroup(g) {
+  if (draft.group === g) return;
+  // Quantities belong to one group's form; switching drops the other group's lines after a check.
+  const other = Object.entries(draft.qty).filter(([k, q]) => +q > 0 && groupOf(packOf(k)?.p || {}) !== g);
+  if (other.length && !confirm(`Switch to a ${g} order? The ${other.length} ${draft.group} line${other.length > 1 ? 's' : ''} already entered will be cleared.`)) return;
+  other.forEach(([k]) => delete draft.qty[k]);
+  draft.group = g; render();
 }
 function draftLines() {
   return Object.entries(draft.qty).filter(([, q]) => +q > 0).map(([packId, q]) => {
@@ -513,9 +528,11 @@ async function formPdf(o, s) {
   const doc = new window.jspdf.jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const W = 210, M = 10, BOTTOM = 284, GAP = 4;
   const qty = {}; (o.lines || []).forEach(l => { if (l.pack_id) qty[l.pack_id] = l.qty; });
-  // Organic sections first, then Conventional; when a supplier has both, section titles say which group they belong to.
-  const own = S.products.filter(p => p.supplier_id === s.id), mixed = new Set(own.filter(p => p.active !== false).map(groupOf)).size > 1;
-  const secs = GROUPS.flatMap(g => sectionsFor(own.filter(p => groupOf(p) === g)).map(x => mixed && !x.name.toLowerCase().startsWith(g.toLowerCase()) ? { ...x, name: `${g} ${x.name}` } : x));
+    // Only the form(s) for the groups this order uses: a Conventional order gets the Conventional form.
+  const own = S.products.filter(p => p.supplier_id === s.id);
+  const used = new Set((o.lines || []).map(l => prodOf(l.product_id)).filter(p => p && p.supplier_id === s.id).map(groupOf));
+  const gs = GROUPS.filter(g => used.has(g)), mixed = gs.length > 1;
+  const secs = gs.flatMap(g => sectionsFor(own.filter(p => groupOf(p) === g)).map(x => mixed && !x.name.toLowerCase().startsWith(g.toLowerCase()) ? { ...x, name: `${g} ${x.name}` } : x));
   // Two side-by-side blocks: sections fill the left until it holds about half the rows.
   const rowsOf = x => x.products.length + 2, half = secs.reduce((a, x) => a + rowsOf(x), 0) / 2;
   const left = [], right = []; let acc = 0;
