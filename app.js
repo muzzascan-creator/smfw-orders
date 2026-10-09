@@ -6,6 +6,7 @@ const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
 
 const S = { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], emailsMissing: false };
 let session = null, profile = null, view = null, draft = null, listFilter = 'all', search = '', authMode = 'signin', authMsg = '', ordersChannel = null;
+const picked = new Set(); // orders ticked on the Orders tab for emailing
 
 // ---------- helpers ----------
 const $ = s => document.querySelector(s);
@@ -191,8 +192,9 @@ function orderRow(o, opts = {}) {
     ${opts.sent ? `<td>${esc(fmtWhen(o.submitted_at))}</td>` : ''}
     ${opts.source ? `<td>${o.source === 'customer' ? 'Customer' : 'SMFW'}</td>` : ''}
     <td class="num">${(o.lines || []).length}</td>
-    <td><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span></td>
-    <td class="num"><button class="ghost" onclick="openOrder('${o.id}')">Open</button></td></tr>`;
+    <td><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>${opts.pick && o.emailed_at ? ` <span class="pill emailed" title="Emailed ${esc(fmtWhen(o.emailed_at))}">Emailed</span>` : ''}</td>
+    <td class="num"><button class="ghost" onclick="openOrder('${o.id}')">Open</button></td>
+    ${opts.pick ? `<td class="pick"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
 }
 function viewInbox() {
   const os = S.orders.filter(o => o.status === 'submitted').sort((a, b) => (a.submitted_at || '').localeCompare(b.submitted_at || ''));
@@ -211,10 +213,18 @@ function viewOrders() {
       ${['all', 'draft', 'submitted', 'complete'].map(f => `<button class="${listFilter === f ? 'primary' : ''}" onclick="listFilter='${f}';render()">${f === 'all' ? 'All' : f === 'draft' ? 'Drafts' : f === 'submitted' ? 'Sent' : 'Complete'} (${count(f)})</button>`).join('')}
       <input class="search" id="osearch" placeholder="Search order no., customer or CID" value="${esc(search)}">
     </div>
-    ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num">Lines</th><th>Status</th><th></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true })).join('')}</tbody></table></div>`
+    ${os.length ? `<div class="pickbar row spread"><span id="pickcount">${pickText()}</span><div class="row"><button id="pickclear" ${picked.size ? '' : 'hidden'} onclick="picked.clear();render()">Clear</button><button class="primary" id="pickmail" ${picked.size ? '' : 'disabled'} onclick="emailPicked()">Email selected</button></div></div>
+      <div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num">Lines</th><th>Status</th><th></th><th class="pick"><input type="checkbox" id="pickall" aria-label="Select all orders shown" ${os.every(o => picked.has(o.id)) ? 'checked' : ''}></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true, pick: true })).join('')}</tbody></table></div>`
       : `<div class="card empty">${S.orders.length ? 'No orders match this filter.' : 'No orders yet.'}</div>`}`;
 }
-function wireOrderSearch() { const i = $('#osearch'); if (!i) return; i.oninput = () => { search = i.value; render(); const j = $('#osearch'); j.focus(); j.setSelectionRange(j.value.length, j.value.length); }; }
+function wireOrderSearch() {
+  const i = $('#osearch'); if (!i) return; i.oninput = () => { search = i.value; render(); const j = $('#osearch'); j.focus(); j.setSelectionRange(j.value.length, j.value.length); };
+  const boxes = [...document.querySelectorAll('input[data-pick]')];
+  const sync = () => { $('#pickcount').textContent = pickText(); $('#pickmail').disabled = !picked.size; $('#pickclear').hidden = !picked.size; const all = $('#pickall'); if (all) all.checked = boxes.length && boxes.every(b => b.checked); };
+  boxes.forEach(b => b.onchange = () => { b.checked ? picked.add(b.dataset.pick) : picked.delete(b.dataset.pick); sync(); });
+  const all = $('#pickall'); if (all) all.onchange = () => { boxes.forEach(b => { b.checked = all.checked; all.checked ? picked.add(b.dataset.pick) : picked.delete(b.dataset.pick); }); sync(); };
+}
+const pickText = () => picked.size ? `${picked.size} order${picked.size > 1 ? 's' : ''} selected` : 'Tick orders on the right to email them to the supplier.';
 function viewMine() {
   const os = S.orders;
   const me = custOf(profile.customer_id);
@@ -456,6 +466,138 @@ async function saveEmails(sid, btn) {
   btn.disabled = false;
   await loadAll(); render();
   if (ok) toast('Order emails saved');
+}
+
+// ---------- emailing orders to suppliers ----------
+// Each ticked order becomes the supplier's whole order form as a spreadsheet, with this order's quantities filled in.
+// The email itself opens in the admin's own email program, addressed from the Emails tab, ready to attach and send.
+const EXCELJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
+function loadExcel() {
+  if (window.ExcelJS) return Promise.resolve();
+  return new Promise((ok, fail) => { const s = document.createElement('script'); s.src = EXCELJS_URL; s.onload = ok; s.onerror = () => fail(new Error('Couldn’t load the spreadsheet maker. Check your internet connection and try again.')); document.head.append(s); });
+}
+const supplierOfLine = l => S.suppliers.find(s => s.id === prodOf(l.product_id)?.supplier_id);
+function recipients(s) {
+  if (S.emailsMissing) return { to: s.emails || [], cc: [], bcc: [] };
+  const on = emailsOf(s.id).filter(e => e.active);
+  return { to: on.filter(e => e.send_as === 'to').map(e => e.email), cc: on.filter(e => e.send_as === 'cc').map(e => e.email), bcc: on.filter(e => e.send_as === 'bcc').map(e => e.email) };
+}
+const safeName = t => String(t).replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
+const formFileName = (o, s) => safeName(`${orderNo(o.number)} ${custOf(o.customer_id)?.name || ''} ${s.name}`) + '.xlsx';
+
+async function formXlsx(o, s) {
+  await loadExcel();
+  const qty = {}; (o.lines || []).forEach(l => { if (l.pack_id) qty[l.pack_id] = l.qty; });
+  const secs = sectionsFor(S.products.filter(p => p.supplier_id === s.id));
+  // Two side-by-side blocks like the paper form: sections fill the left until it holds about half the rows.
+  const rowsOf = x => x.products.length + 1, half = secs.reduce((a, x) => a + rowsOf(x), 0) / 2;
+  const left = [], right = []; let acc = 0;
+  secs.forEach(x => { if (!left.length || acc < half) { left.push(x); acc += rowsOf(x); } else right.push(x); });
+  const width = list => 2 + Math.max(1, ...list.map(x => x.packs.length));
+  const lw = width(left), R0 = lw + 2, rw = Math.max(width(right), 3), last = R0 + rw - 1;
+  const wb = new ExcelJS.Workbook(); wb.creator = 'SMFW Orders';
+  const ws = wb.addWorksheet('Order', { pageSetup: { orientation: 'portrait', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: .4, right: .4, top: .5, bottom: .5, header: .2, footer: .2 } } });
+  ws.getColumn(1).width = 12; ws.getColumn(2).width = 24; ws.getColumn(R0).width = 12; ws.getColumn(R0 + 1).width = 24; ws.getColumn(lw + 1).width = 2;
+  for (let c = 3; c <= lw; c++) ws.getColumn(c).width = 12;
+  for (let c = R0 + 2; c <= last; c++) ws.getColumn(c).width = 12;
+  const thin = { style: 'thin', color: { argb: 'FF8A8A8A' } }, box = { top: thin, left: thin, bottom: thin, right: thin };
+  const grey = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFBFBFBF' } }, head = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8EFE6' } };
+  const put = (r, c1, c2, v, style = {}) => { if (c2 > c1) ws.mergeCells(r, c1, r, c2); const cell = ws.getCell(r, c1); cell.value = v; Object.assign(cell, style); for (let c = c1; c <= c2; c++) ws.getCell(r, c).border = box; return cell; };
+  const c = custOf(o.customer_id) || {};
+  ws.mergeCells(1, 1, 1, last); Object.assign(ws.getCell(1, 1), { value: `${s.name.toUpperCase()} WHOLESALE ORDER`, font: { bold: true, size: 14 }, alignment: { horizontal: 'center' } });
+  ws.mergeCells(2, 1, 2, last); Object.assign(ws.getCell(2, 1), { value: [s.cutoff, s.notes].filter(Boolean).join(' · '), font: { italic: true, size: 9 }, alignment: { horizontal: 'center' } });
+  const label = { font: { bold: true, size: 9 }, alignment: { wrapText: true, vertical: 'middle' } }, val = { font: { size: 11 }, alignment: { vertical: 'middle' } };
+  const pair = (r, side, l, v) => { if (side === 'L') { put(r, 1, 1, l, label); put(r, 2, lw, v, val); } else { put(r, R0, R0 + 1, l, label); put(r, R0 + 2, last, v, val); } };
+  pair(3, 'L', 'Customer Name', 'SMFW' + (c.name ? ` for ${c.name}` : '')); pair(3, 'R', 'Today’s Date', fmtDate(o.order_date));
+  pair(4, 'L', 'Contact Phone', c.phone || ''); pair(4, 'R', 'Day/Date Required', fmtDate(o.required_date));
+  pair(5, 'L', 'SMFW Order', orderNo(o.number)); pair(5, 'R', 'Customer No. (CID)', c.cid ?? '');
+  put(6, 1, 1, 'Special Requirements', label); put(6, 2, last, o.special || '', val);
+  [3, 4, 5, 6].forEach(r => ws.getRow(r).height = 26); ws.getCell(6, 2).alignment = { wrapText: true, vertical: 'middle' };
+  let lines = 0, units = 0;
+  const block = (list, col0, row) => {
+    for (const sec of list) {
+      put(row, col0, col0 + 1, sec.name, { font: { bold: true, size: 11 }, fill: head, alignment: { vertical: 'bottom' } });
+      sec.packs.forEach((pk, i) => put(row, col0 + 2 + i, col0 + 2 + i, pk, { font: { bold: true, size: 8 }, fill: head, alignment: { wrapText: true, horizontal: 'center', vertical: 'bottom' } }));
+      ws.getRow(row).height = Math.max(ws.getRow(row).height || 0, 26); row++;
+      for (const p of sec.products) {
+        put(row, col0, col0, p.code || '', { font: { size: 9 } }); put(row, col0 + 1, col0 + 1, p.name, { font: { size: 10 } });
+        sec.packs.forEach((pk, i) => {
+          const k = (p.product_packs || []).find(x => x.name === pk), q = k && k.available ? qty[k.id] : null;
+          const cell = put(row, col0 + 2 + i, col0 + 2 + i, q ? +q : null, { alignment: { horizontal: 'center' } });
+          if (!k || !k.available) cell.fill = grey; else if (q) { cell.font = { bold: true, size: 12 }; lines++; units += +q; }
+        });
+        row++;
+      }
+    }
+    return row;
+  };
+  const end = Math.max(block(left, 1, 8), block(right, R0, 8));
+  ws.mergeCells(end + 1, 1, end + 1, last);
+  Object.assign(ws.getCell(end + 1, 1), { value: `${lines} line${lines === 1 ? '' : 's'} · ${units} in total · Grey boxes are not available`, font: { italic: true, size: 9 } });
+  return { buf: await wb.xlsx.writeBuffer(), lines };
+}
+function download(buf, name) {
+  const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+// Group the ticked orders by supplier: one email per supplier carrying every ticked order that has lines for them.
+function pickedBySupplier() {
+  const os = S.orders.filter(o => picked.has(o.id)).sort((a, b) => a.number - b.number), groups = new Map();
+  for (const o of os) for (const s of new Set((o.lines || []).map(supplierOfLine).filter(Boolean))) { if (!groups.has(s)) groups.set(s, []); groups.get(s).push(o); }
+  return { os, groups: [...groups.entries()].sort((a, b) => byName(a[0], b[0])) };
+}
+function emailPicked() {
+  const { os, groups } = pickedBySupplier();
+  const empty = os.filter(o => !(o.lines || []).some(supplierOfLine));
+  const notDone = os.filter(o => o.status !== 'complete');
+  const blocks = groups.map(([s, list], i) => {
+    const r = recipients(s), none = !r.to.length && !r.cc.length && !r.bcc.length;
+    return `<div class="card" style="padding:12px"><div class="row spread"><b>${esc(s.name)}</b><span class="muted" style="font-size:12px">${list.length} form${list.length > 1 ? 's' : ''}</span></div>
+      <p style="margin:6px 0;font-size:13px">${none ? '<span class="err">No addresses are switched on for this supplier. Add them under <b>Emails</b> first.</span>' : ['to', 'cc', 'bcc'].filter(k => r[k].length).map(k => `<b>${SEND_AS[k]}:</b> <span class="mono">${r[k].map(esc).join(', ')}</span>`).join('<br>')}</p>
+      <ul class="sumlist" style="margin:6px 0">${list.map(o => `<li><span class="mono">${esc(formFileName(o, s))}</span></li>`).join('')}</ul>
+      <div class="row"><button type="button" onclick="downloadForms(${i}, this)">Download only</button><button type="button" class="primary" ${none ? 'disabled' : ''} onclick="sendForms(${i}, this)">Download and open email</button></div></div>`;
+  }).join('');
+  const dlg = $('#dlg');
+  dlg.innerHTML = `<div class="grid"><h2>Email ${os.length} order${os.length > 1 ? 's' : ''} to suppliers</h2>
+    <p class="muted" style="margin:0;font-size:13px">Each order goes as the supplier’s full order form with its quantities filled in. <b>Download and open email</b> saves the form${os.length > 1 ? 's' : ''} and opens your email program with the addresses and subject filled in. Attach the downloaded file${os.length > 1 ? 's' : ''} from your Downloads folder and press Send.</p>
+    ${notDone.length ? `<div class="banner">Not marked complete yet: ${notDone.map(o => esc(orderNo(o.number))).join(', ')}.</div>` : ''}
+    ${empty.length ? `<div class="banner">No lines to send on ${empty.map(o => esc(orderNo(o.number))).join(', ')}, so ${empty.length > 1 ? 'they are' : 'it is'} skipped.</div>` : ''}
+    ${blocks || '<div class="card empty">None of the selected orders have any lines.</div>'}
+    <div class="row spread" style="margin-top:4px"><button type="button" onclick="document.getElementById('dlg').close()">Close</button>
+    ${groups.length ? `<button type="button" class="primary" onclick="markEmailed(this)">Mark ${os.length - empty.length} as emailed</button>` : ''}</div></div>`;
+  dlg.showModal();
+}
+async function buildGroup(i) {
+  const [s, list] = pickedBySupplier().groups[i];
+  const files = [];
+  for (const o of list) files.push({ name: formFileName(o, s), ...(await formXlsx(o, s)) });
+  return { s, list, files };
+}
+async function downloadForms(i, btn) {
+  btn.disabled = true;
+  try { const { files } = await buildGroup(i); files.forEach(f => download(f.buf, f.name)); toast(`${files.length} form${files.length > 1 ? 's' : ''} downloaded`); }
+  catch (e) { toast(e.message); } finally { btn.disabled = false; }
+}
+async function sendForms(i, btn) {
+  btn.disabled = true;
+  try {
+    const { s, list, files } = await buildGroup(i);
+    files.forEach(f => download(f.buf, f.name));
+    const r = recipients(s), nos = list.map(o => orderNo(o.number)).join(', ');
+    const dates = [...new Set(list.map(o => o.required_date).filter(Boolean))].map(fmtDate);
+    const subject = `SMFW order ${nos}${dates.length === 1 ? ' for ' + dates[0] : ''}`;
+    const body = `Hi ${s.name},\n\nPlease find attached our order form${files.length > 1 ? 's' : ''}:\n${list.map(o => `- ${orderNo(o.number)}${o.required_date ? ', required ' + fmtDate(o.required_date) : ''}`).join('\n')}\n\nAttached: ${files.map(f => f.name).join(', ')}\n\nThank you,\nSMFW`;
+    const q = [r.cc.length && 'cc=' + encodeURIComponent(r.cc.join(',')), r.bcc.length && 'bcc=' + encodeURIComponent(r.bcc.join(',')), 'subject=' + encodeURIComponent(subject), 'body=' + encodeURIComponent(body)].filter(Boolean).join('&');
+    const a = Object.assign(document.createElement('a'), { href: `mailto:${r.to.map(encodeURIComponent).join(',')}?${q}` }); document.body.append(a); a.click(); a.remove();
+  } catch (e) { toast(e.message); } finally { btn.disabled = false; }
+}
+async function markEmailed(btn) {
+  const ids = pickedBySupplier().os.filter(o => (o.lines || []).some(supplierOfLine)).map(o => o.id);
+  btn.disabled = true;
+  const { error } = await sb.from('orders').update({ emailed_at: new Date().toISOString() }).in('id', ids);
+  btn.disabled = false;
+  if (error) { toast(/emailed_at/.test(error.message) ? 'One step first: run 003_order_emailed.sql in Supabase, then try again.' : friendly(error)); return; }
+  $('#dlg').close(); picked.clear(); await reloadOrders(); render(); toast(`${ids.length} order${ids.length > 1 ? 's' : ''} marked as emailed`);
 }
 
 // ---------- edit dialogs ----------

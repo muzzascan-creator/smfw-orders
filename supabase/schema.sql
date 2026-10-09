@@ -102,7 +102,8 @@ create table public.orders (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   submitted_at timestamptz,
-  completed_at timestamptz
+  completed_at timestamptz,
+  emailed_at timestamptz
 );
 alter sequence public.order_number_seq owned by public.orders.number;
 
