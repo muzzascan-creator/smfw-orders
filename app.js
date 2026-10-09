@@ -510,9 +510,9 @@ async function formPdf(o, s) {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); text(doc.splitTextToSize(String(value ?? ''), w - LBL - 3)[0] || '', x + LBL + 1.5, y + 4.8);
   };
   let y = M + 14;
-  field(M, y, half2, 'Customer Name', 'SMFW' + (c.name ? ` for ${c.name}` : '')); field(M + half2 + GAP, y, half2, 'Today’s Date', fmtDate(o.order_date)); y += RH;
+  field(M, y, half2, 'Customer Name', c.name || ''); field(M + half2 + GAP, y, half2, 'Today’s Date', fmtDate(o.order_date)); y += RH;
   field(M, y, half2, 'Contact Phone', c.phone || ''); field(M + half2 + GAP, y, half2, 'Day/Date Required', fmtDate(o.required_date)); y += RH;
-  field(M, y, half2, 'SMFW Order', orderNo(o.number)); field(M + half2 + GAP, y, half2, 'Customer No. (CID)', c.cid ?? ''); y += RH;
+  field(M, y, half2, 'Order No.', orderNo(o.number)); field(M + half2 + GAP, y, half2, 'Customer No. (CID)', c.cid ?? ''); y += RH;
   const sp = doc.splitTextToSize(o.special || '', W - 2 * M - LBL - 3); const spH = Math.max(RH, sp.length * 4 + 3);
   line(); doc.rect(M, y, LBL, spH); doc.rect(M + LBL, y, W - 2 * M - LBL, spH);
   doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); text('Special Requirements', M + 1.5, y + 4.6);
