@@ -24,6 +24,8 @@ const byName = (a, b) => (a.name || '').localeCompare(b.name || '');
 const bySort = (a, b) => (a.sort ?? 999) - (b.sort ?? 999) || byName(a, b);
 const orderNo = n => n == null ? '' : 'SO-' + String(n).padStart(4, '0');
 const isAdmin = () => profile?.role === 'admin' && profile?.approved;
+// Conventional orders are entered by SMFW for its own supply, so they have no customer.
+const needsCustomer = d => !(isAdmin() && d.group === 'Conventional');
 const custOf = id => S.customers.find(c => c.id === id);
 const prodOf = id => S.products.find(p => p.id === id);
 const packOf = id => { for (const p of S.products) { const k = (p.product_packs || []).find(x => x.id === id); if (k) return { p, k }; } return null; };
@@ -39,6 +41,7 @@ function friendly(err) {
     if (/product_id, name|product_packs_product_id_name/i.test(m)) return 'A pack type is listed twice on this product.';
     return 'That value is already in use.';
   }
+  if (err.code === '23502' && /customer_id/.test(m)) return 'Orders without a customer need one more database update. Run 007_conventional_no_customer.sql in the Supabase SQL Editor.';
   if (err.code === '23503') return 'This is still used elsewhere, so it can’t be deleted.';
   if (err.code === '42501' || /row-level security/i.test(m)) return 'You don’t have permission to do that.';
   return m;
@@ -197,7 +200,7 @@ function orderRow(o, opts = {}) {
   const c = custOf(o.customer_id);
   return `<tr class="rowlink" onclick="openOrder('${o.id}')">
     <td class="mono">${esc(orderNo(o.number))}${!S.groupsMissing && orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conv.</span>' : ''}</td>
-    ${opts.customer === false ? '' : `<td>${c?.cid != null ? `<span class="mono muted">${esc(c.cid)}</span> ` : ''}${esc(c?.name || 'Unknown customer')}</td>`}
+    ${opts.customer === false ? '' : `<td>${c?.cid != null ? `<span class="mono muted">${esc(c.cid)}</span> ` : ''}${c ? esc(c.name) : o.customer_id ? 'Unknown customer' : '<span class="muted">No customer</span>'}</td>`}
     <td>${esc(fmtDate(o.required_date))}</td>
     ${opts.sent ? `<td>${esc(fmtWhen(o.submitted_at))}</td>` : ''}
     ${opts.source ? `<td>${o.source === 'customer' ? 'Customer' : 'SMFW'}</td>` : ''}
@@ -304,7 +307,8 @@ function viewEntry() {
     const secs = sectionsFor(S.products.filter(p => groupOf(p) === 'Organic'));
     blocks = secs.length ? `<section class="supplier-block"><div class="supplier-head"><h2>Organic</h2><span>Fill in the boxes you need. Grey boxes aren’t available.</span></div><div class="sections">${gridHtml(secs, dis)}</div></section>` : '';
   }
-  const custField = admin
+  const custField = !needsCustomer(d) ? ''
+    : admin
     ? `<label class="f">Customer<select id="e-cust" ${dis}><option value="">Choose a customer…</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === d.customer_id ? 'selected' : ''}>${c.cid != null ? esc(c.cid) + ' · ' : ''}${esc(c.name)}</option>`).join('')}</select></label>
        <label class="f">Contact phone<input id="e-phone" disabled value="${esc(custOf(d.customer_id)?.phone || '')}"></label>`
     : `<label class="f">Customer<input disabled value="${esc(custOf(d.customer_id)?.name || '')}"></label>`;
@@ -355,7 +359,7 @@ function summaryHtml() {
   } else if (d.status === 'draft') btns = `<button onclick="saveOrder('draft')">Save draft</button><button class="primary" onclick="saveOrder('submitted')">Send order</button>`;
   const del = d.id && (admin || d.status === 'draft') ? `<div class="row" style="margin-top:8px"><button class="danger" onclick="deleteOrder(this)">Delete order</button></div>` : '';
   return `<h2>Order summary</h2>
-    <p class="muted" style="margin:4px 0 0">${esc(custOf(d.customer_id)?.name || 'No customer chosen')}${d.required_date ? ' · needed ' + esc(fmtDate(d.required_date)) : ''}</p>
+    <p class="muted" style="margin:4px 0 0">${esc(custOf(d.customer_id)?.name || (needsCustomer(d) ? 'No customer chosen' : 'Conventional order'))}${d.required_date ? ' · needed ' + esc(fmtDate(d.required_date)) : ''}</p>
     ${lines.length ? body + `<p style="margin:12px 0 0"><b>${lines.length}</b> line${lines.length > 1 ? 's' : ''} · <b>${total}</b> in total</p>` + (offs.length ? `<p class="err" style="margin:8px 0 0">${offs.length} line${offs.length > 1 ? 's aren’t' : ' isn’t'} a multiple of the pack’s outer. Check the red quantities.</p>` : '') : '<p class="muted">No quantities entered yet.</p>'}
     <div class="row" style="margin-top:16px">${btns}</div>${del}`;
 }
@@ -377,11 +381,11 @@ async function saveOrder(status) {
   if (saving) return;
   const lines = draftLines();
   if (status !== 'draft') {
-    if (!draft.customer_id) return toast('Choose a customer first.');
+    if (needsCustomer(draft) && !draft.customer_id) return toast('Choose a customer first.');
     if (!lines.length) return toast('Enter at least one quantity first.');
     if (!draft.required_date) return toast('Add the day/date required first.');
-  } else if (!draft.customer_id) return toast('Choose a customer first.');
-  const row = { customer_id: draft.customer_id, order_date: draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
+  } else if (needsCustomer(draft) && !draft.customer_id) return toast('Choose a customer first.');
+  const row = { customer_id: needsCustomer(draft) ? draft.customer_id : null, order_date: draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
   saving = true;
   const q = draft.id ? sb.from('orders').update(row).eq('id', draft.id).select().single() : sb.from('orders').insert({ ...row, source: isAdmin() ? 'admin' : 'customer' }).select().single();
   const { data, error } = await q;

@@ -91,7 +91,7 @@ create sequence public.order_number_seq;
 create table public.orders (
   id uuid primary key default gen_random_uuid(),
   number integer not null unique default nextval('public.order_number_seq'),
-  customer_id uuid not null references public.customers(id) on delete restrict,
+  customer_id uuid references public.customers(id) on delete restrict, -- empty on Conventional orders SMFW enters for itself
   order_date date not null default current_date,
   required_date date,
   special text,
