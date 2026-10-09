@@ -469,12 +469,12 @@ async function saveEmails(sid, btn) {
 }
 
 // ---------- emailing orders to suppliers ----------
-// Each ticked order becomes the supplier's whole order form as a spreadsheet, with this order's quantities filled in.
+// Each ticked order becomes the supplier's whole order form as an A4 PDF, with this order's quantities filled in.
 // The email itself opens in the admin's own email program, addressed from the Emails tab, ready to attach and send.
-const EXCELJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
-function loadExcel() {
-  if (window.ExcelJS) return Promise.resolve();
-  return new Promise((ok, fail) => { const s = document.createElement('script'); s.src = EXCELJS_URL; s.onload = ok; s.onerror = () => fail(new Error('Couldn’t load the spreadsheet maker. Check your internet connection and try again.')); document.head.append(s); });
+const JSPDF_URL = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js';
+function loadPdf() {
+  if (window.jspdf) return Promise.resolve();
+  return new Promise((ok, fail) => { const s = document.createElement('script'); s.src = JSPDF_URL; s.onload = ok; s.onerror = () => fail(new Error('Couldn’t load the PDF maker. Check your internet connection and try again.')); document.head.append(s); });
 }
 const supplierOfLine = l => S.suppliers.find(s => s.id === prodOf(l.product_id)?.supplier_id);
 function recipients(s) {
@@ -483,61 +483,84 @@ function recipients(s) {
   return { to: on.filter(e => e.send_as === 'to').map(e => e.email), cc: on.filter(e => e.send_as === 'cc').map(e => e.email), bcc: on.filter(e => e.send_as === 'bcc').map(e => e.email) };
 }
 const safeName = t => String(t).replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
-const formFileName = (o, s) => safeName(`${orderNo(o.number)} ${custOf(o.customer_id)?.name || ''} ${s.name}`) + '.xlsx';
+const formFileName = (o, s) => safeName(`${orderNo(o.number)} ${custOf(o.customer_id)?.name || ''} ${s.name}`) + '.pdf';
 
-async function formXlsx(o, s) {
-  await loadExcel();
+// The supplier's whole order form as an A4 portrait PDF, laid out like their paper form, with this order's quantities filled in.
+async function formPdf(o, s) {
+  await loadPdf();
+  const doc = new window.jspdf.jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const W = 210, M = 10, BOTTOM = 284, GAP = 4;
   const qty = {}; (o.lines || []).forEach(l => { if (l.pack_id) qty[l.pack_id] = l.qty; });
   const secs = sectionsFor(S.products.filter(p => p.supplier_id === s.id));
-  // Two side-by-side blocks like the paper form: sections fill the left until it holds about half the rows.
-  const rowsOf = x => x.products.length + 1, half = secs.reduce((a, x) => a + rowsOf(x), 0) / 2;
+  // Two side-by-side blocks: sections fill the left until it holds about half the rows.
+  const rowsOf = x => x.products.length + 2, half = secs.reduce((a, x) => a + rowsOf(x), 0) / 2;
   const left = [], right = []; let acc = 0;
   secs.forEach(x => { if (!left.length || acc < half) { left.push(x); acc += rowsOf(x); } else right.push(x); });
-  const width = list => 2 + Math.max(1, ...list.map(x => x.packs.length));
-  const lw = width(left), R0 = lw + 2, rw = Math.max(width(right), 3), last = R0 + rw - 1;
-  const wb = new ExcelJS.Workbook(); wb.creator = 'SMFW Orders';
-  const ws = wb.addWorksheet('Order', { pageSetup: { orientation: 'portrait', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: .4, right: .4, top: .5, bottom: .5, header: .2, footer: .2 } } });
-  ws.getColumn(1).width = 12; ws.getColumn(2).width = 24; ws.getColumn(R0).width = 12; ws.getColumn(R0 + 1).width = 24; ws.getColumn(lw + 1).width = 2;
-  for (let c = 3; c <= lw; c++) ws.getColumn(c).width = 12;
-  for (let c = R0 + 2; c <= last; c++) ws.getColumn(c).width = 12;
-  const thin = { style: 'thin', color: { argb: 'FF8A8A8A' } }, box = { top: thin, left: thin, bottom: thin, right: thin };
-  const grey = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFBFBFBF' } }, head = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8EFE6' } };
-  const put = (r, c1, c2, v, style = {}) => { if (c2 > c1) ws.mergeCells(r, c1, r, c2); const cell = ws.getCell(r, c1); cell.value = v; Object.assign(cell, style); for (let c = c1; c <= c2; c++) ws.getCell(r, c).border = box; return cell; };
   const c = custOf(o.customer_id) || {};
-  ws.mergeCells(1, 1, 1, last); Object.assign(ws.getCell(1, 1), { value: `${s.name.toUpperCase()} WHOLESALE ORDER`, font: { bold: true, size: 14 }, alignment: { horizontal: 'center' } });
-  ws.mergeCells(2, 1, 2, last); Object.assign(ws.getCell(2, 1), { value: [s.cutoff, s.notes].filter(Boolean).join(' · '), font: { italic: true, size: 9 }, alignment: { horizontal: 'center' } });
-  const label = { font: { bold: true, size: 9 }, alignment: { wrapText: true, vertical: 'middle' } }, val = { font: { size: 11 }, alignment: { vertical: 'middle' } };
-  const pair = (r, side, l, v) => { if (side === 'L') { put(r, 1, 1, l, label); put(r, 2, lw, v, val); } else { put(r, R0, R0 + 1, l, label); put(r, R0 + 2, last, v, val); } };
-  pair(3, 'L', 'Customer Name', 'SMFW' + (c.name ? ` for ${c.name}` : '')); pair(3, 'R', 'Today’s Date', fmtDate(o.order_date));
-  pair(4, 'L', 'Contact Phone', c.phone || ''); pair(4, 'R', 'Day/Date Required', fmtDate(o.required_date));
-  pair(5, 'L', 'SMFW Order', orderNo(o.number)); pair(5, 'R', 'Customer No. (CID)', c.cid ?? '');
-  put(6, 1, 1, 'Special Requirements', label); put(6, 2, last, o.special || '', val);
-  [3, 4, 5, 6].forEach(r => ws.getRow(r).height = 26); ws.getCell(6, 2).alignment = { wrapText: true, vertical: 'middle' };
-  let lines = 0, units = 0;
-  const block = (list, col0, row) => {
-    for (const sec of list) {
-      put(row, col0, col0 + 1, sec.name, { font: { bold: true, size: 11 }, fill: head, alignment: { vertical: 'bottom' } });
-      sec.packs.forEach((pk, i) => put(row, col0 + 2 + i, col0 + 2 + i, pk, { font: { bold: true, size: 8 }, fill: head, alignment: { wrapText: true, horizontal: 'center', vertical: 'bottom' } }));
-      ws.getRow(row).height = Math.max(ws.getRow(row).height || 0, 26); row++;
-      for (const p of sec.products) {
-        put(row, col0, col0, p.code || '', { font: { size: 9 } }); put(row, col0 + 1, col0 + 1, p.name, { font: { size: 10 } });
-        sec.packs.forEach((pk, i) => {
-          const k = (p.product_packs || []).find(x => x.name === pk), q = k && k.available ? qty[k.id] : null;
-          const cell = put(row, col0 + 2 + i, col0 + 2 + i, q ? +q : null, { alignment: { horizontal: 'center' } });
-          if (!k || !k.available) cell.fill = grey; else if (q) { cell.font = { bold: true, size: 12 }; lines++; units += +q; }
-        });
-        row++;
-      }
-    }
-    return row;
+  const line = () => { doc.setDrawColor(140); doc.setLineWidth(0.2); };
+  const text = (t, x, y, opt = {}) => doc.text(Array.isArray(t) ? t : String(t ?? ''), x, y, opt);
+  // Title
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(14); text(`${s.name.toUpperCase()} WHOLESALE ORDER`, W / 2, M + 5, { align: 'center' });
+  doc.setFont('helvetica', 'italic'); doc.setFontSize(8); text([s.cutoff, s.notes].filter(Boolean).join('  ·  '), W / 2, M + 10, { align: 'center' });
+  // Header fields
+  const half2 = (W - 2 * M - GAP) / 2, LBL = 30, RH = 7;
+  const field = (x, y, w, label, value) => {
+    line(); doc.rect(x, y, LBL, RH); doc.rect(x + LBL, y, w - LBL, RH);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); text(label, x + 1.5, y + 4.6);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); text(doc.splitTextToSize(String(value ?? ''), w - LBL - 3)[0] || '', x + LBL + 1.5, y + 4.8);
   };
-  const end = Math.max(block(left, 1, 8), block(right, R0, 8));
-  ws.mergeCells(end + 1, 1, end + 1, last);
-  Object.assign(ws.getCell(end + 1, 1), { value: `${lines} line${lines === 1 ? '' : 's'} · ${units} in total · Grey boxes are not available`, font: { italic: true, size: 9 } });
-  return { buf: await wb.xlsx.writeBuffer(), lines };
+  let y = M + 14;
+  field(M, y, half2, 'Customer Name', 'SMFW' + (c.name ? ` for ${c.name}` : '')); field(M + half2 + GAP, y, half2, 'Today’s Date', fmtDate(o.order_date)); y += RH;
+  field(M, y, half2, 'Contact Phone', c.phone || ''); field(M + half2 + GAP, y, half2, 'Day/Date Required', fmtDate(o.required_date)); y += RH;
+  field(M, y, half2, 'SMFW Order', orderNo(o.number)); field(M + half2 + GAP, y, half2, 'Customer No. (CID)', c.cid ?? ''); y += RH;
+  const sp = doc.splitTextToSize(o.special || '', W - 2 * M - LBL - 3); const spH = Math.max(RH, sp.length * 4 + 3);
+  line(); doc.rect(M, y, LBL, spH); doc.rect(M + LBL, y, W - 2 * M - LBL, spH);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); text('Special Requirements', M + 1.5, y + 4.6);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); text(sp, M + LBL + 1.5, y + 4.8);
+  const top = y + spH + 5;
+  // Product blocks
+  let lines = 0, units = 0, lastPage = 1, lastY = top;
+  const block = (list, x0, bw) => {
+    let page = 1, by = top; doc.setPage(1);
+    const need = h => { if (by + h > BOTTOM) { page++; if (page > doc.getNumberOfPages()) doc.addPage(); doc.setPage(page); by = M + 6; } };
+    for (const sec of list) {
+      const n = Math.max(1, sec.packs.length), CW = 15, PW = Math.min(16, (bw - CW - 26) / n), NW = bw - CW - n * PW;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(5.8);
+      const heads = sec.packs.map(pk => doc.splitTextToSize(pk, PW - 1.5));
+      doc.setFontSize(8.5); const title = doc.splitTextToSize(sec.name, CW + NW - 2); doc.setFontSize(5.8);
+      const hh = Math.max(7, title.length * 3.4 + 3.5, ...heads.map(h => h.length * 2.4 + 2.5));
+      need(hh + 6);
+      line(); doc.setFillColor(232, 239, 230); doc.rect(x0, by, CW + NW, hh, 'FD');
+      doc.setFontSize(8.5); text(title, x0 + 1.5, by + hh - 1.8 - (title.length - 1) * 3.4);
+      doc.setFontSize(5.8);
+      heads.forEach((h, i) => { const x = x0 + CW + NW + i * PW; doc.setFillColor(232, 239, 230); doc.rect(x, by, PW, hh, 'FD'); text(h, x + PW / 2, by + hh - 1.5 - (h.length - 1) * 2.4, { align: 'center' }); });
+      by += hh;
+      for (const p of sec.products) {
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+        const nm = doc.splitTextToSize(p.name, NW - 2), rh = Math.max(5.5, nm.length * 3.2 + 2.2);
+        need(rh);
+        line(); doc.rect(x0, by, CW, rh); doc.rect(x0 + CW, by, NW, rh);
+        doc.setFontSize(6); text(doc.splitTextToSize(p.code || '', CW - 1.5)[0] || '', x0 + 1, by + 3.7);
+        doc.setFontSize(7.5); text(nm, x0 + CW + 1.2, by + 3.8);
+        sec.packs.forEach((pk, i) => {
+          const x = x0 + CW + NW + i * PW, k = (p.product_packs || []).find(z => z.name === pk), ok = k && k.available, q = ok ? qty[k.id] : null;
+          if (!ok) { doc.setFillColor(191, 191, 191); doc.rect(x, by, PW, rh, 'FD'); }
+          else { doc.rect(x, by, PW, rh); if (q) { doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5); text(+q, x + PW / 2, by + rh / 2 + 1.6, { align: 'center' }); doc.setFont('helvetica', 'normal'); lines++; units += +q; } }
+        });
+        by += rh;
+      }
+      by += 3;
+    }
+    if (page > lastPage || (page === lastPage && by > lastY)) { lastPage = page; lastY = by; }
+  };
+  const bw = right.length ? (W - 2 * M - GAP) / 2 : W - 2 * M;
+  block(left, M, bw); if (right.length) block(right, M + bw + GAP, bw);
+  doc.setPage(lastPage); doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5);
+  text(`${lines} line${lines === 1 ? '' : 's'} · ${units} in total · Grey boxes are not available`, M, Math.min(lastY + 3, BOTTOM + 6));
+  return { buf: doc.output('arraybuffer'), lines };
 }
 function download(buf, name) {
-  const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  const url = URL.createObjectURL(new Blob([buf], { type: 'application/pdf' }));
   const a = Object.assign(document.createElement('a'), { href: url, download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 // Group the ticked orders by supplier: one email per supplier carrying every ticked order that has lines for them.
@@ -570,7 +593,7 @@ function emailPicked() {
 async function buildGroup(i) {
   const [s, list] = pickedBySupplier().groups[i];
   const files = [];
-  for (const o of list) files.push({ name: formFileName(o, s), ...(await formXlsx(o, s)) });
+  for (const o of list) files.push({ name: formFileName(o, s), ...(await formPdf(o, s)) });
   return { s, list, files };
 }
 async function downloadForms(i, btn) {
