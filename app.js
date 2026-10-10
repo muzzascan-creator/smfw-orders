@@ -365,7 +365,8 @@ function summaryHtml() {
   const total = lines.reduce((a, l) => a + l.qty, 0);
   let btns = '';
   if (admin) {
-    if (d.status === 'complete') btns = `<button onclick="reopenOrder()">Reopen to edit</button>`;
+    // Already complete: Mark complete just closes the order and goes back to Orders; Reopen is for changes.
+    if (d.status === 'complete') btns = `<button onclick="reopenOrder()">Reopen to edit</button><button class="primary" onclick="draft=null;go('orders',false)">Mark complete</button>`;
     else btns = `<button onclick="saveOrder('${d.status === 'submitted' ? 'submitted' : 'draft'}')">${d.status === 'submitted' ? 'Save changes' : 'Save draft'}</button><button class="primary" onclick="saveOrder('complete')">Mark complete</button>`;
   } else if (d.status === 'draft') btns = `<button onclick="saveOrder('draft')">Save draft</button><button class="primary" onclick="saveOrder('submitted')">Send order</button>`;
   const del = d.id && (admin || d.status === 'draft') ? `<div class="row" style="margin-top:8px"><button class="danger" onclick="deleteOrder(this)">Delete order</button></div>` : '';
