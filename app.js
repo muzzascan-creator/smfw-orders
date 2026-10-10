@@ -491,7 +491,7 @@ function summaryHtml() {
 const missingOf = o => (o?.lines || []).filter(l => l.undelivered || !(+l.qty > 0) || (l.ordered_qty != null && +l.qty < +l.ordered_qty));
 async function notifyCustomer(id, resend = false) {
   const { data, error } = await sb.functions.invoke('notify-undelivered', { body: { order_id: id, resend } });
-  if (error) { let m = ''; try { m = (await error.context.json()).error; } catch { } return { sent: false, reason: m || 'The customer email service isn’t set up yet.' }; }
+  if (error) { let m = ''; try { m = (await error.context.json()).error; } catch { } return { sent: false, reason: m || `The customer email service didn’t answer (${error.context?.status ? 'error ' + error.context.status : error.message}).` }; }
   return data;
 }
 function notifyHtml(d) {
