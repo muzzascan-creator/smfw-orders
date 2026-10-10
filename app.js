@@ -27,6 +27,8 @@ const byName = (a, b) => (a.name || '').localeCompare(b.name || '');
 const bySort = (a, b) => (a.sort ?? 999) - (b.sort ?? 999) || byName(a, b);
 const orderNo = n => n == null ? '' : 'SO-' + String(n).padStart(4, '0');
 const isAdmin = () => profile?.role === 'admin' && profile?.approved;
+// Receivers see every order read-only (migrations/010).
+const isReceiver = () => profile?.role === 'receiver' && profile?.approved;
 // Conventional orders are entered by SMFW for its own supply, so they have no customer.
 const needsCustomer = d => !(isAdmin() && d.group === 'Conventional');
 const custOf = id => S.customers.find(c => c.id === id);
@@ -46,6 +48,7 @@ function friendly(err) {
     return 'That value is already in use.';
   }
   if (err.code === '23502' && /customer_id/.test(m)) return 'Orders without a customer need one more database update. Run 007_conventional_no_customer.sql in the Supabase SQL Editor.';
+  if (err.code === '23514' && /profiles_role_check/.test(m)) return 'The Receiver role needs one more database update. Run 010_receiver_role.sql in the Supabase SQL Editor.';
   if (err.code === '23503') return 'This is still used elsewhere, so it can’t be deleted.';
   if (err.code === '42501' || /row-level security/i.test(m)) return 'You don’t have permission to do that.';
   return m;
@@ -63,7 +66,11 @@ async function loadAll() {
   S.refMissing = !!probe.error && /ref/.test(probe.error.message || '');
   const prods = sb.from('products').select(cols(!S.groupsMissing));
   const orders = sb.from('orders').select('*').order('number', { ascending: false });
-  if (isAdmin()) {
+  if (isReceiver()) {
+    const [c, s, p, o] = await Promise.all([sb.from('customers').select('id,cid,name,phone'), sb.from('suppliers').select('*'), prods, orders]);
+    for (const r of [c, s, p, o]) if (r.error) toast(friendly(r.error));
+    S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; S.orders = o.data || [];
+  } else if (isAdmin()) {
     const [c, s, p, o, u, m] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort')]);
     for (const r of [c, s, p, o, u]) if (r.error) toast(friendly(r.error));
     S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; S.orders = o.data || []; S.profiles = u.data || [];
@@ -113,12 +120,12 @@ async function enter() {
   if (!session) { profile = null; view = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
   if (authMode === 'newpass') return renderAuth();
   await loadProfile();
-  if (!profile || !profile.approved || (!isAdmin() && !profile.customer_id)) { $('#top').hidden = true; return renderPending(); }
+  if (!profile || !profile.approved || (!isAdmin() && !isReceiver() && !profile.customer_id)) { $('#top').hidden = true; return renderPending(); }
   $('#top').hidden = false;
-  $('#whoami').textContent = (profile.full_name || profile.email) + (isAdmin() ? ' · Admin' : '');
+  $('#whoami').textContent = (profile.full_name || profile.email) + (isAdmin() ? ' · Admin' : isReceiver() ? ' · Receiver' : '');
   await loadAll();
   listenForOrders();
-  if (!view) view = isAdmin() ? 'inbox' : 'mine';
+  if (!view) view = homeView();
   render();
 }
 $('#signout').addEventListener('click', () => sb.auth.signOut());
@@ -180,7 +187,9 @@ function renderPending() {
 }
 
 // ---------- navigation ----------
+const homeView = () => isAdmin() ? 'inbox' : isReceiver() ? 'recv' : 'mine';
 function navItems() {
+  if (isReceiver()) return [['recv', 'Orders']];
   return isAdmin()
     ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['customers', 'Customers'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['emails', 'Emails'], ['users', 'Logins']]
     : [['mine', 'My orders'], ['entry', 'New order']];
@@ -194,12 +203,14 @@ $('#nav').addEventListener('click', async e => { const b = e.target.closest('but
 function render() {
   const nav = $('#nav');
   nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" aria-current="${v === view && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
-  const views = { inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers };
-  if (!views[view] || (!isAdmin() && !['mine', 'entry'].includes(view))) view = isAdmin() ? 'inbox' : 'mine';
+  const views = { recv: viewRecv, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers };
+  const allowed = isAdmin() ? null : isReceiver() ? ['recv'] : ['mine', 'entry'];
+  if (!views[view] || view === 'recv' && !isReceiver() || (allowed && !allowed.includes(view))) view = homeView();
   if (view === 'entry' && !draft) draft = blankOrder();
   $('#app').innerHTML = views[view]();
   if (view === 'entry') wireEntry();
   if (view === 'orders') wireOrderSearch();
+  if (view === 'recv') { const i = $('#osearch'); if (i) i.oninput = () => { search = i.value; render(); const j = $('#osearch'); j.focus(); j.setSelectionRange(j.value.length, j.value.length); }; }
 }
 
 // ---------- order lists ----------
@@ -212,11 +223,45 @@ function orderRow(o, opts = {}) {
     ${opts.sent ? `<td>${esc(fmtWhen(o.submitted_at))}</td>` : ''}
     ${opts.source ? `<td>${o.source === 'customer' ? 'Customer' : 'SMFW'}</td>` : ''}
     <td class="num lines">${(o.lines || []).length}</td>
-    <td><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>${opts.pick && o.emailed_at ? ` <span class="pill emailed" title="Emailed ${esc(fmtWhen(o.emailed_at))}">Emailed</span>` : ''}${opts.pick && o.csv_at ? ` <span class="pill emailed" title="CSV created ${esc(fmtWhen(o.csv_at))}">CSV</span>` : ''}</td>
+    <td><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>${opts.pick && o.emailed_at ? ` <span class="pill emailed" title="Emailed ${esc(fmtWhen(o.emailed_at))}">Emailed</span>` : ''}${opts.pick && o.csv_at ? ` <span class="pill emailed" title="CSV created ${esc(fmtWhen(o.csv_at))}">CSV</span>` : ''}${opts.pick ? receivedPill(o) : ''}</td>
     ${opts.customer === false ? `<td class="num acts" onclick="event.stopPropagation()"><button class="ghost" onclick="openOrder('${o.id}')">View</button><button class="ghost" onclick="printOrder('${o.id}', this)">Print<span class="long"> Order</span></button></td>`
       : `<td class="num openc"><button class="ghost" onclick="event.stopPropagation();openOrder('${o.id}')">Open</button></td>`}
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
+}
+// Receiver: every sent or completed order, read only. View opens the order form as the supplier gets it.
+function viewRecv() {
+  let os = S.orders.filter(o => o.status !== 'draft');
+  const q = search.trim().toLowerCase();
+  if (q) os = os.filter(o => [orderNo(o.number), custOf(o.customer_id)?.name, custOf(o.customer_id)?.cid].join(' ').toLowerCase().includes(q));
+  return `<h1>Orders</h1><p class="sub">Every order that has been sent or transmitted. Press View to see it on the supplier’s order form, and Mark received when the delivery arrives.</p>
+    <div class="row" style="margin-bottom:12px"><input class="search" id="osearch" placeholder="Search order no., customer or CID" value="${esc(search)}"></div>
+    ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>Status</th><th class="acts"></th></tr></thead><tbody>${os.map(o => {
+      const c = custOf(o.customer_id);
+      return `<tr><td class="mono">${esc(orderNo(o.number))}${orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conv.</span>' : ''}</td>
+        <td>${c ? `${c.cid != null ? `<span class="mono muted">${esc(c.cid)}</span> ` : ''}${esc(c.name)}` : '<span class="muted">No customer</span>'}</td>
+        <td>${esc(fmtDate(o.required_date))}</td><td><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>${receivedPill(o)}</td>
+        <td class="num acts">${o.received_at ? `<button class="ghost" onclick="setReceived('${o.id}', false, this)">Undo received</button>` : `<button class="primary" onclick="setReceived('${o.id}', true, this)">Mark received</button>`}${[...new Set((o.lines || []).map(supplierOfLine).filter(Boolean))].map(s => `<button class="ghost" title="${esc(s.name)}" onclick="viewSupplierForm('${o.id}', '${s.id}', this)">View${new Set((o.lines || []).map(supplierOfLine).filter(Boolean)).size > 1 ? ' · ' + esc(s.name) : ''}</button>`).join('')}</td></tr>`;
+    }).join('')}</tbody></table></div>` : `<div class="card empty">${S.orders.length ? 'No orders match this search.' : 'No orders yet.'}</div>`}`;
+}
+const receivedPill = o => o.received_at ? ` <span class="pill emailed" title="Received ${esc(fmtWhen(o.received_at))}${o.received_by ? ' by ' + esc(o.received_by) : ''}">Received</span>` : '';
+async function setReceived(id, received, btn) {
+  btn.disabled = true;
+  const { error } = await sb.rpc('set_received', { order_id: id, received });
+  btn.disabled = false;
+  if (error) return toast(/set_received/.test(error.message) ? 'One step first: run 010_receiver_role.sql in Supabase.' : friendly(error));
+  await reloadOrders(); render(); toast(received ? 'Marked as received' : 'Received tick removed');
+}
+async function viewSupplierForm(oid, sid, btn) {
+  const o = S.orders.find(x => x.id === oid), s = S.suppliers.find(x => x.id === sid); if (!o || !s) return;
+  const w = window.open('', '_blank'); // opened straight from the click so the browser allows it
+  btn.disabled = true;
+  try {
+    const { buf } = await formPdf(o, s);
+    const url = URL.createObjectURL(new Blob([buf], { type: 'application/pdf' }));
+    if (w) w.location.href = url; else download(buf, formFileName(o, s));
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) { if (w) w.close(); toast(e.message); } finally { btn.disabled = false; }
 }
 function viewInbox() {
   const os = S.orders.filter(o => o.status === 'submitted').sort((a, b) => (a.submitted_at || '').localeCompare(b.submitted_at || ''));
@@ -477,8 +522,8 @@ function viewUsers() {
   const link = location.origin + location.pathname;
   return `<h1>Logins</h1><p class="sub">Customers create their own account at <span class="mono">${esc(link)}</span>. Link each new account to its customer so they can start ordering.${waiting ? ` <b>${waiting} waiting.</b>` : ''}</p>
   <div class="tablewrap"><table><thead><tr><th>Name</th><th>Email</th><th>Business they gave</th><th>Role</th><th>Linked customer</th><th>Access</th><th></th></tr></thead><tbody>
-  ${us.map(u => `<tr><td>${esc(u.full_name)}</td><td class="mono">${esc(u.email)}</td><td>${esc(u.business || '')}</td><td>${u.role === 'admin' ? 'Admin' : 'Customer'}</td>
-    <td>${u.role === 'admin' ? '<span class="muted">All customers</span>' : esc(custOf(u.customer_id)?.name || '')}</td>
+  ${us.map(u => `<tr><td>${esc(u.full_name)}</td><td class="mono">${esc(u.email)}</td><td>${esc(u.business || '')}</td><td>${u.role === 'admin' ? 'Admin' : u.role === 'receiver' ? 'Receiver' : 'Customer'}</td>
+    <td>${u.role === 'admin' ? '<span class="muted">All customers</span>' : u.role === 'receiver' ? '<span class="muted">All orders, view only</span>' : esc(custOf(u.customer_id)?.name || '')}</td>
     <td>${u.approved ? '<span class="pill complete">Active</span>' : '<span class="pill draft">Waiting</span>'}</td>
     <td class="num">${u.id === profile.id ? '<span class="muted">You</span>' : `<button class="ghost" onclick="editLogin('${u.id}')">${u.approved ? 'Edit' : 'Approve'}</button>`}</td></tr>`).join('')}
   </tbody></table></div>`;
@@ -917,13 +962,13 @@ function editLogin(uid) {
   const u = S.profiles.find(x => x.id === uid);
   openDialog(u.approved ? 'Edit login' : 'Approve login',
     `<p style="margin:0"><b>${esc(u.full_name || u.email)}</b><br><span class="mono muted">${esc(u.email)}</span>${u.business ? `<br>Business they gave: ${esc(u.business)}` : ''}</p>
-    <label class="f">Role<select name="role" id="f-role" onchange="document.getElementById('custpick').hidden = this.value==='admin'"><option value="customer" ${u.role !== 'admin' ? 'selected' : ''}>Customer: orders for one business</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin: full access, like you</option></select></label>
-    <label class="f" id="custpick" ${u.role === 'admin' ? 'hidden' : ''}>Customer this login orders for<select name="customer_id" id="f-customer_id"><option value="">Choose a customer…</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === u.customer_id ? 'selected' : ''}>${esc(c.cid)} · ${esc(c.name)}</option>`).join('')}</select></label>
+    <label class="f">Role<select name="role" id="f-role" onchange="document.getElementById('custpick').hidden = this.value!=='customer'"><option value="customer" ${!['admin', 'receiver'].includes(u.role) ? 'selected' : ''}>Customer: orders for one business</option><option value="receiver" ${u.role === 'receiver' ? 'selected' : ''}>Receiver: sees all orders, can’t change anything</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin: full access, like you</option></select></label>
+    <label class="f" id="custpick" ${u.role === 'admin' || u.role === 'receiver' ? 'hidden' : ''}>Customer this login orders for<select name="customer_id" id="f-customer_id"><option value="">Choose a customer…</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === u.customer_id ? 'selected' : ''}>${esc(c.cid)} · ${esc(c.name)}</option>`).join('')}</select></label>
     <label class="f">Access<select name="approved" id="f-approved"><option value="1" ${u.approved || !u.customer_id ? 'selected' : ''}>Allowed to sign in and order</option><option value="0" ${!u.approved && u.customer_id ? 'selected' : ''}>Blocked</option></select></label>`,
     f => {
       const role = f.get('role'), customer_id = f.get('customer_id') || null, approved = f.get('approved') === '1';
       if (role === 'customer' && approved && !customer_id) { toast('Choose which customer this login orders for.'); return false; }
-      return run(sb.from('profiles').update({ role, customer_id: role === 'admin' ? null : customer_id, approved }).eq('id', uid), 'Login saved');
+      return run(sb.from('profiles').update({ role, customer_id: role === 'customer' ? customer_id : null, approved }).eq('id', uid), 'Login saved');
     });
 }
 

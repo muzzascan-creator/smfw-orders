@@ -56,7 +56,7 @@ create table public.profiles (
   email text,
   full_name text,
   business text,
-  role text not null default 'customer' check (role in ('admin','customer')),
+  role text not null default 'customer' check (role in ('admin','customer','receiver')),
   customer_id uuid references public.customers(id) on delete set null,
   approved boolean not null default false,
   created_at timestamptz not null default now()
@@ -80,6 +80,12 @@ create trigger on_auth_user_created after insert on auth.users
 create or replace function public.is_admin() returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin' and approved);
+$$;
+
+-- Receivers see every order (read only); see the receiver_read policies below.
+create or replace function public.is_receiver() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role = 'receiver' and approved);
 $$;
 
 create or replace function public.my_customer_id() returns uuid
@@ -107,7 +113,9 @@ create table public.orders (
   submitted_at timestamptz,
   completed_at timestamptz,
   emailed_at timestamptz,
-  csv_at timestamptz
+  csv_at timestamptz,
+  received_at timestamptz,
+  received_by text
 );
 alter sequence public.order_number_seq owned by public.orders.number;
 
@@ -118,7 +126,7 @@ begin
   new.updated_at := now();
   if new.status = 'submitted' and (tg_op = 'INSERT' or old.status <> 'submitted') then new.submitted_at := now(); end if;
   if new.status = 'complete' and (tg_op = 'INSERT' or old.status <> 'complete') then new.completed_at := now(); end if;
-  if not public.is_admin() then
+  if not public.is_admin() and not public.is_receiver() then
     new.source := 'customer';
     new.customer_id := public.my_customer_id();
     if tg_op = 'INSERT' then new.created_by := auth.uid(); else new.created_by := old.created_by; new.number := old.number; end if;
@@ -155,6 +163,13 @@ create policy customer_read on public.products for select using (active and prod
 create policy customer_read on public.product_packs for select using (
   public.my_customer_id() is not null
   and exists (select 1 from public.products p where p.id = product_id and p.active and p.product_group = 'Organic'));
+
+-- Receivers read everything needed to see orders; the only change they can make is ticking an order off as received.
+create policy receiver_read on public.suppliers for select using (public.is_receiver());
+create policy receiver_read on public.customers for select using (public.is_receiver());
+create policy receiver_read on public.products for select using (public.is_receiver());
+create policy receiver_read on public.product_packs for select using (public.is_receiver());
+create policy receiver_read on public.orders for select using (public.is_receiver());
 
 -- Customers see their own business record and their own login.
 create policy customer_read_own on public.customers for select using (id = public.my_customer_id());
@@ -196,3 +211,14 @@ on conflict (supplier_id, email) do nothing;
 
 -- Live updates for the admin inbox.
 alter publication supabase_realtime add table public.orders;
+
+-- ---------- receivers tick off deliveries (also in migrations/010_receiver_role.sql) ----------
+create or replace function public.set_received(order_id uuid, received boolean) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not (public.is_receiver() or public.is_admin()) then raise exception 'Only receivers can mark orders received'; end if;
+  update public.orders set received_at = case when received then now() end,
+    received_by = case when received then (select coalesce(nullif(full_name, ''), email) from public.profiles where id = auth.uid()) end
+  where id = order_id;
+end $$;
+grant execute on function public.set_received(uuid, boolean) to authenticated;
