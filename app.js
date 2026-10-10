@@ -231,7 +231,7 @@ function orderRow(o, opts = {}) {
   const c = custOf(o.customer_id);
   return `<tr class="rowlink" onclick="openOrder('${o.id}')">
     <td class="mono">${esc(orderNo(o.number))}${!S.groupsMissing && orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conv.</span>' : ''}</td>
-    ${opts.customer === false ? '' : `<td>${c?.cid != null ? `<span class="mono muted">${esc(c.cid)}</span> ` : ''}${c ? esc(c.name) : o.customer_id ? 'Unknown customer' : '<span class="muted">No customer</span>'}</td>`}
+    ${opts.customer === false ? '' : `<td>${c ? esc(c.name) : o.customer_id ? 'Unknown customer' : '<span class="muted">No customer</span>'}</td>`}
     <td>${esc(fmtDate(o.required_date))}</td>
     ${opts.sent ? `<td>${esc(fmtWhen(o.submitted_at))}</td>` : ''}
     ${opts.source ? `<td>${o.source === 'customer' ? 'Customer' : 'SMFW'}</td>` : ''}
@@ -253,7 +253,7 @@ function viewRecv() {
     ${os.length ? `<div class="tablewrap"><table class="recvlist"><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>Ticked</th><th class="acts"></th></tr></thead><tbody>${os.map(o => {
       const c = custOf(o.customer_id);
       return `<tr><td class="mono">${esc(orderNo(o.number))}${orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conv.</span>' : ''}</td>
-        <td>${c ? `${c.cid != null ? `<span class="mono muted">${esc(c.cid)}</span> ` : ''}${esc(c.name)}` : '<span class="muted">No customer</span>'}</td>
+        <td>${c ? esc(c.name) : '<span class="muted">No customer</span>'}</td>
         <td>${esc(fmtDate(o.required_date))}</td><td><span class="${tickedCount(o) < (o.lines || []).length ? 'ndtxt' : 'okgreen'}">${tickedCount(o)}/${(o.lines || []).length}</span></td>
         <td class="num acts recvacts"><button class="ghost" onclick="openReceipt('${o.id}')">Open</button><button class="ghost" onclick="markReceived('${o.id}', this)">Mark received</button></td></tr>`;
     }).join('')}</tbody></table></div>` : `<div class="card empty">${S.orders.some(o => o.status === 'complete' && !o.received_at) ? 'No orders match this search.' : 'Nothing waiting. Every order has been received.'}</div>`}`;
@@ -269,7 +269,7 @@ function viewRecvOrder() {
   const o = S.orders.find(x => x.id === receipt?.id); if (!o) { view = 'recv'; return viewRecv(); }
   const c = custOf(o.customer_id), sup = l => S.suppliers.find(s => s.id === prodOf(l.product_id)?.supplier_id)?.name || 'Other';
   const bySup = {}; receipt.lines.forEach((l, i) => (bySup[sup(l)] ||= []).push([l, i]));
-  return `<div class="row spread"><div><h1>Order ${esc(orderNo(o.number))}</h1><div class="recvcust">${c ? `${c.cid != null ? `<span class="mono muted">${esc(c.cid)}</span> ` : ''}${esc(c.name)}` : '<span class="muted">No customer</span>'}</div><p class="sub">${o.required_date ? 'Needed ' + esc(fmtDate(o.required_date)) + '. ' : ''}Tick Received for each line that arrived, changing the quantity if a different amount came, or tick Not delivered.</p></div>
+  return `<div class="row spread"><div><h1>Order ${esc(orderNo(o.number))}</h1><div class="recvcust">${c ? esc(c.name) : '<span class="muted">No customer</span>'}</div><p class="sub">${o.required_date ? 'Needed ' + esc(fmtDate(o.required_date)) + '. ' : ''}Tick Received for each line that arrived, changing the quantity if a different amount came, or tick Not delivered.</p></div>
       <div class="row"><button onclick="receipt=null;go('recv',false)">Back</button><button class="primary" onclick="saveReceipt(this)">Save</button></div></div>
     ${Object.entries(bySup).map(([sn, ls]) => `<h2 style="margin:16px 0 8px">${esc(sn)}</h2><div class="tablewrap"><table><thead><tr><th>Product</th><th>Pack</th><th class="num">Ordered</th><th class="num">Qty received</th><th class="pick">Received</th><th class="pick">Not delivered</th></tr></thead><tbody>
       ${ls.map(([l, i]) => `<tr${l.undelivered ? ' class="nd"' : ''}><td>${esc(l.product_name)}</td><td>${esc(l.pack_name)}</td><td class="num mono">${esc(l.ordered)}</td>
@@ -351,7 +351,7 @@ function homeTip() {
 function viewMine() {
   const os = S.orders;
   const me = custOf(profile.customer_id);
-  return `<div class="row spread"><div>${me?.name ? `<p class="custname">${esc(me.name)}${me.cid != null ? ` <span class="pill">CID ${esc(me.cid)}</span>` : ''}</p>` : ''}<h1>My orders</h1></div><button class="primary" onclick="go('entry')">New order</button></div>
+  return `<div class="row spread"><div>${me?.name ? `<p class="custname">${esc(me.name)}</p>` : ''}<h1>My orders</h1></div><button class="primary" onclick="go('entry')">New order</button></div>
     ${homeTip()}
     ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Required</th><th class="num lines">Lines</th><th>Status</th><th class="acts"></th></tr></thead><tbody>${os.map(o => orderRow(o, { customer: false })).join('')}</tbody></table></div>`
       : `<div class="card empty">You haven’t placed any orders yet. Press <b>New order</b> to start one.</div>`}`;
@@ -423,7 +423,7 @@ function viewEntry() {
   }
   const custField = !needsCustomer(d) ? ''
     : admin
-    ? `<label class="f">Customer<select id="e-cust" ${dis}><option value="">Choose a customer…</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === d.customer_id ? 'selected' : ''}>${c.cid != null ? esc(c.cid) + ' · ' : ''}${esc(c.name)}</option>`).join('')}</select></label>
+    ? `<label class="f">Customer<select id="e-cust" ${dis}><option value="">Choose a customer…</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === d.customer_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
        <label class="f">Contact phone<input id="e-phone" disabled value="${esc(custOf(d.customer_id)?.phone || '')}"></label>`
     : `<label class="f">Customer<input disabled value="${esc(custOf(d.customer_id)?.name || '')}"></label>`;
   const note = d.status === 'complete' ? (admin ? 'This order is complete. Reopen it to make changes.' : 'SMFW has processed this order.')
@@ -1038,7 +1038,7 @@ function editLogin(uid) {
   openDialog(u.approved ? 'Edit login' : 'Approve login',
     `<p style="margin:0"><b>${esc(u.full_name || u.email)}</b><br><span class="mono muted">${esc(u.email)}</span>${u.business ? `<br>Business they gave: ${esc(u.business)}` : ''}</p>
     <label class="f">Role<select name="role" id="f-role" onchange="document.getElementById('custpick').hidden = this.value!=='customer'"><option value="customer" ${!['admin', 'manager', 'receiver'].includes(u.role) ? 'selected' : ''}>Customer: orders for one business</option><option value="receiver" ${u.role === 'receiver' ? 'selected' : ''}>Receiver: checks deliveries and marks orders received</option><option value="manager" ${u.role === 'manager' ? 'selected' : ''}>Manager: orders, customers and products, but not Suppliers, Emails or Logins</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin: full access, like you</option></select></label>
-    <label class="f" id="custpick" ${['admin', 'manager', 'receiver'].includes(u.role) ? 'hidden' : ''}>Customer this login orders for<select name="customer_id" id="f-customer_id"><option value="">Choose a customer…</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === u.customer_id ? 'selected' : ''}>${esc(c.cid)} · ${esc(c.name)}</option>`).join('')}</select></label>
+    <label class="f" id="custpick" ${['admin', 'manager', 'receiver'].includes(u.role) ? 'hidden' : ''}>Customer this login orders for<select name="customer_id" id="f-customer_id"><option value="">Choose a customer…</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === u.customer_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
     <label class="f">Access<select name="approved" id="f-approved"><option value="1" selected>Allowed to sign in</option><option value="0">Blocked</option></select></label>`,
     f => {
       const role = f.get('role'), customer_id = f.get('customer_id') || null, approved = f.get('approved') === '1';
