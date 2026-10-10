@@ -25,7 +25,7 @@ To give another staff member full access, approve their login with the role **Ad
 
 | File | What it does |
 | --- | --- |
-| `index.html` | The page shell |
+| `index.html` | The page shell. Bump the `?v=` on `app.js` and `styles.css` with each change so browsers fetch the new files |
 | `app.js` | Everything the app does |
 | `styles.css` | Look and layout, light and dark |
 | `config.js` | Which Supabase project to use |
