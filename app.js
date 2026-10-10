@@ -7,6 +7,8 @@ const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
 const S = { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], emailsMissing: false, groupsMissing: false };
 const GROUPS = ['Organic', 'Conventional'];
 const groupOf = p => p.product_group || 'Organic';
+// Each customer orders one group (migrations/013); customers saved before that are Organic.
+const custGroup = c => c?.product_group || 'Organic';
 // An order's group comes from its products: Organic unless every line is Conventional.
 const orderGroups = o => [...new Set((o.lines || []).map(l => prodOf(l.product_id)).filter(Boolean).map(groupOf))];
 const orderGroup = o => { const g = orderGroups(o); return g.length === 1 ? g[0] : 'Organic'; };
@@ -74,6 +76,8 @@ async function loadAll() {
   S.groupsMissing = !!probe.error && /product_group/.test(probe.error.message || '');
   probe = await sb.from('product_packs').select('ref').limit(1);
   S.refMissing = !!probe.error && /ref/.test(probe.error.message || '');
+  probe = await sb.from('customers').select('product_group').limit(1);
+  S.custGroupMissing = !!probe.error && /product_group/.test(probe.error.message || '');
   const prods = sb.from('products').select(cols(!S.groupsMissing));
   const orders = sb.from('orders').select('*').order('number', { ascending: false });
   if (isReceiver()) {
@@ -88,7 +92,7 @@ async function loadAll() {
     S.emailsMissing = !!m.error; S.emails = m.data || [];
     if (m.error && !['42P01', 'PGRST205'].includes(m.error.code)) toast(friendly(m.error));
   } else {
-    const [c, p, o] = await Promise.all([sb.from('customers').select('id,cid,name'), prods.eq('active', true), orders]);
+    const [c, p, o] = await Promise.all([sb.from('customers').select(`id,cid,name${S.custGroupMissing ? '' : ',product_group'}`), prods.eq('active', true), orders]);
     for (const r of [c, p, o]) if (r.error) toast(friendly(r.error));
     S.customers = c.data || []; S.suppliers = []; S.products = p.data || []; S.orders = o.data || [];
   }
@@ -368,7 +372,7 @@ function openOrder(id) {
 }
 
 // ---------- order entry ----------
-function blankOrder() { return { id: null, number: null, customer_id: isAdmin() ? '' : profile?.customer_id, order_date: today(), required_date: '', special: '', status: 'draft', source: isAdmin() ? 'admin' : 'customer', qty: {}, missing: [], group: 'Organic' }; }
+function blankOrder() { return { id: null, number: null, customer_id: isAdmin() ? '' : profile?.customer_id, order_date: today(), required_date: '', special: '', status: 'draft', source: isAdmin() ? 'admin' : 'customer', qty: {}, missing: [], group: isAdmin() ? 'Organic' : custGroup(custOf(profile?.customer_id)) }; }
 const outerOf = k => Number(k.outer_multiple) || 1;
 function sectionsFor(products) {
   const secs = [], idx = {};
@@ -417,13 +421,12 @@ function viewEntry() {
       return `<section class="supplier-block"><div class="supplier-head"><h2>${esc(s.name)}</h2><span>${esc(s.cutoff || '')}</span></div><div class="sections">${g === 'Conventional' ? flatHtml(S.products.filter(p => p.supplier_id === s.id && groupOf(p) === g), dis) : gridHtml(secs, dis)}</div></section>`;
     }).join('') || `<div class="card empty" style="margin-top:16px">No ${g} products are set up yet. Add them under <b>Products</b>.</div>`;
   } else {
-    // Customers only ever order the Organic range; Conventional is ordered through the admin app.
-    const secs = sectionsFor(S.products.filter(p => groupOf(p) === 'Organic'));
-    blocks = secs.length ? `<section class="supplier-block"><div class="supplier-head"><h2>Organic</h2><span>Fill in the boxes you need. Grey boxes aren’t available.</span></div><div class="sections">${gridHtml(secs, dis)}</div></section>` : '';
+    // Customers order their own group only (set on the customer); Conventional uses the same flat list as the admin app.
+    const g = custGroup(custOf(profile?.customer_id)), mine = S.products.filter(p => groupOf(p) === g), secs = sectionsFor(mine);
+    blocks = secs.length ? `<section class="supplier-block"><div class="supplier-head"><h2>${g}</h2><span>${g === 'Conventional' ? 'Fill in the quantities you need.' : 'Fill in the boxes you need. Grey boxes aren’t available.'}</span></div><div class="sections">${g === 'Conventional' ? flatHtml(mine, dis) : gridHtml(secs, dis)}</div></section>` : '';
   }
-  const custField = !needsCustomer(d) ? ''
-    : admin
-    ? `<label class="f">Customer<select id="e-cust" ${dis}><option value="">Choose a customer…</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === d.customer_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+  const custField = admin
+    ? `<label class="f">Customer<select id="e-cust" ${dis}><option value="">${needsCustomer(d) ? 'Choose a customer…' : 'No customer (SMFW, CID 1183)'}</option>${S.customers.filter(c => custGroup(c) === (d.group || 'Organic') || c.id === d.customer_id).sort(byName).map(c => `<option value="${c.id}" ${c.id === d.customer_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
        <label class="f">Contact phone<input id="e-phone" disabled value="${esc(custOf(d.customer_id)?.phone || '')}"></label>`
     : `<label class="f">Customer<input disabled value="${esc(custOf(d.customer_id)?.name || '')}"></label>`;
   const note = d.status === 'complete' ? (admin ? 'This order is complete. Reopen it to make changes.' : 'SMFW has processed this order.')
@@ -451,6 +454,8 @@ function setGroup(g) {
   const other = Object.entries(draft.qty).filter(([k, q]) => +q > 0 && groupOf(packOf(k)?.p || {}) !== g);
   if (other.length && !confirm(`Switch to a ${g} order? The ${other.length} ${draft.group} line${other.length > 1 ? 's' : ''} already entered will be cleared.`)) return;
   other.forEach(([k]) => delete draft.qty[k]);
+  // Customers are set up for one group, so a customer from the other group is cleared.
+  if (draft.customer_id && custGroup(custOf(draft.customer_id)) !== g) draft.customer_id = '';
   draft.group = g; render();
 }
 function draftLines() {
@@ -537,8 +542,8 @@ async function deleteOrder(btn) {
 function viewCustomers() {
   const cs = S.customers.slice().sort(byName);
   return `<div class="row spread"><div><h1>Customers</h1><p class="sub">The businesses who order from you.${isManager() ? '' : ' Link a login to a customer under <b>Logins</b>.'}</p></div><button class="primary" onclick="editCustomer()">Add customer</button></div>
-  ${cs.length ? `<div class="tablewrap"><table><thead><tr><th class="num">CID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th>${isManager() ? '' : '<th class="num">Logins</th>'}<th class="num">Orders</th><th></th></tr></thead><tbody>
-    ${cs.map(c => `<tr><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td>${isManager() ? '' : `<td class="num">${S.profiles.filter(u => u.customer_id === c.id).length}</td>`}<td class="num">${S.orders.filter(o => o.customer_id === c.id).length}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
+  ${cs.length ? `<div class="tablewrap"><table><thead><tr><th class="num">CID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th>${S.custGroupMissing ? '' : '<th>Type</th>'}${isManager() ? '' : '<th class="num">Logins</th>'}<th class="num">Orders</th><th></th></tr></thead><tbody>
+    ${cs.map(c => `<tr><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td>${S.custGroupMissing ? '' : `<td><span class="pill grp-${custGroup(c).toLowerCase()}">${custGroup(c)}</span></td>`}${isManager() ? '' : `<td class="num">${S.profiles.filter(u => u.customer_id === c.id).length}</td>`}<td class="num">${S.orders.filter(o => o.customer_id === c.id).length}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
   </tbody></table></div>` : `<div class="card empty">No customers yet.</div>`}`;
 }
 function viewSuppliers() {
@@ -739,7 +744,7 @@ async function printOrder(id, btn) {
   const w = window.open('', '_blank'); // opened straight from the click so the browser allows it
   btn.disabled = true;
   try {
-    const { buf } = await formPdf(o, { id: '*', name: 'Organic' });
+    const { buf } = await formPdf(o, { id: '*', name: custGroup(custOf(o.customer_id)) });
     const url = URL.createObjectURL(new Blob([buf], { type: 'application/pdf' }));
     if (w) w.location.href = url; else download(buf, safeName(`${orderNo(o.number)} order`) + '.pdf');
     setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -833,8 +838,8 @@ const CONVENTIONAL_CID = 1183;
 const ymd = d => (d || '').replace(/-/g, '');
 const csvCell = v => /[",\r\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? '');
 function orderCsv(o) {
-  // Conventional orders always go under customer number 1183.
-  const cust = orderGroup(o) === 'Conventional' ? CONVENTIONAL_CID : custOf(o.customer_id)?.cid ?? '';
+  // An order goes under its customer's CID; a Conventional order SMFW enters without a customer goes under 1183.
+  const cust = o.customer_id ? custOf(o.customer_id)?.cid ?? '' : orderGroup(o) === 'Conventional' ? CONVENTIONAL_CID : '';
   const missing = [], rows = [['H', cust, ymd(o.required_date || o.order_date)]];
   for (const l of o.lines || []) {
     if (l.undelivered || !(+l.qty > 0)) continue; // undelivered lines never go in the upload
@@ -937,10 +942,11 @@ function editCustomer(id) {
   const c = id ? custOf(id) : {};
   openDialog(id ? 'Edit customer' : 'Add customer',
     `<div class="grid g2">${fld('cid', 'CID (unique number)', c.cid ?? nextCid(), 'number', 'required min="1" step="1"')}${fld('name', 'Customer name', c.name, 'text', 'required')}</div>
-     <div class="grid g2">${fld('contact', 'Contact person', c.contact)}${fld('phone', 'Contact phone', c.phone)}</div>${fld('email', 'Email', c.email, 'email')}
+     <div class="grid g2">${fld('contact', 'Contact person', c.contact)}${fld('phone', 'Contact phone', c.phone)}</div><div class="grid g2">${fld('email', 'Email', c.email, 'email')}${S.custGroupMissing ? '' : `<label class="f">Orders products<select name="product_group" id="f-product_group">${GROUPS.map(g => `<option value="${g}" ${custGroup(c) === g ? 'selected' : ''}>${g}</option>`).join('')}</select></label>`}</div>
      <label class="f">Notes<textarea name="notes" id="f-notes">${esc(c.notes)}</textarea></label>`,
     f => {
       const row = { cid: Number(f.get('cid')), name: f.get('name').trim(), contact: f.get('contact').trim(), phone: f.get('phone').trim(), email: f.get('email').trim(), notes: f.get('notes').trim() };
+      if (!S.custGroupMissing) row.product_group = f.get('product_group');
       if (!Number.isInteger(row.cid) || row.cid < 1) { toast('CID must be a whole number above 0.'); return false; }
       const clash = S.customers.find(x => x.id !== id && x.cid === row.cid); if (clash) { toast(`CID ${row.cid} is already used by ${clash.name}. Next free CID is ${nextCid()}.`); return false; }
       return run(id ? sb.from('customers').update(row).eq('id', id) : sb.from('customers').insert(row), 'Customer saved');

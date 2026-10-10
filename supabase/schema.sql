@@ -132,8 +132,8 @@ begin
     if tg_op = 'INSERT' then new.created_by := auth.uid(); else new.created_by := old.created_by; new.number := old.number; end if;
     -- Customers order Organic only; Conventional is ordered through the admin app.
     if exists (select 1 from jsonb_array_elements(new.lines) l join public.products p on p.id::text = l->>'product_id'
-               where p.product_group <> 'Organic') then
-      raise exception 'Conventional products can only be ordered by SMFW';
+               where p.product_group <> coalesce(public.my_product_group(), 'Organic')) then
+      raise exception 'Your account orders % products only', coalesce(public.my_product_group(), 'Organic');
     end if;
   end if;
   return new;
@@ -271,4 +271,23 @@ drop policy if exists manager_read on public.suppliers;
 create policy manager_read on public.suppliers for select using (public.is_manager());
 drop policy if exists manager_read on public.supplier_emails;
 create policy manager_read on public.supplier_emails for select using (public.is_manager());
+
+
+-- ---------- customer product group (also in migrations/013_customer_group.sql) ----------
+alter table public.customers add column if not exists product_group text not null default 'Organic';
+alter table public.customers drop constraint if exists customers_product_group_check;
+alter table public.customers add constraint customers_product_group_check check (product_group in ('Organic','Conventional'));
+
+create or replace function public.my_product_group() returns text
+language sql stable security definer set search_path = public as $$
+  select c.product_group from public.profiles p join public.customers c on c.id = p.customer_id where p.id = auth.uid() and p.approved;
+$$;
+
+-- Customers see the active products (and packs) of their own group only.
+drop policy if exists customer_read on public.products;
+create policy customer_read on public.products for select
+  using (active and product_group = public.my_product_group());
+drop policy if exists customer_read on public.product_packs;
+create policy customer_read on public.product_packs for select using (
+  exists (select 1 from public.products p where p.id = product_id and p.active and p.product_group = public.my_product_group()));
 
