@@ -759,15 +759,10 @@ function emailPicked() {
     return `<div class="card" style="padding:12px"><div class="row spread"><b>${esc(s.name)}</b><span class="muted" style="font-size:12px">${list.length} form${list.length > 1 ? 's' : ''}</span></div>
       <p style="margin:6px 0;font-size:13px">${none ? '<span class="err">No addresses are switched on for this supplier. Add them under <b>Emails</b> first.</span>' : ['to', 'cc', 'bcc'].filter(k => r[k].length).map(k => `<b>${SEND_AS[k]}:</b> <span class="mono">${r[k].map(esc).join(', ')}</span>`).join('<br>')}</p>
       <ul class="sumlist" style="margin:6px 0">${list.map(o => `<li><span class="mono">${esc(formFileName(o, s))}</span></li>`).join('')}</ul>
-      <div class="row" style="margin-bottom:10px"><button type="button" class="primary" ${none ? 'disabled' : ''} onclick="outlookEmail(${i}, this)">Open in Outlook</button><span class="muted" style="font-size:12px">Saves an email with the PDF${list.length > 1 ? 's' : ''} attached. Open it from Downloads, then press Send.</span></div>
-      <p class="muted" style="margin:0 0 6px;font-size:12px">Or do it by hand:</p>
-      <div class="row"><b style="font-size:13px">1.</b><button type="button" onclick="downloadForms(${i}, this)">Download form${list.length > 1 ? 's' : ''}</button></div>
-      <div class="row" style="margin-top:8px"><b style="font-size:13px">2.</b><span style="font-size:13px">Open a new email in</span>${none ? '<span class="muted" style="font-size:13px">(add addresses first)</span>' : composeLinks(s, list).map(([label, href]) => `<a class="btn" href="${esc(href)}" target="_blank" rel="noopener">${label}</a>`).join('')}</div>
-      <p class="muted" style="margin:8px 0 0;font-size:12px">3. Attach the downloaded file${list.length > 1 ? 's' : ''} and press Send.</p></div>`;
+      <div class="row"><button type="button" class="primary" ${none ? 'disabled' : ''} onclick="outlookEmail(${i}, this)">Open in Outlook</button><span class="muted" style="font-size:12px">Saves an email with the PDF${list.length > 1 ? 's' : ''} attached. Open it from Downloads, then press Send.</span></div></div>`;
   }).join('');
   const dlg = $('#dlg');
   dlg.innerHTML = `<div class="grid"><h2>Email ${os.length} order${os.length > 1 ? 's' : ''} to suppliers</h2>
-    <p class="muted" style="margin:0;font-size:13px">Each order goes as the supplier’s full order form with its quantities filled in. Download the form${os.length > 1 ? 's' : ''}, then open a new email with the addresses, subject and message already filled in. Pick <b>Email app</b> for Outlook, Apple Mail or Mail on your phone, or <b>Gmail</b> / <b>Outlook web</b> if you use email in your browser.</p>
     ${notDone.length ? `<div class="banner">Not marked complete yet: ${notDone.map(o => esc(orderNo(o.number))).join(', ')}.</div>` : ''}
     ${empty.length ? `<div class="banner">No lines to send on ${empty.map(o => esc(orderNo(o.number))).join(', ')}, so ${empty.length > 1 ? 'they are' : 'it is'} skipped.</div>` : ''}
     ${blocks || '<div class="card empty">None of the selected orders have any lines.</div>'}
