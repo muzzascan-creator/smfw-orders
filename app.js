@@ -18,6 +18,8 @@ const picked = new Set(); // orders ticked on the Orders tab for emailing
 const $ = s => document.querySelector(s);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+// Orders being placed must be required tomorrow or later.
+const tomorrow = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
 const fmtDate = d => { if (!d) return ''; const [y, m, dd] = d.split('-'); return new Date(+y, m - 1, +dd).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); };
 const fmtWhen = t => t ? new Date(t).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
 const byName = (a, b) => (a.name || '').localeCompare(b.name || '');
@@ -322,7 +324,7 @@ function viewEntry() {
       <div class="card grid g2">
         ${custField}
         <label class="f">Today’s date<input type="date" id="e-date" ${dis} value="${esc(d.order_date)}"></label>
-        <label class="f">Day / date required<input type="date" id="e-req" ${dis} value="${esc(d.required_date)}"></label>
+        <label class="f">Day / date required<input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${tomorrow()}"` : ''} value="${esc(d.required_date)}"></label>
         <label class="f" style="grid-column:1/-1">Special requirements<textarea id="e-special" ${dis}>${esc(d.special)}</textarea></label>
       </div>
       <div class="row" style="margin-top:16px"><input class="search" id="e-find" placeholder="Find a product by name or code"></div>
@@ -382,6 +384,8 @@ async function saveOrder(status) {
     if (needsCustomer(draft) && !draft.customer_id) return toast('Choose a customer first.');
     if (!lines.length) return toast('Enter at least one quantity first.');
     if (!draft.required_date) return toast('Add the day/date required first.');
+    // Only checked when the order is placed, so older orders can still be processed after their date.
+    if (draft.status === 'draft' && draft.required_date < tomorrow()) return toast(`The date required must be tomorrow (${fmtDate(tomorrow())}) or later.`);
   } else if (needsCustomer(draft) && !draft.customer_id) return toast('Choose a customer first.');
   const row = { customer_id: needsCustomer(draft) ? draft.customer_id : null, order_date: draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
   saving = true;
