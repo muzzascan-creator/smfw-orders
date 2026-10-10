@@ -133,3 +133,4 @@ tr.rowlink{cursor:pointer}tr.rowlink:hover td{background:var(--sunk)}
 .flat{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:12px}
 .flat .flatsec{border:1px solid var(--line)}
 .flat .flatsec table{table-layout:fixed;width:100%}
+th.pick .picklbl{display:block;font-size:9px;letter-spacing:.04em;margin-bottom:2px}

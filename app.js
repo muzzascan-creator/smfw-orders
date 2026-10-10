@@ -13,6 +13,7 @@ const orderGroup = o => { const g = orderGroups(o); return g.length === 1 ? g[0]
 let session = null, profile = null, view = null, draft = null, listFilter = 'all', search = '', authMode = 'signin', authMsg = '', ordersChannel = null;
 let groupFilter = 'all';
 const picked = new Set(); // orders ticked on the Orders tab for emailing
+const upPicked = new Set(); // orders ticked on the Orders tab for an upload CSV
 
 // ---------- helpers ----------
 const $ = s => document.querySelector(s);
@@ -213,6 +214,7 @@ function orderRow(o, opts = {}) {
     <td class="num lines">${(o.lines || []).length}</td>
     <td><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>${opts.pick && o.emailed_at ? ` <span class="pill emailed" title="Emailed ${esc(fmtWhen(o.emailed_at))}">Emailed</span>` : ''}</td>
     <td class="num openc"><button class="ghost" onclick="event.stopPropagation();openOrder('${o.id}')">Open</button></td>
+    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
 }
 function viewInbox() {
@@ -232,18 +234,22 @@ function viewOrders() {
       ${['all', 'draft', 'submitted', 'complete'].map(f => `<button class="${listFilter === f ? 'primary' : ''}" onclick="listFilter='${f}';render()">${f === 'all' ? 'All' : f === 'draft' ? 'Drafts' : f === 'submitted' ? 'Sent' : 'Complete'} (${count(f)})</button>`).join('')}
       <input class="search" id="osearch" placeholder="Search order no., customer or CID" value="${esc(search)}">
     </div>
-    ${os.length ? `<div class="pickbar row spread"><span id="pickcount">${pickText()}</span><div class="row"><button id="pickclear" ${picked.size ? '' : 'hidden'} onclick="picked.clear();render()">Clear</button><button class="primary" id="pickmail" ${picked.size ? '' : 'disabled'} onclick="emailPicked()">Email selected</button></div></div>
-      <div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num lines">Lines</th><th>Status</th><th class="openc"></th><th class="pick"><input type="checkbox" id="pickall" aria-label="Select all orders shown" ${os.every(o => picked.has(o.id)) ? 'checked' : ''}></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true, pick: true })).join('')}</tbody></table></div>`
+    ${os.length ? `<div class="pickbar row spread"><span id="pickcount">${pickText()}</span><div class="row"><button id="pickclear" ${picked.size || upPicked.size ? '' : 'hidden'} onclick="picked.clear();upPicked.clear();render()">Clear</button><button class="primary" id="pickup" ${upPicked.size ? '' : 'disabled'} onclick="uploadCsvs()">Create upload CSV</button><button class="primary" id="pickmail" ${picked.size ? '' : 'disabled'} onclick="emailPicked()">Email selected</button></div></div>
+      <div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num lines">Lines</th><th>Status</th><th class="openc"></th><th class="pick"><span class="picklbl">Upload</span><input type="checkbox" id="upall" aria-label="Select all orders shown for upload" ${os.every(o => upPicked.has(o.id)) ? 'checked' : ''}></th><th class="pick"><span class="picklbl">Email</span><input type="checkbox" id="pickall" aria-label="Select all orders shown for emailing" ${os.every(o => picked.has(o.id)) ? 'checked' : ''}></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true, pick: true })).join('')}</tbody></table></div>`
       : `<div class="card empty">${S.orders.length ? 'No orders match this filter.' : 'No orders yet.'}</div>`}`;
 }
 function wireOrderSearch() {
   const i = $('#osearch'); if (!i) return; i.oninput = () => { search = i.value; render(); const j = $('#osearch'); j.focus(); j.setSelectionRange(j.value.length, j.value.length); };
-  const boxes = [...document.querySelectorAll('input[data-pick]')];
-  const sync = () => { $('#pickcount').textContent = pickText(); $('#pickmail').disabled = !picked.size; $('#pickclear').hidden = !picked.size; const all = $('#pickall'); if (all) all.checked = boxes.length && boxes.every(b => b.checked); };
-  boxes.forEach(b => b.onchange = () => { b.checked ? picked.add(b.dataset.pick) : picked.delete(b.dataset.pick); sync(); });
-  const all = $('#pickall'); if (all) all.onchange = () => { boxes.forEach(b => { b.checked = all.checked; all.checked ? picked.add(b.dataset.pick) : picked.delete(b.dataset.pick); }); sync(); };
+  // Two tick columns: Upload (CSV) and Email, each with its own select-all box.
+  const sync = () => { $('#pickcount').textContent = pickText(); $('#pickmail').disabled = !picked.size; $('#pickup').disabled = !upPicked.size; $('#pickclear').hidden = !picked.size && !upPicked.size; };
+  [['pick', picked, 'pickall'], ['up', upPicked, 'upall']].forEach(([key, set, allId]) => {
+    const boxes = [...document.querySelectorAll(`input[data-${key}]`)], all = $('#' + allId);
+    const syncAll = () => { if (all) all.checked = boxes.length && boxes.every(b => b.checked); sync(); };
+    boxes.forEach(b => b.onchange = () => { b.checked ? set.add(b.dataset[key]) : set.delete(b.dataset[key]); syncAll(); });
+    if (all) all.onchange = () => { boxes.forEach(b => { b.checked = all.checked; all.checked ? set.add(b.dataset[key]) : set.delete(b.dataset[key]); }); sync(); };
+  });
 }
-const pickText = () => picked.size ? `${picked.size} order${picked.size > 1 ? 's' : ''} selected` : 'Tick orders on the right to email them to the supplier.';
+const pickText = () => picked.size || upPicked.size ? [upPicked.size && `${upPicked.size} for upload`, picked.size && `${picked.size} to email`].filter(Boolean).join(' · ') : 'Tick orders on the right to create an upload CSV or email them to the supplier.';
 // On an iPhone or iPad in Safari, suggest adding the site to the home screen so it opens like an app.
 const isIos = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
@@ -690,6 +696,44 @@ function composeLinks(s, list) {
     ['Gmail', 'https://mail.google.com/mail/?' + qs({ view: 'cm', fs: '1', to: r.to.join(','), cc: r.cc.join(','), bcc: r.bcc.join(','), su: subject, body })],
     ['Outlook web', 'https://outlook.office.com/mail/deeplink/compose?' + qs({ to: r.to.join(','), cc: r.cc.join(','), bcc: r.bcc.join(','), subject, body })],
   ];
+}
+// Upload CSV, one file per order:
+//   H,<CID>,<date as YYYYMMDD>
+//   D,<Ref>,<order qty × outer multiple>   (one line per order line)
+const ymd = d => (d || '').replace(/-/g, '');
+const csvCell = v => /[",\r\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? '');
+function orderCsv(o) {
+  const c = custOf(o.customer_id), missing = [], rows = [['H', c?.cid ?? '', ymd(o.required_date || o.order_date)]];
+  for (const l of o.lines || []) {
+    const k = packOf(l.pack_id)?.k, ref = (k?.ref || '').trim();
+    if (!ref) { missing.push(`${l.product_name} (${l.pack_name})`); continue; }
+    rows.push(['D', ref, (+l.qty || 0) * (Number(l.outer) || Number(k?.outer_multiple) || 1)]);
+  }
+  return { text: rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n', missing };
+}
+async function uploadCsvs() {
+  if (S.refMissing) return toast('One step first: run 008_pack_ref.sql in Supabase so products can have a Ref.');
+  const os = S.orders.filter(o => upPicked.has(o.id)).sort((a, b) => a.number - b.number);
+  const bad = [], made = [];
+  for (const o of os) {
+    const { text, missing } = orderCsv(o);
+    if (!(o.lines || []).length) { bad.push(`${orderNo(o.number)} has no lines`); continue; }
+    if (missing.length) { bad.push(`${orderNo(o.number)}: no Ref for ${missing.join(', ')}`); continue; }
+    if (made.length) await new Promise(r => setTimeout(r, 400));
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
+    const a = Object.assign(document.createElement('a'), { href: url, download: safeName(`${orderNo(o.number)} ${custOf(o.customer_id)?.name || ''}`) + '.csv' }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+    made.push(o.id);
+  }
+  made.forEach(id => upPicked.delete(id));
+  render();
+  if (bad.length) {
+    const dlg = $('#dlg');
+    dlg.innerHTML = `<div class="grid"><h2>${made.length ? `${made.length} CSV file${made.length > 1 ? 's' : ''} created` : 'No CSV files created'}</h2>
+      <p style="margin:0">These orders were skipped. Add the missing Refs under <b>Products</b>, then try again:</p>
+      <ul class="sumlist">${bad.map(b => `<li>${esc(b)}</li>`).join('')}</ul>
+      <div class="row" style="justify-content:flex-end"><button type="button" class="primary" onclick="document.getElementById('dlg').close()">OK</button></div></div>`;
+    dlg.showModal();
+  } else toast(`${made.length} CSV file${made.length > 1 ? 's' : ''} created`);
 }
 async function markEmailed(btn) {
   const ids = pickedBySupplier().os.filter(o => (o.lines || []).some(supplierOfLine)).map(o => o.id);
