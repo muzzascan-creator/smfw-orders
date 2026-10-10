@@ -654,7 +654,7 @@ async function downloadForms(i, btn) {
 function composeLinks(s, list) {
   const r = recipients(s), nos = list.map(o => orderNo(o.number)).join(', ');
   const dates = [...new Set(list.map(o => o.required_date).filter(Boolean))].map(fmtDate);
-  const subject = `SMFW order ${nos}${dates.length === 1 ? ' for ' + dates[0] : ''}`;
+  const subject = `Coolibah Salads Sydney order ${nos}${dates.length === 1 ? ' for ' + dates[0] : ''}`;
   const body = `Hi ${s.name},\n\nPlease find attached our order form${list.length > 1 ? 's' : ''}:\n${list.map(o => `- ${orderNo(o.number)}${o.required_date ? ', required ' + fmtDate(o.required_date) : ''}`).join('\n')}\n\nAttached: ${list.map(o => formFileName(o, s)).join(', ')}\n\nRegards,\nCoolibah Salads Sydney`;
   const enc = encodeURIComponent, addr = xs => xs.map(x => enc(x).replace(/%40/g, '@')).join(',');
   const mq = [r.cc.length && 'cc=' + addr(r.cc), r.bcc.length && 'bcc=' + addr(r.bcc), 'subject=' + enc(subject), 'body=' + enc(body)].filter(Boolean).join('&');
