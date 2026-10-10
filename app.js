@@ -132,6 +132,7 @@ async function enter() {
   $('#contact').hidden = isAdmin() || isReceiver(); // customers see who to call or email
   $('#whoami').textContent = (profile.full_name || profile.email) + (isAdmin() ? ' · Admin' : isReceiver() ? ' · Receiver' : '');
   await loadAll();
+  if (isAdmin()) await loadCsvDir();
   listenForOrders();
   if (!view) view = homeView();
   render();
@@ -320,7 +321,7 @@ function viewOrders() {
       ${['all', 'draft', 'submitted', 'complete'].map(f => `<button class="${listFilter === f ? 'primary' : ''}" onclick="listFilter='${f}';render()">${f === 'all' ? 'All' : f === 'draft' ? 'Drafts' : f === 'submitted' ? 'Sent' : 'Complete'} (${count(f)})</button>`).join('')}
       <input class="search" id="osearch" placeholder="Search order no., customer or CID" value="${esc(search)}">
     </div>
-    ${os.length ? `<div class="pickbar row spread"><span id="pickcount">${pickText()}</span><div class="row"><button id="pickclear" ${picked.size || upPicked.size ? '' : 'hidden'} onclick="picked.clear();upPicked.clear();render()">Clear</button><button class="primary" id="pickup" ${upPicked.size ? '' : 'disabled'} onclick="uploadCsvs()">Create upload CSV</button><button class="primary" id="pickmail" ${picked.size ? '' : 'disabled'} onclick="emailPicked()">Email selected</button></div></div>
+    ${os.length ? `<div class="pickbar row spread"><span id="pickcount">${pickText()}</span><div class="row"><button id="pickclear" ${picked.size || upPicked.size ? '' : 'hidden'} onclick="picked.clear();upPicked.clear();render()">Clear</button><button class="primary" id="pickup" ${upPicked.size ? '' : 'disabled'} onclick="uploadCsvs()">Create upload CSV</button>${csvFolderNote()}<button class="primary" id="pickmail" ${picked.size ? '' : 'disabled'} onclick="emailPicked()">Email selected</button></div></div>
       <div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num lines">Lines</th><th><div class="stgrid"><span>Status</span><span>Emailed</span><span>Received</span><span>CSV</span></div></th><th class="openc"></th><th class="pick"><span class="picklbl">Upload</span><input type="checkbox" id="upall" aria-label="Select all orders shown for upload" ${os.every(o => upPicked.has(o.id)) ? 'checked' : ''}></th><th class="pick"><span class="picklbl">Email</span><input type="checkbox" id="pickall" aria-label="Select all orders shown for emailing" ${os.every(o => picked.has(o.id)) ? 'checked' : ''}></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true, pick: true })).join('')}</tbody></table></div>`
       : `<div class="card empty">${S.orders.length ? 'No orders match this filter.' : 'No orders yet.'}</div>`}`;
 }
@@ -843,17 +844,50 @@ function orderCsv(o) {
   }
   return { text: rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n', missing };
 }
+// CSV folder: Chrome and Edge on a PC can save straight into a chosen folder (the C94GSHS folder on the network).
+// The folder is picked once and remembered in this browser; other browsers fall back to Downloads.
+const CSV_FOLDER = 'C94GSHS';
+const canPickFolder = () => 'showDirectoryPicker' in window;
+let csvDir = null;
+function idb(mode, fn) {
+  return new Promise((res, rej) => { const q = indexedDB.open('smfw', 1); q.onupgradeneeded = () => q.result.createObjectStore('kv');
+    q.onsuccess = () => { try { const t = q.result.transaction('kv', mode), x = fn(t.objectStore('kv')); t.oncomplete = () => res(x?.result); t.onerror = () => rej(t.error); } catch (e) { rej(e); } }; q.onerror = () => rej(q.error); });
+}
+async function loadCsvDir() { if (!canPickFolder()) return null; try { csvDir = await idb('readonly', st => st.get('csvDir')) || null; } catch { csvDir = null; } return csvDir; }
+async function chooseCsvFolder() {
+  try { csvDir = await window.showDirectoryPicker({ id: 'csvfolder', mode: 'readwrite' }); } catch { return null; } // cancelled
+  try { await idb('readwrite', st => st.put(csvDir, 'csvDir')); } catch {}
+  if (csvDir.name.toUpperCase() !== CSV_FOLDER) toast(`That folder is "${csvDir.name}", not ${CSV_FOLDER}. CSV files will be saved there until you change it.`);
+  render(); return csvDir;
+}
+async function csvFolder() {
+  if (!canPickFolder()) return null;
+  if (!csvDir) await loadCsvDir();
+  if (!csvDir) return chooseCsvFolder();
+  const ok = async q => (await csvDir[q]({ mode: 'readwrite' })) === 'granted';
+  try { if (await ok('queryPermission') || await ok('requestPermission')) return csvDir; } catch {}
+  return chooseCsvFolder(); // folder moved, renamed or access refused: pick it again
+}
+const csvFolderNote = () => canPickFolder() ? `<span class="muted" style="font-size:12px">CSV folder: <b>${esc(csvDir?.name || 'not chosen')}</b> <button class="link" onclick="chooseCsvFolder()">${csvDir ? 'Change' : 'Choose'}</button></span>` : '';
 async function uploadCsvs() {
   if (S.refMissing) return toast('One step first: run 008_pack_ref.sql in Supabase so products can have a Ref.');
+  const dir = await csvFolder();
+  if (canPickFolder() && !dir) return toast(`Choose the ${CSV_FOLDER} folder so the CSV files can be saved there.`);
   const os = S.orders.filter(o => upPicked.has(o.id)).sort((a, b) => a.number - b.number);
   const bad = [], made = [];
   for (const o of os) {
     const { text, missing } = orderCsv(o);
     if (!(o.lines || []).length) { bad.push(`${orderNo(o.number)} has no lines`); continue; }
     if (missing.length) { bad.push(`${orderNo(o.number)}: no Ref for ${missing.join(', ')}`); continue; }
-    if (made.length) await new Promise(r => setTimeout(r, 400));
-    const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
-    const a = Object.assign(document.createElement('a'), { href: url, download: safeName(`${orderNo(o.number)} ${custOf(o.customer_id)?.name || ''}`) + '.csv' }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+    const name = safeName(`${orderNo(o.number)} ${custOf(o.customer_id)?.name || ''}`) + '.csv';
+    if (dir) {
+      try { const w = await (await dir.getFileHandle(name, { create: true })).createWritable(); await w.write(text); await w.close(); }
+      catch (e) { bad.push(`${orderNo(o.number)}: couldn’t save to ${dir.name} (${e.message})`); continue; }
+    } else {
+      if (made.length) await new Promise(r => setTimeout(r, 400));
+      const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
+      const a = Object.assign(document.createElement('a'), { href: url, download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
     made.push(o.id);
   }
   made.forEach(id => upPicked.delete(id));
@@ -867,11 +901,11 @@ async function uploadCsvs() {
   if (bad.length) {
     const dlg = $('#dlg');
     dlg.innerHTML = `<div class="grid"><h2>${made.length ? `${made.length} CSV file${made.length > 1 ? 's' : ''} created` : 'No CSV files created'}</h2>
-      <p style="margin:0">These orders were skipped. Add the missing Refs under <b>Products</b>, then try again:</p>
+      <p style="margin:0">These orders were skipped. Fix the problems below, then try again:</p>
       <ul class="sumlist">${bad.map(b => `<li>${esc(b)}</li>`).join('')}</ul>
       <div class="row" style="justify-content:flex-end"><button type="button" class="primary" onclick="document.getElementById('dlg').close()">OK</button></div></div>`;
     dlg.showModal();
-  } else toast(`${made.length} CSV file${made.length > 1 ? 's' : ''} created`, true);
+  } else toast(`${made.length} CSV file${made.length > 1 ? 's' : ''} ${dir ? 'saved to ' + dir.name : 'created'}`, true);
 }
 async function markEmailed(btn) {
   const ids = pickedBySupplier().os.filter(o => (o.lines || []).some(supplierOfLine)).map(o => o.id);
