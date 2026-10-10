@@ -168,3 +168,8 @@ th .stgrid span{text-align:center}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .brand img,:root:not([data-theme="light"]) .authlogo{filter:invert(1)}}
 :root[data-theme="dark"] .brand img,:root[data-theme="dark"] .authlogo{filter:invert(1)}
 @media (max-width:600px){.brand img{height:60px}}
+/* Customer app: SMFW contact details beside the logo */
+.contact{display:flex;flex-direction:column;gap:1px;padding-bottom:10px;font-size:13px;line-height:1.35;color:var(--muted)}
+.contact[hidden]{display:none}
+.contact b{color:var(--fg);font-size:14px}
+.contact a{color:var(--accent);text-decoration:none}

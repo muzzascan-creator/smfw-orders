@@ -129,6 +129,7 @@ async function enter() {
   await loadProfile();
   if (!profile || !profile.approved || (!isAdmin() && !isReceiver() && !profile.customer_id)) { $('#top').hidden = true; return renderPending(); }
   $('#top').hidden = false;
+  $('#contact').hidden = isAdmin() || isReceiver(); // customers see who to call or email
   $('#whoami').textContent = (profile.full_name || profile.email) + (isAdmin() ? ' · Admin' : isReceiver() ? ' · Receiver' : '');
   await loadAll();
   listenForOrders();
