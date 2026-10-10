@@ -798,12 +798,13 @@ function emailPicked() {
   const { os, groups } = pickedBySupplier();
   const empty = os.filter(o => !(o.lines || []).some(supplierOfLine));
   const notDone = os.filter(o => o.status !== 'complete');
+  const sendable = groups.filter(([s]) => { const r = recipients(s); return r.to.length || r.cc.length || r.bcc.length; }).length;
   const blocks = groups.map(([s, list], i) => {
     const r = recipients(s), none = !r.to.length && !r.cc.length && !r.bcc.length;
     return `<div class="card" style="padding:12px"><div class="row spread"><b>${esc(s.name)}</b><span class="muted" style="font-size:12px">${list.length} form${list.length > 1 ? 's' : ''}</span></div>
       <p style="margin:6px 0;font-size:13px">${none ? `<span class="err">No addresses are switched on for this supplier. ${isManager() ? 'Ask an Admin to add them under <b>Emails</b>.' : 'Add them under <b>Emails</b> first.'}</span>` : ['to', 'cc', 'bcc'].filter(k => r[k].length).map(k => `<b>${SEND_AS[k]}:</b> <span class="mono">${r[k].map(esc).join(', ')}</span>`).join('<br>')}</p>
       <ul class="sumlist" style="margin:6px 0">${list.map(o => `<li><span class="mono">${esc(formFileName(o, s))}</span></li>`).join('')}</ul>
-      <div class="row"><button type="button" class="primary" ${none ? 'disabled' : ''} onclick="outlookEmail(${i}, this)">Open in Outlook</button><span class="muted" style="font-size:12px">Saves an email with the PDF${list.length > 1 ? 's' : ''} attached. Open it from Downloads, then press Send.</span></div></div>`;
+      <div class="row"><span class="est" id="est-${i}">${none ? '' : 'Ready to send'}</span><button type="button" class="ghost" style="margin-left:auto;font-size:12px" ${none ? 'disabled' : ''} onclick="outlookEmail(${i}, this)">Open in Outlook instead</button></div></div>`;
   }).join('');
   const dlg = $('#dlg');
   dlg.innerHTML = `<div class="grid"><h2>Email ${os.length} order${os.length > 1 ? 's' : ''} to suppliers</h2>
@@ -811,7 +812,7 @@ function emailPicked() {
     ${empty.length ? `<div class="banner">No lines to send on ${empty.map(o => esc(orderNo(o.number))).join(', ')}, so ${empty.length > 1 ? 'they are' : 'it is'} skipped.</div>` : ''}
     ${blocks || '<div class="card empty">None of the selected orders have any lines.</div>'}
     <div class="row spread" style="margin-top:4px"><button type="button" onclick="document.getElementById('dlg').close()">Close</button>
-    ${groups.length ? `<button type="button" class="primary" onclick="markEmailed(this)">Mark ${os.length - empty.length} as emailed</button>` : ''}</div></div>`;
+    ${groups.length ? `<span class="row"><button type="button" class="ghost" title="Use this after sending through Outlook" onclick="markEmailed(this)">Mark as emailed</button><button type="button" class="primary" id="sendall" ${sendable ? '' : 'disabled'} onclick="sendSupplierEmails(this)">Send ${sendable} email${sendable === 1 ? '' : 's'}</button></span>` : ''}</div></div>`;
   dlg.showModal();
 }
 async function buildGroup(i) {
@@ -945,6 +946,31 @@ async function uploadCsvs() {
       <div class="row" style="justify-content:flex-end"><button type="button" class="primary" onclick="document.getElementById('dlg').close()">OK</button></div></div>`;
     dlg.showModal();
   } else toast(`${made.length} CSV file${made.length > 1 ? 's' : ''} ${dir ? 'saved to ' + dir.name : 'created'}`, true);
+}
+// Sends each supplier's email from orders@csorders.org (replies go to sales@cssydney.com.au) with the order form PDFs attached,
+// then marks as emailed every order whose suppliers were all sent to.
+async function sendSupplierEmails(btn) {
+  btn.disabled = true;
+  const { os, groups } = pickedBySupplier(), failed = new Set(), done = [];
+  for (const [i, [s, list]] of groups.entries()) {
+    const st = $(`#est-${i}`), r = recipients(s);
+    if (!r.to.length && !r.cc.length && !r.bcc.length) { list.forEach(o => failed.add(o.id)); continue; }
+    st.className = 'est'; st.textContent = 'Sending…';
+    let res;
+    try {
+      const { files } = await buildGroup(i), { subject, body } = mailText(s, list);
+      const { data, error } = await sb.functions.invoke(NOTIFY_FN, { body: { action: 'supplier', supplier_id: s.id, subject, text: body, files: files.map(f => ({ name: f.name, content: b64(f.buf) })) } });
+      if (error) { let m = ''; try { m = (await error.context.json()).error; } catch { } res = { sent: false, reason: m === 'Order not found.' ? 'The email function in Supabase needs updating first.' : m || 'The email service didn’t answer.' }; }
+      else res = data;
+    } catch (e) { res = { sent: false, reason: e.message }; }
+    if (res?.sent) { st.className = 'est ok'; st.textContent = `Sent to ${[...res.to, ...res.cc].join(', ') || 'BCC only'}`; done.push(s.name); }
+    else { st.className = 'est err'; st.textContent = res?.reason || 'Not sent'; list.forEach(o => failed.add(o.id)); }
+  }
+  const ids = os.filter(o => (o.lines || []).some(supplierOfLine) && !failed.has(o.id)).map(o => o.id);
+  if (ids.length) await sb.from('orders').update({ emailed_at: new Date().toISOString() }).in('id', ids);
+  await reloadOrders();
+  if (!failed.size) { $('#dlg').close(); picked.clear(); render(); toast(`${done.length} email${done.length === 1 ? '' : 's'} sent and ${ids.length} order${ids.length === 1 ? '' : 's'} marked as emailed`, true); }
+  else { render(); toast(done.length ? `${done.length} sent, but some didn’t go. See the dialog.` : 'Nothing was sent. See the dialog.'); btn.disabled = false; btn.textContent = 'Try again'; }
 }
 async function markEmailed(btn) {
   const ids = pickedBySupplier().os.filter(o => (o.lines || []).some(supplierOfLine)).map(o => o.id);

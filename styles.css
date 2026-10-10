@@ -181,3 +181,6 @@ th .stgrid span{text-align:center}
 .recvsup{position:sticky;top:0;left:0;z-index:3;margin:0;height:44px;line-height:44px;padding:0 14px;background:var(--bg);font-size:18px}
 .recvtbl table{border:0}
 .recvtbl thead th{position:sticky;top:44px;z-index:2;background:var(--sunk)}
+.est{font-size:12px;color:var(--muted)}
+.est.ok{color:var(--accent);font-weight:600}
+.est.err{color:#a5352b;font-weight:600}

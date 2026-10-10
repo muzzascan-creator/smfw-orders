@@ -1,6 +1,8 @@
-// Emails a customer the items missing from a delivery: lines the Receiver ticked Not delivered,
-// and lines that arrived short. The Receiver app calls this straight after Mark received;
-// Admins and Managers can call it again from the order ("Email customer").
+// Coolibah Orders email service (deployed in Supabase as "quick-api").
+// 1. Customer emails: the items missing from a delivery (lines ticked Not delivered, or delivered short).
+//    The Receiver app calls this straight after Mark received; Admins and Managers can resend from the order.
+// 2. Supplier emails (action "supplier"): the order form PDFs the Admin app builds, sent to the supplier's
+//    active addresses under Emails. Admins and Managers only.
 // Needs the RESEND_API_KEY secret (resend.com). Optional: FROM_EMAIL, REPLY_TO.
 const URL_ = Deno.env.get('SUPABASE_URL')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -43,6 +45,21 @@ export function emailFor(o: any, cust: any, missing: ReturnType<typeof missingLi
   return { subject, html, text };
 }
 
+// The addresses come from the database (Emails tab), not from the browser.
+async function sendToSupplier({ supplier_id, subject, text, files }: { supplier_id: string; subject: string; text: string; files: { name: string; content: string }[] }) {
+  const rows = await (await db(`supplier_emails?supplier_id=eq.${encodeURIComponent(supplier_id)}&active=eq.true&select=email,send_as&order=sort`)).json();
+  const pick = (k: string) => (Array.isArray(rows) ? rows : []).filter((r: any) => r.send_as === k).map((r: any) => r.email);
+  const to = pick('to'), cc = pick('cc'), bcc = pick('bcc');
+  if (!to.length && !cc.length && !bcc.length) return reply({ sent: false, reason: 'No addresses are switched on for this supplier under Emails.' });
+  if (!RESEND_KEY) return reply({ sent: false, reason: 'Email sending isn’t set up yet (RESEND_API_KEY is missing).' });
+  if (!subject || !Array.isArray(files) || !files.length) return reply({ sent: false, reason: 'Nothing to send.' });
+  const r = await fetch(RESEND_URL, { method: 'POST', headers: { Authorization: `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: FROM, to: to.length ? to : cc.length ? cc : bcc, ...(to.length && cc.length ? { cc } : {}), ...(bcc.length && (to.length || cc.length) ? { bcc } : {}), reply_to: REPLY_TO, subject, text,
+      attachments: files.map(f => ({ filename: f.name, content: f.content })) }) });
+  if (!r.ok) return reply({ sent: false, reason: `The email service refused the message: ${(await r.text()).slice(0, 200)}` });
+  return reply({ sent: true, to, cc, bcc });
+}
+
 export async function handler(req: Request) {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   try {
@@ -54,7 +71,12 @@ export async function handler(req: Request) {
     const [me] = await (await db(`profiles?id=eq.${user.id}&select=role,approved`)).json();
     if (!me?.approved || !['receiver', 'manager', 'admin'].includes(me.role)) return reply({ error: 'Not allowed.' }, 403);
 
-    const { order_id, resend } = await req.json();
+    const body = await req.json();
+    if (body.action === 'supplier') {
+      if (!['manager', 'admin'].includes(me.role)) return reply({ error: 'Not allowed.' }, 403);
+      return await sendToSupplier(body);
+    }
+    const { order_id, resend } = body;
     const [o] = await (await db(`orders?id=eq.${encodeURIComponent(order_id)}&select=id,number,required_date,lines,received_at,customer_notified_at,customer:customers(name,contact,email)`)).json();
     if (!o) return reply({ error: 'Order not found.' }, 404);
     const note = (fields: Record<string, unknown>) => db(`orders?id=eq.${o.id}`, { method: 'PATCH', body: JSON.stringify(fields) });
