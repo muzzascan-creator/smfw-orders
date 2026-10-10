@@ -36,7 +36,14 @@ const prodOf = id => S.products.find(p => p.id === id);
 const packOf = id => { for (const p of S.products) { const k = (p.product_packs || []).find(x => x.id === id); if (k) return { p, k }; } return null; };
 const STATUS = { draft: 'Draft', submitted: 'Sent', complete: 'Complete' };
 
-function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); t.textContent = msg; document.body.append(t); setTimeout(() => t.remove(), 2800); }
+// Messages are errors unless marked ok: errors show red in the middle of the screen and stay a little longer.
+function toast(msg, ok) {
+  document.querySelectorAll('.toast.err').forEach(t => t.remove());
+  const t = document.createElement('div'); t.className = ok ? 'toast' : 'toast err'; t.setAttribute('role', ok ? 'status' : 'alert'); t.textContent = msg;
+  if (!ok) t.onclick = () => t.remove();
+  (document.querySelector('dialog[open]') || document.body).append(t); // inside an open dialog so it isn't hidden behind it
+  setTimeout(() => t.remove(), ok ? 2800 : 4500);
+}
 function friendly(err) {
   if (!err) return 'Something went wrong.';
   const m = err.message || String(err);
@@ -53,7 +60,7 @@ function friendly(err) {
   if (err.code === '42501' || /row-level security/i.test(m)) return 'You don’t have permission to do that.';
   return m;
 }
-async function run(promise, okMsg) { const { data, error } = await promise; if (error) { toast(friendly(error)); return null; } if (okMsg) toast(okMsg); return data ?? true; }
+async function run(promise, okMsg) { const { data, error } = await promise; if (error) { toast(friendly(error)); return null; } if (okMsg) toast(okMsg, true); return data ?? true; }
 
 // ---------- data ----------
 async function loadAll() {
@@ -92,7 +99,7 @@ function listenForOrders() {
     const before = payload.old, after = payload.new;
     await reloadOrders();
     if (isAdmin() && after?.status === 'submitted' && before?.status !== 'submitted' && after.source === 'customer')
-      toast(`New order ${orderNo(after.number)} from ${custOf(after.customer_id)?.name || 'a customer'}`);
+      toast(`New order ${orderNo(after.number)} from ${custOf(after.customer_id)?.name || 'a customer'}`, true);
     if (view !== 'entry') render(); else updateNavBadge();
   }).subscribe();
 }
@@ -171,10 +178,10 @@ function renderAuth() {
       if (!error) { authMsg = 'If that email has an account, a reset link is on its way.'; return renderAuth(); }
     } else if (authMode === 'newpass') {
       ({ error } = await sb.auth.updateUser({ password }));
-      if (!error) { authMode = 'signin'; authMsg = ''; toast('Password saved'); return enter(); }
+      if (!error) { authMode = 'signin'; authMsg = ''; toast('Password saved', true); return enter(); }
     }
     btn.disabled = false;
-    if (error) { authMsg = '!' + (error.message === 'Invalid login credentials' ? 'That email and password don’t match an account.' : error.message); renderAuth(); }
+    if (error) { authMsg = ''; renderAuth(); toast(error.message === 'Invalid login credentials' ? 'That email and password don’t match an account.' : error.message); }
   };
 }
 function renderPending() {
@@ -276,7 +283,7 @@ async function saveReceipt(btn) {
   const { error } = await sb.rpc('save_receipt', { order_id: receipt.id, items });
   btn.disabled = false;
   if (error) return toast(/save_receipt/.test(error.message) ? 'One step first: run 011_receiving.sql in Supabase.' : friendly(error));
-  await reloadOrders(); receipt = null; toast('Saved. Press Mark received when you’re done with this order.'); go('recv', false);
+  await reloadOrders(); receipt = null; toast('Saved. Press Mark received when you’re done with this order.', true); go('recv', false);
 }
 // Every line must be ticked Received or Not delivered (and saved) before the order can be marked received.
 const tickedCount = o => (o.lines || []).filter(l => l.received || l.undelivered).length;
@@ -292,7 +299,7 @@ async function setReceived(id, received, btn) {
   const { error } = await sb.rpc('set_received', { order_id: id, received });
   btn.disabled = false;
   if (error) return toast(/set_received/.test(error.message) ? 'One step first: run 010_receiver_role.sql in Supabase.' : friendly(error));
-  await reloadOrders(); render(); toast(received ? 'Marked as received' : 'Received tick removed');
+  await reloadOrders(); render(); toast(received ? 'Marked as received' : 'Received tick removed', true);
 }
 function viewInbox() {
   const os = S.orders.filter(o => o.status === 'submitted').sort((a, b) => (a.submitted_at || '').localeCompare(b.submitted_at || ''));
@@ -504,7 +511,7 @@ async function saveOrder(status) {
   if (error) return toast(friendly(error));
   if (!data) return toast('This order can no longer be changed.');
   const msg = status === 'complete' ? `Order ${orderNo(data.number)} completed` : status === 'submitted' ? (isAdmin() ? `Order ${orderNo(data.number)} saved` : `Order ${orderNo(data.number)} sent to SMFW`) : `Draft ${orderNo(data.number)} saved`;
-  toast(msg);
+  toast(msg, true);
   await reloadOrders();
   draft = null; go(isAdmin() ? (status === 'complete' ? 'orders' : view === 'entry' && data.source === 'customer' ? 'inbox' : 'orders') : 'mine', false);
 }
@@ -616,7 +623,7 @@ async function saveEmails(sid, btn) {
   }
   btn.disabled = false;
   await loadAll(); render();
-  if (ok) toast('Order emails saved');
+  if (ok) toast('Order emails saved', true);
 }
 
 // ---------- emailing orders to suppliers ----------
@@ -773,7 +780,7 @@ async function buildGroup(i) {
 }
 async function downloadForms(i, btn) {
   btn.disabled = true;
-  try { const { files } = await buildGroup(i); for (const [n, f] of files.entries()) { if (n) await new Promise(r => setTimeout(r, 400)); download(f.buf, f.name); } toast(`${files.length} form${files.length > 1 ? 's' : ''} downloaded`); }
+  try { const { files } = await buildGroup(i); for (const [n, f] of files.entries()) { if (n) await new Promise(r => setTimeout(r, 400)); download(f.buf, f.name); } toast(`${files.length} form${files.length > 1 ? 's' : ''} downloaded`, true); }
   catch (e) { toast(e.message); } finally { btn.disabled = false; }
 }
 // The new email's addresses, subject and message, as links for a mail app, Gmail and Outlook on the web.
@@ -802,7 +809,7 @@ async function outlookEmail(i, btn) {
     const eml = head.join('\r\n') + '\r\n\r\n' + parts.join('') + `--${bd}--\r\n`;
     const url = URL.createObjectURL(new Blob([eml], { type: 'message/rfc822' }));
     const a = Object.assign(document.createElement('a'), { href: url, download: safeName(`${s.name} order ${list.map(o => orderNo(o.number)).join(' ')}`) + '.eml' }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
-    toast('Email saved. Open it from your Downloads and it opens in Outlook, ready to send.');
+    toast('Email saved. Open it from your Downloads and it opens in Outlook, ready to send.', true);
   } catch (e) { toast(e.message); } finally { btn.disabled = false; }
 }
 function composeLinks(s, list) {
@@ -862,7 +869,7 @@ async function uploadCsvs() {
       <ul class="sumlist">${bad.map(b => `<li>${esc(b)}</li>`).join('')}</ul>
       <div class="row" style="justify-content:flex-end"><button type="button" class="primary" onclick="document.getElementById('dlg').close()">OK</button></div></div>`;
     dlg.showModal();
-  } else toast(`${made.length} CSV file${made.length > 1 ? 's' : ''} created`);
+  } else toast(`${made.length} CSV file${made.length > 1 ? 's' : ''} created`, true);
 }
 async function markEmailed(btn) {
   const ids = pickedBySupplier().os.filter(o => (o.lines || []).some(supplierOfLine)).map(o => o.id);
@@ -870,7 +877,7 @@ async function markEmailed(btn) {
   const { error } = await sb.from('orders').update({ emailed_at: new Date().toISOString() }).in('id', ids);
   btn.disabled = false;
   if (error) { toast(/emailed_at/.test(error.message) ? 'One step first: run 003_order_emailed.sql in Supabase, then try again.' : friendly(error)); return; }
-  $('#dlg').close(); picked.clear(); await reloadOrders(); render(); toast(`${ids.length} order${ids.length > 1 ? 's' : ''} marked as emailed`);
+  $('#dlg').close(); picked.clear(); await reloadOrders(); render(); toast(`${ids.length} order${ids.length > 1 ? 's' : ''} marked as emailed`, true);
 }
 
 // ---------- edit dialogs ----------
@@ -988,7 +995,7 @@ function editProduct(id) {
         if (!S.refMissing) body.ref = r.ref;
         if (!await run(r.id ? sb.from('product_packs').update(body).eq('id', r.id) : sb.from('product_packs').insert(body))) return false;
       }
-      toast('Product saved'); return true;
+      toast('Product saved', true); return true;
     },
     id ? () => run(sb.from('products').delete().eq('id', id), 'Product deleted') : null);
 }
