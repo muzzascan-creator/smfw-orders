@@ -656,7 +656,9 @@ function emailPicked() {
     return `<div class="card" style="padding:12px"><div class="row spread"><b>${esc(s.name)}</b><span class="muted" style="font-size:12px">${list.length} form${list.length > 1 ? 's' : ''}</span></div>
       <p style="margin:6px 0;font-size:13px">${none ? '<span class="err">No addresses are switched on for this supplier. Add them under <b>Emails</b> first.</span>' : ['to', 'cc', 'bcc'].filter(k => r[k].length).map(k => `<b>${SEND_AS[k]}:</b> <span class="mono">${r[k].map(esc).join(', ')}</span>`).join('<br>')}</p>
       <ul class="sumlist" style="margin:6px 0">${list.map(o => `<li><span class="mono">${esc(formFileName(o, s))}</span></li>`).join('')}</ul>
-      <div class="row"><b style="font-size:13px">1.</b><button type="button" class="primary" onclick="downloadForms(${i}, this)">Download form${list.length > 1 ? 's' : ''}</button></div>
+      <div class="row" style="margin-bottom:10px"><button type="button" class="primary" ${none ? 'disabled' : ''} onclick="outlookEmail(${i}, this)">Open in Outlook</button><span class="muted" style="font-size:12px">Saves an email with the PDF${list.length > 1 ? 's' : ''} attached. Open it from Downloads, then press Send.</span></div>
+      <p class="muted" style="margin:0 0 6px;font-size:12px">Or do it by hand:</p>
+      <div class="row"><b style="font-size:13px">1.</b><button type="button" onclick="downloadForms(${i}, this)">Download form${list.length > 1 ? 's' : ''}</button></div>
       <div class="row" style="margin-top:8px"><b style="font-size:13px">2.</b><span style="font-size:13px">Open a new email in</span>${none ? '<span class="muted" style="font-size:13px">(add addresses first)</span>' : composeLinks(s, list).map(([label, href]) => `<a class="btn" href="${esc(href)}" target="_blank" rel="noopener">${label}</a>`).join('')}</div>
       <p class="muted" style="margin:8px 0 0;font-size:12px">3. Attach the downloaded file${list.length > 1 ? 's' : ''} and press Send.</p></div>`;
   }).join('');
@@ -683,11 +685,35 @@ async function downloadForms(i, btn) {
 }
 // The new email's addresses, subject and message, as links for a mail app, Gmail and Outlook on the web.
 // They are plain links (not opened from code) so the browser always lets them open.
-function composeLinks(s, list) {
-  const r = recipients(s), nos = list.map(o => orderNo(o.number)).join(', ');
+function mailText(s, list) {
+  const nos = list.map(o => orderNo(o.number)).join(', ');
   const dates = [...new Set(list.map(o => o.required_date).filter(Boolean))].map(fmtDate);
   const subject = `Coolibah Salads Sydney order ${nos}${dates.length === 1 ? ' for ' + dates[0] : ''}`;
   const body = `Hi ${s.name},\n\nPlease find attached our order form${list.length > 1 ? 's' : ''}:\n${list.map(o => `- ${orderNo(o.number)}${o.required_date ? ', required ' + fmtDate(o.required_date) : ''}`).join('\n')}\n\nAttached: ${list.map(o => formFileName(o, s)).join(', ')}\n\nRegards,\nCoolibah Salads Sydney`;
+  return { subject, body };
+}
+// Outlook on Windows: an .eml file marked X-Unsent opens as a new email, ready to send, with the PDFs attached.
+const b64 = bytes => { let bin = ''; const u = new Uint8Array(bytes); for (let i = 0; i < u.length; i += 0x8000) bin += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(bin); };
+const b64text = t => b64(new TextEncoder().encode(t));
+const wrap76 = t => t.replace(/.{1,76}/g, '$&\r\n');
+const mimeWord = t => /^[\x20-\x7e]*$/.test(t) ? t : `=?UTF-8?B?${b64text(t)}?=`;
+async function outlookEmail(i, btn) {
+  btn.disabled = true;
+  try {
+    const { s, list, files } = await buildGroup(i);
+    const r = recipients(s), { subject, body } = mailText(s, list), bd = 'smfw-' + Math.random().toString(36).slice(2);
+    const head = [r.to.length && `To: ${r.to.join(', ')}`, r.cc.length && `Cc: ${r.cc.join(', ')}`, r.bcc.length && `Bcc: ${r.bcc.join(', ')}`,
+      `Subject: ${mimeWord(subject)}`, 'X-Unsent: 1', 'MIME-Version: 1.0', `Content-Type: multipart/mixed; boundary="${bd}"`].filter(Boolean);
+    const parts = [`--${bd}\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${wrap76(b64text(body.replace(/\n/g, '\r\n')))}`,
+      ...files.map(f => `--${bd}\r\nContent-Type: application/pdf; name="${mimeWord(f.name)}"\r\nContent-Disposition: attachment; filename="${mimeWord(f.name)}"\r\nContent-Transfer-Encoding: base64\r\n\r\n${wrap76(b64(f.buf))}`)];
+    const eml = head.join('\r\n') + '\r\n\r\n' + parts.join('') + `--${bd}--\r\n`;
+    const url = URL.createObjectURL(new Blob([eml], { type: 'message/rfc822' }));
+    const a = Object.assign(document.createElement('a'), { href: url, download: safeName(`${s.name} order ${list.map(o => orderNo(o.number)).join(' ')}`) + '.eml' }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast('Email saved. Open it from your Downloads and it opens in Outlook, ready to send.');
+  } catch (e) { toast(e.message); } finally { btn.disabled = false; }
+}
+function composeLinks(s, list) {
+  const r = recipients(s), { subject, body } = mailText(s, list);
   const enc = encodeURIComponent, addr = xs => xs.map(x => enc(x).replace(/%40/g, '@')).join(',');
   const mq = [r.cc.length && 'cc=' + addr(r.cc), r.bcc.length && 'bcc=' + addr(r.bcc), 'subject=' + enc(subject), 'body=' + enc(body)].filter(Boolean).join('&');
   const qs = o => Object.entries(o).filter(([, v]) => v).map(([k, v]) => k + '=' + enc(v)).join('&');
