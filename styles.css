@@ -33,6 +33,7 @@ h2{font:600 18px/1.3 var(--f-display);margin:0}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .spread{justify-content:space-between}
 button,.btn{font:500 14px var(--f-body);border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--fg);padding:7px 14px;cursor:pointer}
+a.btn{display:inline-block;text-decoration:none}
 button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
 button.ghost{background:none;border-color:transparent;color:var(--accent);padding-inline:6px}
 button.danger{color:var(--danger)}

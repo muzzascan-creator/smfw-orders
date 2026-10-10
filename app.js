@@ -624,11 +624,13 @@ function emailPicked() {
     return `<div class="card" style="padding:12px"><div class="row spread"><b>${esc(s.name)}</b><span class="muted" style="font-size:12px">${list.length} form${list.length > 1 ? 's' : ''}</span></div>
       <p style="margin:6px 0;font-size:13px">${none ? '<span class="err">No addresses are switched on for this supplier. Add them under <b>Emails</b> first.</span>' : ['to', 'cc', 'bcc'].filter(k => r[k].length).map(k => `<b>${SEND_AS[k]}:</b> <span class="mono">${r[k].map(esc).join(', ')}</span>`).join('<br>')}</p>
       <ul class="sumlist" style="margin:6px 0">${list.map(o => `<li><span class="mono">${esc(formFileName(o, s))}</span></li>`).join('')}</ul>
-      <div class="row"><button type="button" onclick="downloadForms(${i}, this)">Download only</button><button type="button" class="primary" ${none ? 'disabled' : ''} onclick="sendForms(${i}, this)">Download and open email</button></div></div>`;
+      <div class="row"><b style="font-size:13px">1.</b><button type="button" class="primary" onclick="downloadForms(${i}, this)">Download form${list.length > 1 ? 's' : ''}</button></div>
+      <div class="row" style="margin-top:8px"><b style="font-size:13px">2.</b><span style="font-size:13px">Open a new email in</span>${none ? '<span class="muted" style="font-size:13px">(add addresses first)</span>' : composeLinks(s, list).map(([label, href]) => `<a class="btn" href="${esc(href)}" target="_blank" rel="noopener">${label}</a>`).join('')}</div>
+      <p class="muted" style="margin:8px 0 0;font-size:12px">3. Attach the downloaded file${list.length > 1 ? 's' : ''} and press Send.</p></div>`;
   }).join('');
   const dlg = $('#dlg');
   dlg.innerHTML = `<div class="grid"><h2>Email ${os.length} order${os.length > 1 ? 's' : ''} to suppliers</h2>
-    <p class="muted" style="margin:0;font-size:13px">Each order goes as the supplier’s full order form with its quantities filled in. <b>Download and open email</b> saves the form${os.length > 1 ? 's' : ''} and opens your email program with the addresses and subject filled in. Attach the downloaded file${os.length > 1 ? 's' : ''} from your Downloads folder and press Send.</p>
+    <p class="muted" style="margin:0;font-size:13px">Each order goes as the supplier’s full order form with its quantities filled in. Download the form${os.length > 1 ? 's' : ''}, then open a new email with the addresses, subject and message already filled in. Pick <b>Email app</b> for Outlook, Apple Mail or Mail on your phone, or <b>Gmail</b> / <b>Outlook web</b> if you use email in your browser.</p>
     ${notDone.length ? `<div class="banner">Not marked complete yet: ${notDone.map(o => esc(orderNo(o.number))).join(', ')}.</div>` : ''}
     ${empty.length ? `<div class="banner">No lines to send on ${empty.map(o => esc(orderNo(o.number))).join(', ')}, so ${empty.length > 1 ? 'they are' : 'it is'} skipped.</div>` : ''}
     ${blocks || '<div class="card empty">None of the selected orders have any lines.</div>'}
@@ -644,21 +646,24 @@ async function buildGroup(i) {
 }
 async function downloadForms(i, btn) {
   btn.disabled = true;
-  try { const { files } = await buildGroup(i); files.forEach(f => download(f.buf, f.name)); toast(`${files.length} form${files.length > 1 ? 's' : ''} downloaded`); }
+  try { const { files } = await buildGroup(i); for (const [n, f] of files.entries()) { if (n) await new Promise(r => setTimeout(r, 400)); download(f.buf, f.name); } toast(`${files.length} form${files.length > 1 ? 's' : ''} downloaded`); }
   catch (e) { toast(e.message); } finally { btn.disabled = false; }
 }
-async function sendForms(i, btn) {
-  btn.disabled = true;
-  try {
-    const { s, list, files } = await buildGroup(i);
-    files.forEach(f => download(f.buf, f.name));
-    const r = recipients(s), nos = list.map(o => orderNo(o.number)).join(', ');
-    const dates = [...new Set(list.map(o => o.required_date).filter(Boolean))].map(fmtDate);
-    const subject = `SMFW order ${nos}${dates.length === 1 ? ' for ' + dates[0] : ''}`;
-    const body = `Hi ${s.name},\n\nPlease find attached our order form${files.length > 1 ? 's' : ''}:\n${list.map(o => `- ${orderNo(o.number)}${o.required_date ? ', required ' + fmtDate(o.required_date) : ''}`).join('\n')}\n\nAttached: ${files.map(f => f.name).join(', ')}\n\nThank you,\nSMFW`;
-    const q = [r.cc.length && 'cc=' + encodeURIComponent(r.cc.join(',')), r.bcc.length && 'bcc=' + encodeURIComponent(r.bcc.join(',')), 'subject=' + encodeURIComponent(subject), 'body=' + encodeURIComponent(body)].filter(Boolean).join('&');
-    const a = Object.assign(document.createElement('a'), { href: `mailto:${r.to.map(encodeURIComponent).join(',')}?${q}` }); document.body.append(a); a.click(); a.remove();
-  } catch (e) { toast(e.message); } finally { btn.disabled = false; }
+// The new email's addresses, subject and message, as links for a mail app, Gmail and Outlook on the web.
+// They are plain links (not opened from code) so the browser always lets them open.
+function composeLinks(s, list) {
+  const r = recipients(s), nos = list.map(o => orderNo(o.number)).join(', ');
+  const dates = [...new Set(list.map(o => o.required_date).filter(Boolean))].map(fmtDate);
+  const subject = `SMFW order ${nos}${dates.length === 1 ? ' for ' + dates[0] : ''}`;
+  const body = `Hi ${s.name},\n\nPlease find attached our order form${list.length > 1 ? 's' : ''}:\n${list.map(o => `- ${orderNo(o.number)}${o.required_date ? ', required ' + fmtDate(o.required_date) : ''}`).join('\n')}\n\nAttached: ${list.map(o => formFileName(o, s)).join(', ')}\n\nThank you,\nSMFW`;
+  const enc = encodeURIComponent, addr = xs => xs.map(x => enc(x).replace(/%40/g, '@')).join(',');
+  const mq = [r.cc.length && 'cc=' + addr(r.cc), r.bcc.length && 'bcc=' + addr(r.bcc), 'subject=' + enc(subject), 'body=' + enc(body)].filter(Boolean).join('&');
+  const qs = o => Object.entries(o).filter(([, v]) => v).map(([k, v]) => k + '=' + enc(v)).join('&');
+  return [
+    ['Email app', `mailto:${addr(r.to)}?${mq}`],
+    ['Gmail', 'https://mail.google.com/mail/?' + qs({ view: 'cm', fs: '1', to: r.to.join(','), cc: r.cc.join(','), bcc: r.bcc.join(','), su: subject, body })],
+    ['Outlook web', 'https://outlook.office.com/mail/deeplink/compose?' + qs({ to: r.to.join(','), cc: r.cc.join(','), bcc: r.bcc.join(','), subject, body })],
+  ];
 }
 async function markEmailed(btn) {
   const ids = pickedBySupplier().os.filter(o => (o.lines || []).some(supplierOfLine)).map(o => o.id);
