@@ -230,7 +230,7 @@ function orderRow(o, opts = {}) {
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
 }
-// Receiver: completed orders not yet received. View opens the order form as the supplier gets it.
+// Receiver: completed orders not yet received.
 function viewRecv() {
   let os = S.orders.filter(o => o.status === 'complete' && !o.received_at);
   const q = search.trim().toLowerCase();
@@ -242,7 +242,7 @@ function viewRecv() {
       return `<tr><td class="mono">${esc(orderNo(o.number))}${orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conv.</span>' : ''}</td>
         <td>${c ? `${c.cid != null ? `<span class="mono muted">${esc(c.cid)}</span> ` : ''}${esc(c.name)}` : '<span class="muted">No customer</span>'}</td>
         <td>${esc(fmtDate(o.required_date))}</td><td><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>${receivedPill(o)}</td>
-        <td class="num acts"><button class="ghost" onclick="openReceipt('${o.id}')">Open</button><button class="ghost" onclick="setReceived('${o.id}', true, this)">Mark received</button>${[...new Set((o.lines || []).map(supplierOfLine).filter(Boolean))].map(s => `<button class="ghost" title="${esc(s.name)}" onclick="viewSupplierForm('${o.id}', '${s.id}', this)">View${new Set((o.lines || []).map(supplierOfLine).filter(Boolean)).size > 1 ? ' · ' + esc(s.name) : ''}</button>`).join('')}</td></tr>`;
+        <td class="num acts"><button class="ghost" onclick="openReceipt('${o.id}')">Open</button><button class="ghost" onclick="setReceived('${o.id}', true, this)">Mark received</button></td></tr>`;
     }).join('')}</tbody></table></div>` : `<div class="card empty">${S.orders.some(o => o.status === 'complete' && !o.received_at) ? 'No orders match this search.' : 'Nothing waiting. Every order has been received.'}</div>`}`;
 }
 // Receiver: one order's lines, with the quantity that arrived and a Not delivered tick for each.
@@ -285,17 +285,6 @@ async function setReceived(id, received, btn) {
   btn.disabled = false;
   if (error) return toast(/set_received/.test(error.message) ? 'One step first: run 010_receiver_role.sql in Supabase.' : friendly(error));
   await reloadOrders(); render(); toast(received ? 'Marked as received' : 'Received tick removed');
-}
-async function viewSupplierForm(oid, sid, btn) {
-  const o = S.orders.find(x => x.id === oid), s = S.suppliers.find(x => x.id === sid); if (!o || !s) return;
-  const w = window.open('', '_blank'); // opened straight from the click so the browser allows it
-  btn.disabled = true;
-  try {
-    const { buf } = await formPdf(o, s);
-    const url = URL.createObjectURL(new Blob([buf], { type: 'application/pdf' }));
-    if (w) w.location.href = url; else download(buf, formFileName(o, s));
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
-  } catch (e) { if (w) w.close(); toast(e.message); } finally { btn.disabled = false; }
 }
 function viewInbox() {
   const os = S.orders.filter(o => o.status === 'submitted').sort((a, b) => (a.submitted_at || '').localeCompare(b.submitted_at || ''));
