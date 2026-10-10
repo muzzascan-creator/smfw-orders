@@ -212,7 +212,7 @@ function orderRow(o, opts = {}) {
     ${opts.sent ? `<td>${esc(fmtWhen(o.submitted_at))}</td>` : ''}
     ${opts.source ? `<td>${o.source === 'customer' ? 'Customer' : 'SMFW'}</td>` : ''}
     <td class="num lines">${(o.lines || []).length}</td>
-    <td><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>${opts.pick && o.emailed_at ? ` <span class="pill emailed" title="Emailed ${esc(fmtWhen(o.emailed_at))}">Emailed</span>` : ''}</td>
+    <td><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>${opts.pick && o.emailed_at ? ` <span class="pill emailed" title="Emailed ${esc(fmtWhen(o.emailed_at))}">Emailed</span>` : ''}${opts.pick && o.csv_at ? ` <span class="pill emailed" title="CSV created ${esc(fmtWhen(o.csv_at))}">CSV</span>` : ''}</td>
     ${opts.customer === false ? `<td class="num acts" onclick="event.stopPropagation()"><button class="ghost" onclick="openOrder('${o.id}')">View</button><button class="ghost" onclick="printOrder('${o.id}', this)">Print<span class="long"> Order</span></button></td>`
       : `<td class="num openc"><button class="ghost" onclick="event.stopPropagation();openOrder('${o.id}')">Open</button></td>`}
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
@@ -769,6 +769,12 @@ async function uploadCsvs() {
     made.push(o.id);
   }
   made.forEach(id => upPicked.delete(id));
+  // Stamp the orders so they show a CSV tag (needs migrations/009).
+  if (made.length) {
+    const { error } = await sb.from('orders').update({ csv_at: new Date().toISOString() }).in('id', made);
+    if (error) toast(/csv_at/.test(error.message) ? 'CSV files created. To show the CSV tag, run 009_order_csv.sql in Supabase.' : friendly(error));
+    else await reloadOrders();
+  }
   render();
   if (bad.length) {
     const dlg = $('#dlg');
