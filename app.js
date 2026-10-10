@@ -349,7 +349,7 @@ function viewMine() {
 function openOrder(id) {
   const o = S.orders.find(x => x.id === id); if (!o) return;
   draft = { id, number: o.number, customer_id: o.customer_id, order_date: o.order_date, required_date: o.required_date || '', special: o.special || '', status: o.status, source: o.source, submitted_at: o.submitted_at, qty: {} };
-  (o.lines || []).forEach(l => { if (l.pack_id && !l.undelivered) draft.qty[l.pack_id] = l.qty; }); // lines a Receiver marked Not delivered drop off
+  (o.lines || []).forEach(l => { if (l.pack_id) draft.qty[l.pack_id] = l.qty; });
   // Keep what a Receiver recorded (ordered_qty, undelivered) when an admin re-saves the order.
   draft.receipt = Object.fromEntries((o.lines || []).filter(l => l.pack_id && (l.ordered_qty != null || l.undelivered || l.received)).map(l => [l.pack_id, { ordered_qty: l.ordered_qty, undelivered: !!l.undelivered, received: !!l.received }]));
   draft.missing = (o.lines || []).filter(l => !packOf(l.pack_id));
@@ -453,8 +453,8 @@ function summaryHtml() {
   const d = draft, admin = isAdmin(), lines = draftLines();
   const groups = {};
   lines.forEach(l => { const p = prodOf(l.product_id); const g = admin ? (S.suppliers.find(s => s.id === p?.supplier_id)?.name || 'Other') : (p?.section || 'Other'); (groups[g] ||= []).push(l); });
-  const body = Object.entries(groups).map(([g, ls]) => `<div class="sumsup">${esc(g)}</div><ul class="sumlist">${ls.map(l => `<li><span>${esc(l.product_name)} <span class="muted">· ${esc(l.pack_name)}</span>${l.undelivered ? ' <span class="pill">Not delivered</span>' : l.ordered_qty != null && +l.ordered_qty !== +l.qty ? ` <span class="muted">(ordered ${esc(l.ordered_qty)})</span>` : ''}</span><b class="mono"${l.undelivered ? ' style="text-decoration:line-through"' : ''}>${l.qty}</b></li>`).join('')}</ul>`).join('');
-  const total = lines.reduce((a, l) => a + l.qty, 0);
+  const body = Object.entries(groups).map(([g, ls]) => `<div class="sumsup">${esc(g)}</div><ul class="sumlist">${ls.map(l => `<li${l.undelivered ? ' class="nd"' : ''}><span>${esc(l.product_name)} <span class="muted">· ${esc(l.pack_name)}</span>${l.undelivered ? ' · NOT DELIVERED' : l.ordered_qty != null && +l.ordered_qty !== +l.qty ? ` <span class="muted">(ordered ${esc(l.ordered_qty)})</span>` : ''}</span><b class="mono">${l.qty}</b></li>`).join('')}</ul>`).join('');
+  const got = lines.filter(l => !l.undelivered), nd = lines.length - got.length, total = got.reduce((a, l) => a + l.qty, 0);
   let btns = '';
   if (admin) {
     // Already transmitted: Close goes back to Orders untouched; once reopened, Close gives way to Save / Transmit Order.
@@ -464,7 +464,7 @@ function summaryHtml() {
   const del = d.id && (admin || d.status === 'draft') ? `<div class="row" style="margin-top:8px"><button class="danger" onclick="deleteOrder(this)">Delete order</button></div>` : '';
   return `<h2>Order summary</h2>
     <p class="muted" style="margin:4px 0 0">${esc(custOf(d.customer_id)?.name || (needsCustomer(d) ? 'No customer chosen' : 'Conventional order'))}${d.required_date ? ' · needed ' + esc(fmtDate(d.required_date)) : ''}</p>
-    ${lines.length ? body + `<p style="margin:12px 0 0"><b>${lines.length}</b> line${lines.length > 1 ? 's' : ''} · <b>${total}</b> in total</p>` : '<p class="muted">No quantities entered yet.</p>'}
+    ${lines.length ? body + `<p style="margin:12px 0 0"><b>${got.length}</b> line${got.length === 1 ? '' : 's'} · <b>${total}</b> in total${nd ? ` · <span class="ndtxt">${nd} not delivered</span>` : ''}</p>` : '<p class="muted">No quantities entered yet.</p>'}
     <div class="row" style="margin-top:16px">${btns}</div>${del}`;
 }
 function wireEntry() {
