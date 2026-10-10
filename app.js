@@ -384,6 +384,14 @@ function wireEntry() {
     if (+v > 0) draft.qty[inp.dataset.k] = +v; else delete draft.qty[inp.dataset.k];
     inp.classList.toggle('has', +v > 0); sync();
   }));
+  // Flat view: Enter moves down to the next quantity box (Shift+Enter goes back), skipping rows the search hides.
+  document.querySelectorAll('.flat input[data-k]').forEach(inp => inp.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const all = [...document.querySelectorAll('.flat input[data-k]')].filter(x => !x.closest('tr').hidden && !x.disabled);
+    const next = all[all.indexOf(inp) + (e.shiftKey ? -1 : 1)];
+    if (next) { next.focus(); next.select(); }
+  }));
   $('#e-find')?.addEventListener('input', e => { const q = e.target.value.trim().toLowerCase(); document.querySelectorAll('.sec tbody tr').forEach(tr => tr.hidden = !!q && !tr.textContent.toLowerCase().includes(q)); });
 }
 let saving = false;
