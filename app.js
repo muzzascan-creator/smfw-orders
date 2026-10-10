@@ -266,7 +266,6 @@ function openOrder(id) {
 // ---------- order entry ----------
 function blankOrder() { return { id: null, number: null, customer_id: isAdmin() ? '' : profile?.customer_id, order_date: today(), required_date: '', special: '', status: 'draft', source: isAdmin() ? 'admin' : 'customer', qty: {}, missing: [], group: 'Organic' }; }
 const outerOf = k => Number(k.outer_multiple) || 1;
-const offMultiple = (q, k) => +q > 0 && +q % outerOf(k) !== 0;
 function sectionsFor(products) {
   const secs = [], idx = {};
   products.filter(p => p.active !== false).sort(bySort).forEach(p => {
@@ -283,7 +282,7 @@ function gridHtml(secs, dis) {
       const k = (p.product_packs || []).find(x => x.name === pk);
       if (!k || !k.available) return `<td class="na"${k ? ` title="${esc(pk)} is not available for ${esc(p.name)}"` : ''}></td>`;
       const q = draft.qty[k.id];
-      return `<td class="q"><input inputmode="numeric" ${dis} aria-label="${esc(p.name)}, ${esc(pk)}" title="SID ${esc(k.sid)}${outerOf(k) > 1 ? ' · order in multiples of ' + outerOf(k) : ''}" data-outer="${outerOf(k)}" data-k="${k.id}" value="${esc(q || '')}" class="${q ? 'has' : ''} ${offMultiple(q, k) ? 'off' : ''}"></td>`;
+      return `<td class="q"><input inputmode="numeric" ${dis} aria-label="${esc(p.name)}, ${esc(pk)}" title="SID ${esc(k.sid)}" data-k="${k.id}" value="${esc(q || '')}" class="${q ? 'has' : ''}"></td>`;
     }).join('')}</tr>`).join('')}
   </tbody></table></div>`).join('');
 }
@@ -349,9 +348,8 @@ function summaryHtml() {
   const d = draft, admin = isAdmin(), lines = draftLines();
   const groups = {};
   lines.forEach(l => { const p = prodOf(l.product_id); const g = admin ? (S.suppliers.find(s => s.id === p?.supplier_id)?.name || 'Other') : (p?.section || 'Other'); (groups[g] ||= []).push(l); });
-  const body = Object.entries(groups).map(([g, ls]) => `<div class="sumsup">${esc(g)}</div><ul class="sumlist">${ls.map(l => `<li><span>${esc(l.product_name)} <span class="muted">· ${esc(l.pack_name)}</span></span><b class="mono"${l.qty % l.outer ? ` style="color:var(--danger)" title="Not a multiple of ${l.outer}"` : ''}>${l.qty}</b></li>`).join('')}</ul>`).join('');
+  const body = Object.entries(groups).map(([g, ls]) => `<div class="sumsup">${esc(g)}</div><ul class="sumlist">${ls.map(l => `<li><span>${esc(l.product_name)} <span class="muted">· ${esc(l.pack_name)}</span></span><b class="mono">${l.qty}</b></li>`).join('')}</ul>`).join('');
   const total = lines.reduce((a, l) => a + l.qty, 0);
-  const offs = lines.filter(l => l.qty % l.outer);
   let btns = '';
   if (admin) {
     if (d.status === 'complete') btns = `<button onclick="reopenOrder()">Reopen to edit</button>`;
@@ -360,7 +358,7 @@ function summaryHtml() {
   const del = d.id && (admin || d.status === 'draft') ? `<div class="row" style="margin-top:8px"><button class="danger" onclick="deleteOrder(this)">Delete order</button></div>` : '';
   return `<h2>Order summary</h2>
     <p class="muted" style="margin:4px 0 0">${esc(custOf(d.customer_id)?.name || (needsCustomer(d) ? 'No customer chosen' : 'Conventional order'))}${d.required_date ? ' · needed ' + esc(fmtDate(d.required_date)) : ''}</p>
-    ${lines.length ? body + `<p style="margin:12px 0 0"><b>${lines.length}</b> line${lines.length > 1 ? 's' : ''} · <b>${total}</b> in total</p>` + (offs.length ? `<p class="err" style="margin:8px 0 0">${offs.length} line${offs.length > 1 ? 's aren’t' : ' isn’t'} a multiple of the pack’s outer. Check the red quantities.</p>` : '') : '<p class="muted">No quantities entered yet.</p>'}
+    ${lines.length ? body + `<p style="margin:12px 0 0"><b>${lines.length}</b> line${lines.length > 1 ? 's' : ''} · <b>${total}</b> in total</p>` : '<p class="muted">No quantities entered yet.</p>'}
     <div class="row" style="margin-top:16px">${btns}</div>${del}`;
 }
 function wireEntry() {
@@ -372,7 +370,7 @@ function wireEntry() {
   document.querySelectorAll('input[data-k]').forEach(inp => inp.addEventListener('input', () => {
     const v = inp.value.replace(/[^\d]/g, ''); if (v !== inp.value) inp.value = v;
     if (+v > 0) draft.qty[inp.dataset.k] = +v; else delete draft.qty[inp.dataset.k];
-    inp.classList.toggle('has', +v > 0); inp.classList.toggle('off', +v > 0 && +v % (+inp.dataset.outer || 1) !== 0); sync();
+    inp.classList.toggle('has', +v > 0); sync();
   }));
   $('#e-find')?.addEventListener('input', e => { const q = e.target.value.trim().toLowerCase(); document.querySelectorAll('.sec tbody tr').forEach(tr => tr.hidden = !!q && !tr.textContent.toLowerCase().includes(q)); });
 }

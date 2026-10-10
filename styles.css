@@ -77,7 +77,6 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .sec td.q{padding:3px 4px;text-align:center}
 .sec td.q input{width:72px;text-align:center;font-family:var(--f-mono);padding:5px 4px}
 .sec td.q input.has{background:var(--qty);border-color:var(--warn);font-weight:600}
-.sec td.q input.off{background:var(--warn-soft);border-color:var(--danger);color:var(--danger)}
 .sec td.na{background:var(--off)}
 .sumlist{list-style:none;padding:0;margin:8px 0 0;display:grid;gap:4px;font-size:13px}
 .sumlist li{display:flex;justify-content:space-between;gap:8px}
