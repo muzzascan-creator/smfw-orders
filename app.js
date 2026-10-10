@@ -39,6 +39,7 @@ function friendly(err) {
   const m = err.message || String(err);
   if (err.code === '23505') {
     if (/sid/i.test(m)) return 'That SID is already used by another pack type.';
+    if (/ref/i.test(m)) return 'That Ref is already used by another pack type.';
     if (/cid/i.test(m)) return 'That CID is already used by another customer.';
     if (/product_id, name|product_packs_product_id_name/i.test(m)) return 'A pack type is listed twice on this product.';
     return 'That value is already in use.';
@@ -53,9 +54,12 @@ async function run(promise, okMsg) { const { data, error } = await promise; if (
 // ---------- data ----------
 async function loadAll() {
   // product_group arrives with migrations/004; until it is run, load without it and treat everything as Organic.
-  const cols = g => `id,supplier_id,code,name,section,sort,active${g ? ',product_group' : ''},product_packs(id,name,sid,outer_multiple,available,sort)`;
+  // ref arrives with migrations/008; until then packs load without it and the Ref box is hidden.
+  const cols = g => `id,supplier_id,code,name,section,sort,active${g ? ',product_group' : ''},product_packs(id,name,sid${S.refMissing ? '' : ',ref'},outer_multiple,available,sort)`;
   let probe = await sb.from('products').select('product_group').limit(1);
   S.groupsMissing = !!probe.error && /product_group/.test(probe.error.message || '');
+  probe = await sb.from('product_packs').select('ref').limit(1);
+  S.refMissing = !!probe.error && /ref/.test(probe.error.message || '');
   const prods = sb.from('products').select(cols(!S.groupsMissing));
   const orders = sb.from('orders').select('*').order('number', { ascending: false });
   if (isAdmin()) {
@@ -449,7 +453,7 @@ function viewProducts() {
     const ps = S.products.filter(p => p.supplier_id === s.id && (groupFilter === 'all' || groupOf(p) === groupFilter)).sort(bySort); if (!ps.length) return '';
     return `<h2 style="margin:20px 0 8px">${esc(s.name)}</h2><div class="tablewrap"><table><thead><tr><th>Code</th><th>Product</th><th>Group</th><th>Section</th><th>Pack types · SID · outer</th><th></th></tr></thead><tbody>
     ${ps.map(p => `<tr${p.active === false ? ' class="muted"' : ''}><td class="mono">${esc(p.code)}</td><td>${esc(p.name)}${p.active === false ? ' <span class="pill">Hidden</span>' : ''}</td><td><span class="pill grp-${groupOf(p).toLowerCase()}">${groupOf(p)}</span></td><td>${esc(p.section)}</td>
-      <td>${(p.product_packs || []).map(k => `<div><span class="mono muted">SID ${esc(k.sid)}</span> ${esc(k.name)} <span class="mono muted">· outer ${outerOf(k)}</span>${k.available ? '' : ' <span class="pill">Not available</span>'}</div>`).join('')}</td>
+      <td>${(p.product_packs || []).map(k => `<div><span class="mono muted">SID ${esc(k.sid)}</span>${k.ref ? ` <span class="mono muted">· Ref ${esc(k.ref)}</span>` : ''} ${esc(k.name)} <span class="mono muted">· outer ${outerOf(k)}</span>${k.available ? '' : ' <span class="pill">Not available</span>'}</div>`).join('')}</td>
       <td class="num"><button class="ghost" onclick="editProduct('${p.id}')">Edit</button></td></tr>`).join('')}
     </tbody></table></div>`;
   }).join('');
@@ -748,7 +752,8 @@ function editSupplier(id) {
 }
 function packRow(k = {}) {
   const key = k.id || 'new-' + Math.random().toString(36).slice(2, 8);
-  return `<div class="packrow" data-row="${esc(key)}"><input name="psid" type="number" min="1" step="1" placeholder="SID" aria-label="SID" value="${esc(k.sid ?? '')}">
+  return `<div class="packrow${S.refMissing ? '' : ' withref'}" data-row="${esc(key)}"><input name="psid" type="number" min="1" step="1" placeholder="SID" aria-label="SID" value="${esc(k.sid ?? '')}">
+    ${S.refMissing ? '' : `<input name="pref" placeholder="Ref" aria-label="Ref" value="${esc(k.ref ?? '')}">`}
     <input name="pname" placeholder="Pack type, e.g. BOX of 10 BUNCHES" aria-label="Pack type" value="${esc(k.name ?? '')}">
     <input name="pouter" type="number" min="1" step="1" aria-label="Outer multiple" title="Outer multiple" value="${esc(k.outer_multiple ?? 1)}">
     <select name="pavail" aria-label="Availability"><option value="1" ${k.available === false ? '' : 'selected'}>Available</option><option value="0" ${k.available === false ? 'selected' : ''}>Not available</option></select>
@@ -767,15 +772,15 @@ function editProduct(id) {
     <div class="grid g2">${fld('code', 'Supplier code', p.code)}${fld('name', 'Product name', p.name, 'text', 'required')}</div>
     ${S.groupsMissing ? '' : `<label class="f">Product group<select name="product_group" id="f-product_group">${GROUPS.map(g => `<option ${groupOf(p) === g ? 'selected' : ''}>${g}</option>`).join('')}</select></label>`}
     <label class="f">Section on the form<input name="section" id="f-section" list="seclist" value="${esc(p.section)}"><datalist id="seclist">${secs.map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>
-    <div class="grid" style="gap:6px"><div class="packrow packhead"><span>SID</span><span>Pack type (match the form’s column heading)</span><span>Outer</span><span>Availability</span><span></span></div>
+    <div class="grid" style="gap:6px"><div class="packrow packhead${S.refMissing ? '' : ' withref'}"><span>SID</span>${S.refMissing ? '' : '<span>Ref</span>'}<span>Pack type (match the form’s column heading)</span><span>Outer</span><span>Availability</span><span></span></div>
       <div class="grid" style="gap:6px" id="packrows">${packs.map(packRow).join('')}</div>
       <div><button type="button" class="ghost" onclick="addPackRow()">+ Add pack type</button></div></div>
     <div class="grid g2">${fld('sort', 'Position on the form', p.sort ?? '', 'number')}
     <label class="f">Show on order forms<select name="active" id="f-active"><option value="1" ${p.active !== false ? 'selected' : ''}>Yes</option><option value="0" ${p.active === false ? 'selected' : ''}>No, hide it</option></select></label></div>`,
     async f => {
       const name = f.get('name').trim(); if (!name) { toast('Enter a product name.'); return false; }
-      const names = f.getAll('pname').map(x => x.trim()), sids = f.getAll('psid'), outs = f.getAll('pouter'), avail = f.getAll('pavail'), pids = f.getAll('pid');
-      const rows = []; const others = S.products.filter(x => x.id !== id).flatMap(x => (x.product_packs || []).map(k => ({ sid: k.sid, label: `${x.name} (${k.name})` })));
+      const names = f.getAll('pname').map(x => x.trim()), sids = f.getAll('psid'), refs = f.getAll('pref').map(x => x.trim()), outs = f.getAll('pouter'), avail = f.getAll('pavail'), pids = f.getAll('pid');
+      const rows = []; const others = S.products.filter(x => x.id !== id).flatMap(x => (x.product_packs || []).map(k => ({ sid: k.sid, ref: (k.ref || '').trim().toUpperCase(), label: `${x.name} (${k.name})` })));
       for (let i = 0; i < names.length; i++) {
         if (!names[i]) continue;
         const sid = Number(sids[i]), outer = Number(outs[i]);
@@ -784,7 +789,11 @@ function editProduct(id) {
         if (rows.some(r => r.sid === sid)) { toast(`SID ${sid} is used twice on this product.`); return false; }
         const clash = others.find(o => o.sid === sid); if (clash) { toast(`SID ${sid} is already used by ${clash.label}.`); return false; }
         if (!Number.isInteger(outer) || outer < 1) { toast(`Outer multiple for "${names[i]}" must be a whole number of 1 or more.`); return false; }
-        rows.push({ id: pids[i] || undefined, name: names[i], sid, outer_multiple: outer, available: avail[i] === '1', sort: rows.length });
+        // Ref is optional, but each one must be unique across every pack type.
+        const ref = refs[i] || '', REF = ref.toUpperCase();
+        if (REF && rows.some(r => (r.ref || '').toUpperCase() === REF)) { toast(`Ref ${ref} is used twice on this product.`); return false; }
+        const refClash = REF && others.find(o => o.ref === REF); if (refClash) { toast(`Ref ${ref} is already used by ${refClash.label}.`); return false; }
+        rows.push({ id: pids[i] || undefined, name: names[i], sid, ref: ref || null, outer_multiple: outer, available: avail[i] === '1', sort: rows.length });
       }
       if (!rows.length) { toast('Add at least one pack type.'); return false; }
       const prow = { supplier_id: f.get('supplier_id'), code: f.get('code').trim(), name, section: f.get('section').trim(), sort: f.get('sort') === '' ? 999 : +f.get('sort'), active: f.get('active') === '1' };
@@ -799,9 +808,11 @@ function editProduct(id) {
       for (const r of rows.filter(r => r.id)) {
         const old = (p.product_packs || []).find(k => k.id === r.id);
         if (old && old.sid !== r.sid && !await run(sb.from('product_packs').update({ sid: 2000000000 - Math.floor(Math.random() * 1e6) }).eq('id', r.id))) return false;
+        if (!S.refMissing && old && (old.ref || null) !== r.ref && old.ref && !await run(sb.from('product_packs').update({ ref: null }).eq('id', r.id))) return false;
       }
       for (const r of rows) {
         const body = { product_id: pid, name: r.name, sid: r.sid, outer_multiple: r.outer_multiple, available: r.available, sort: r.sort };
+        if (!S.refMissing) body.ref = r.ref;
         if (!await run(r.id ? sb.from('product_packs').update(body).eq('id', r.id) : sb.from('product_packs').insert(body))) return false;
       }
       toast('Product saved'); return true;

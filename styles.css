@@ -97,6 +97,9 @@ dialog::backdrop{background:rgb(0 0 0 / .35)}
 .ok{background:var(--accent-soft);color:var(--fg);border-radius:8px;padding:10px 14px}
 .packrow{display:grid;grid-template-columns:80px minmax(0,1fr) 80px 130px 32px;gap:8px;align-items:center}
 @media (max-width:520px){.packrow{grid-template-columns:70px minmax(0,1fr) 64px;}.packrow select{grid-column:1/3}}
+.packrow.withref{grid-template-columns:76px 96px minmax(0,1fr) 60px 126px 32px}
+dialog:has(.packrow.withref){width:min(760px,calc(100vw - 32px))}
+@media (max-width:520px){.packrow.withref{grid-template-columns:70px 90px minmax(0,1fr)}}
 .packhead{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
 .emrow{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) 80px 76px 32px;gap:8px;align-items:center}
 .emon{display:flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap}

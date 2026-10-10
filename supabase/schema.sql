@@ -42,11 +42,13 @@ create table public.product_packs (
   product_id uuid not null references public.products(id) on delete cascade,
   name text not null,
   sid integer not null unique check (sid > 0),
+  ref text, -- optional reference shown next to the SID; unique when filled in (index below)
   outer_multiple integer not null default 1 check (outer_multiple >= 1),
   available boolean not null default true,
   sort integer not null default 0,
   unique (product_id, name)
 );
+create unique index product_packs_ref_key on public.product_packs (upper(btrim(ref))) where ref is not null and btrim(ref) <> '';
 
 -- ---------- logins ----------
 create table public.profiles (
