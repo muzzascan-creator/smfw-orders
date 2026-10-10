@@ -386,7 +386,7 @@ function gridHtml(secs, dis) {
       const k = (p.product_packs || []).find(x => x.name === pk);
       if (!k || !k.available) return `<td class="na"${k ? ` title="${esc(pk)} is not available for ${esc(p.name)}"` : ''}></td>`;
       const q = draft.qty[k.id];
-      return `<td class="q"><input inputmode="numeric" ${dis} aria-label="${esc(p.name)}, ${esc(pk)}" title="SID ${esc(k.sid)}" data-k="${k.id}" value="${esc(q || '')}" class="${q ? 'has' : ''}"></td>`;
+      return `<td class="q"><input inputmode="numeric" ${dis} aria-label="${esc(p.name)}, ${esc(pk)}" title="SID ${esc(k.sid)}" data-k="${k.id}" data-pk="${esc(pk)}" value="${esc(q || '')}" class="${q ? 'has' : ''}"></td>`;
     }).join('')}</tr>`).join('')}
   </tbody></table></div>`).join('');
 }
@@ -487,12 +487,14 @@ function wireEntry() {
     if (+v > 0) draft.qty[inp.dataset.k] = +v; else delete draft.qty[inp.dataset.k];
     inp.classList.toggle('has', +v > 0); sync();
   }));
-  // Flat view: Enter moves down to the next quantity box (Shift+Enter goes back), skipping rows the search hides.
-  document.querySelectorAll('.flat input[data-k]').forEach(inp => inp.addEventListener('keydown', e => {
-    if (e.key !== 'Enter') return;
+  // Enter or Down arrow moves to the next quantity box, Shift+Enter or Up arrow goes back, skipping rows the search hides.
+  // On the order-form grid this stays in the same pack column, running on through the sections below.
+  document.querySelectorAll('input[data-k]').forEach(inp => inp.addEventListener('keydown', e => {
+    const step = e.key === 'ArrowDown' || (e.key === 'Enter' && !e.shiftKey) ? 1 : e.key === 'ArrowUp' || e.key === 'Enter' ? -1 : 0;
+    if (!step) return;
     e.preventDefault();
-    const all = [...document.querySelectorAll('.flat input[data-k]')].filter(x => !x.closest('tr').hidden && !x.disabled);
-    const next = all[all.indexOf(inp) + (e.shiftKey ? -1 : 1)];
+    const all = [...document.querySelectorAll('input[data-k]')].filter(x => !x.closest('tr').hidden && !x.disabled && x.dataset.pk === inp.dataset.pk);
+    const next = all[all.indexOf(inp) + step];
     if (next) { next.focus(); next.select(); }
   }));
   $('#e-find')?.addEventListener('input', e => { const q = e.target.value.trim().toLowerCase(); document.querySelectorAll('.sec tbody tr').forEach(tr => tr.hidden = !!q && !tr.textContent.toLowerCase().includes(q)); });
