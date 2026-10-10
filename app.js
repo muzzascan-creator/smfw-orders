@@ -22,6 +22,8 @@ const $ = s => document.querySelector(s);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
 // Orders being placed must be required tomorrow or later.
+// Latest allowed date required: a year ahead. Also stops the date box accepting a 5- or 6-digit year.
+const latestReq = () => { const d = new Date(); d.setFullYear(d.getFullYear() + 1); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
 const tomorrow = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
 const fmtDate = d => { if (!d) return ''; const [y, m, dd] = d.split('-'); return new Date(+y, m - 1, +dd).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); };
 const fmtWhen = t => t ? new Date(t).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
@@ -450,7 +452,7 @@ function viewEntry() {
       <div class="card grid g2">
         ${custField}
         <label class="f">Today’s date<input type="date" id="e-date" disabled title="Set automatically" value="${esc(d.status === 'draft' ? today() : d.order_date)}"></label>
-        <label class="f">Day / date required<input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${tomorrow()}"` : ''} value="${esc(d.required_date)}"></label>
+        <label class="f">Day / date required<input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${tomorrow()}"` : ''} max="${latestReq()}" value="${esc(d.required_date)}"></label>
         <label class="f" style="grid-column:1/-1">Special requirements<textarea id="e-special" ${dis}>${esc(d.special)}</textarea></label>
       </div>
       <div class="row" style="margin-top:16px"><input class="search" id="e-find" placeholder="Find a product by name or code"></div>
@@ -542,6 +544,7 @@ let saving = false;
 async function saveOrder(status) {
   if (saving) return;
   const lines = draftLines();
+  if (draft.required_date && (!/^\d{4}-\d{2}-\d{2}$/.test(draft.required_date) || draft.required_date > latestReq())) return toast(`The date required must be within the next 12 months (by ${fmtDate(latestReq())}).`);
   if (status !== 'draft') {
     if (needsCustomer(draft) && !draft.customer_id) return toast('Choose a customer first.');
     if (!lines.length) return toast('Enter at least one quantity first.');
