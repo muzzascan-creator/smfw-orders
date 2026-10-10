@@ -288,6 +288,17 @@ function gridHtml(secs, dis) {
     }).join('')}</tr>`).join('')}
   </tbody></table></div>`).join('');
 }
+// Flat view: one list per pack type, holding only the products available in that pack.
+function flatHtml(products, dis) {
+  // Pack types follow the order form's column order.
+  const packs = [], rows = {};
+  sectionsFor(products).forEach(sec => sec.packs.forEach(pk => { if (!(pk in rows)) { packs.push(pk); rows[pk] = []; } }));
+  products.filter(p => p.active !== false).sort(bySort).forEach(p => (p.product_packs || []).filter(k => k.available).forEach(k => rows[k.name]?.push({ p, k })));
+  packs.splice(0, packs.length, ...packs.filter(pk => rows[pk].length));
+  return `<div class="flat">${packs.map(pk => `<div class="sec flatsec"><table><colgroup><col style="width:52px"><col><col style="width:90px"></colgroup><thead><tr><th colspan="2"><span class="sectitle">${esc(pk)}</span> <span class="muted" style="font-weight:400">${rows[pk].length} products</span></th><th class="packh">Qty</th></tr></thead><tbody>
+    ${rows[pk].map(({ p, k }) => { const q = draft.qty[k.id]; return `<tr><td class="code">${esc(p.code)}</td><td>${esc(p.name)}</td><td class="q"><input inputmode="numeric" ${dis} aria-label="${esc(p.name)}, ${esc(pk)}" title="SID ${esc(k.sid)}" data-k="${k.id}" value="${esc(q || '')}" class="${q ? 'has' : ''}"></td></tr>`; }).join('')}
+  </tbody></table></div>`).join('')}</div>`;
+}
 function canEditDraft() {
   if (isAdmin()) return draft.status !== 'complete';
   return draft.status === 'draft';
@@ -301,7 +312,7 @@ function viewEntry() {
     const g = d.group || 'Organic';
     blocks = S.suppliers.slice().sort(byName).map(s => {
       const secs = sectionsFor(S.products.filter(p => p.supplier_id === s.id && groupOf(p) === g)); if (!secs.length) return '';
-      return `<section class="supplier-block"><div class="supplier-head"><h2>${esc(s.name)}</h2><span>${esc(s.cutoff || '')}</span></div><div class="sections">${gridHtml(secs, dis)}</div></section>`;
+      return `<section class="supplier-block"><div class="supplier-head"><h2>${esc(s.name)}</h2><span>${esc(s.cutoff || '')}</span></div><div class="sections">${g === 'Conventional' ? flatHtml(S.products.filter(p => p.supplier_id === s.id && groupOf(p) === g), dis) : gridHtml(secs, dis)}</div></section>`;
     }).join('') || `<div class="card empty" style="margin-top:16px">No ${g} products are set up yet. Add them under <b>Products</b>.</div>`;
   } else {
     // Customers only ever order the Organic range; Conventional is ordered through the admin app.

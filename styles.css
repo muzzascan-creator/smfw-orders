@@ -127,3 +127,6 @@ tr.rowlink{cursor:pointer}tr.rowlink:hover td{background:var(--sunk)}
 .grpswitch button{border:0;border-radius:999px;padding:8px 16px;background:none;font-weight:600;color:var(--muted)}
 .grpswitch button.on{background:var(--accent);color:var(--accent-fg)}
 .grpswitch button:disabled{cursor:default}
+.flat{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:12px}
+.flat .flatsec{border:1px solid var(--line)}
+.flat .flatsec table{table-layout:fixed;width:100%}
