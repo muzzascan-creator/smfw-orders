@@ -323,7 +323,7 @@ function viewEntry() {
       ${admin ? `<div class="grpswitch" role="radiogroup" aria-label="Order type">${GROUPS.map(g => `<button type="button" role="radio" aria-checked="${(d.group || 'Organic') === g}" class="${(d.group || 'Organic') === g ? 'on' : ''}" ${dis} onclick="setGroup('${g}')">${g} order</button>`).join('')}</div>` : ''}
       <div class="card grid g2">
         ${custField}
-        <label class="f">Today’s date<input type="date" id="e-date" ${dis} value="${esc(d.order_date)}"></label>
+        <label class="f">Today’s date<input type="date" id="e-date" disabled title="Set automatically" value="${esc(d.status === 'draft' ? today() : d.order_date)}"></label>
         <label class="f">Day / date required<input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${tomorrow()}"` : ''} value="${esc(d.required_date)}"></label>
         <label class="f" style="grid-column:1/-1">Special requirements<textarea id="e-special" ${dis}>${esc(d.special)}</textarea></label>
       </div>
@@ -366,7 +366,6 @@ function summaryHtml() {
 function wireEntry() {
   const sync = () => { $('#summary').innerHTML = summaryHtml(); };
   $('#e-cust')?.addEventListener('change', e => { draft.customer_id = e.target.value; $('#e-phone').value = custOf(draft.customer_id)?.phone || ''; sync(); });
-  $('#e-date')?.addEventListener('change', e => draft.order_date = e.target.value);
   $('#e-req')?.addEventListener('change', e => { draft.required_date = e.target.value; sync(); });
   $('#e-special')?.addEventListener('input', e => draft.special = e.target.value);
   document.querySelectorAll('input[data-k]').forEach(inp => inp.addEventListener('input', () => {
@@ -387,7 +386,8 @@ async function saveOrder(status) {
     // Only checked when the order is placed, so older orders can still be processed after their date.
     if (draft.status === 'draft' && draft.required_date < tomorrow()) return toast(`The date required must be tomorrow (${fmtDate(tomorrow())}) or later.`);
   } else if (needsCustomer(draft) && !draft.customer_id) return toast('Choose a customer first.');
-  const row = { customer_id: needsCustomer(draft) ? draft.customer_id : null, order_date: draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
+  // Today's date is fixed: an order is dated the day it's saved, and keeps that date once it's sent.
+  const row = { customer_id: needsCustomer(draft) ? draft.customer_id : null, order_date: draft.status === 'draft' ? today() : draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
   saving = true;
   const q = draft.id ? sb.from('orders').update(row).eq('id', draft.id).select().single() : sb.from('orders').insert({ ...row, source: isAdmin() ? 'admin' : 'customer' }).select().single();
   const { data, error } = await q;
