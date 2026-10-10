@@ -241,8 +241,8 @@ function viewRecv() {
       const c = custOf(o.customer_id);
       return `<tr><td class="mono">${esc(orderNo(o.number))}${orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conv.</span>' : ''}</td>
         <td>${c ? `${c.cid != null ? `<span class="mono muted">${esc(c.cid)}</span> ` : ''}${esc(c.name)}` : '<span class="muted">No customer</span>'}</td>
-        <td>${esc(fmtDate(o.required_date))}</td><td><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>${receivedPill(o)}</td>
-        <td class="num acts"><button class="ghost" onclick="openReceipt('${o.id}')">Open</button><button class="ghost" onclick="setReceived('${o.id}', true, this)">Mark received</button></td></tr>`;
+        <td>${esc(fmtDate(o.required_date))}</td><td><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>${receivedPill(o)} <span class="${tickedCount(o) < (o.lines || []).length ? 'ndtxt' : 'muted'}" style="font-size:12px">${tickedCount(o)}/${(o.lines || []).length} ticked</span></td>
+        <td class="num acts"><button class="ghost" onclick="openReceipt('${o.id}')">Open</button><button class="ghost" onclick="markReceived('${o.id}', this)">Mark received</button></td></tr>`;
     }).join('')}</tbody></table></div>` : `<div class="card empty">${S.orders.some(o => o.status === 'complete' && !o.received_at) ? 'No orders match this search.' : 'Nothing waiting. Every order has been received.'}</div>`}`;
 }
 // Receiver: one order's lines, with the quantity that arrived and a Not delivered tick for each.
@@ -277,6 +277,14 @@ async function saveReceipt(btn) {
   btn.disabled = false;
   if (error) return toast(/save_receipt/.test(error.message) ? 'One step first: run 011_receiving.sql in Supabase.' : friendly(error));
   await reloadOrders(); receipt = null; toast('Saved. Press Mark received when you’re done with this order.'); go('recv', false);
+}
+// Every line must be ticked Received or Not delivered (and saved) before the order can be marked received.
+const tickedCount = o => (o.lines || []).filter(l => l.received || l.undelivered).length;
+function markReceived(id, btn) {
+  const o = S.orders.find(x => x.id === id); if (!o) return;
+  const left = (o.lines || []).length - tickedCount(o);
+  if (left) return toast(`Open the order and tick Received or Not delivered on ${left === 1 ? 'the last line' : `the ${left} remaining lines`}, then Save.`);
+  setReceived(id, true, btn);
 }
 const receivedPill = o => o.received_at ? ` <span class="pill emailed" title="Received ${esc(fmtWhen(o.received_at))}${o.received_by ? ' by ' + esc(o.received_by) : ''}">Received</span>` : '';
 async function setReceived(id, received, btn) {
