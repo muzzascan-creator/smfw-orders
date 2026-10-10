@@ -238,7 +238,8 @@ begin
       l := l || jsonb_build_object(
         'ordered_qty', coalesce(l->'ordered_qty', l->'qty'),
         'qty', greatest(0, coalesce((it->>'qty')::int, 0)),
-        'undelivered', coalesce((it->>'undelivered')::boolean, false));
+        'undelivered', coalesce((it->>'undelivered')::boolean, false),
+        'received', coalesce((it->>'received')::boolean, false) and not coalesce((it->>'undelivered')::boolean, false));
     end if;
     result := result || jsonb_build_array(l);
   end loop;

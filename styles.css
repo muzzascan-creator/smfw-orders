@@ -137,3 +137,8 @@ th.pick .picklbl{display:block;font-size:9px;letter-spacing:.04em;margin-bottom:
 td.acts{white-space:nowrap}
 td.acts button{padding-inline:6px}
 @media (max-width:600px){td.acts{padding-inline:4px}td.acts button{display:block;margin-left:auto;padding:4px 2px}td.acts .long{display:none}}
+
+/* Receiver: narrow quantity box; a Not delivered line is shown in red */
+input.rq{width:72px;text-align:right}
+tr.nd td{color:var(--danger);background:color-mix(in srgb,var(--danger) 12%,transparent)}
+tr.nd input.rq{color:var(--danger)}
