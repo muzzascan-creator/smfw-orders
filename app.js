@@ -213,7 +213,8 @@ function orderRow(o, opts = {}) {
     ${opts.source ? `<td>${o.source === 'customer' ? 'Customer' : 'SMFW'}</td>` : ''}
     <td class="num lines">${(o.lines || []).length}</td>
     <td><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>${opts.pick && o.emailed_at ? ` <span class="pill emailed" title="Emailed ${esc(fmtWhen(o.emailed_at))}">Emailed</span>` : ''}</td>
-    <td class="num openc"><button class="ghost" onclick="event.stopPropagation();openOrder('${o.id}')">Open</button></td>
+    ${opts.customer === false ? `<td class="num acts" onclick="event.stopPropagation()"><button class="ghost" onclick="openOrder('${o.id}')">View</button><button class="ghost" onclick="printOrder('${o.id}', this)">Print<span class="long"> Order</span></button></td>`
+      : `<td class="num openc"><button class="ghost" onclick="event.stopPropagation();openOrder('${o.id}')">Open</button></td>`}
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
 }
@@ -263,7 +264,7 @@ function viewMine() {
   const me = custOf(profile.customer_id);
   return `<div class="row spread"><div>${me?.name ? `<p class="custname">${esc(me.name)}${me.cid != null ? ` <span class="pill">CID ${esc(me.cid)}</span>` : ''}</p>` : ''}<h1>My orders</h1></div><button class="primary" onclick="go('entry')">New order</button></div>
     ${homeTip()}
-    ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Required</th><th class="num lines">Lines</th><th>Status</th><th class="openc"></th></tr></thead><tbody>${os.map(o => orderRow(o, { customer: false })).join('')}</tbody></table></div>`
+    ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Required</th><th class="num lines">Lines</th><th>Status</th><th class="acts"></th></tr></thead><tbody>${os.map(o => orderRow(o, { customer: false })).join('')}</tbody></table></div>`
       : `<div class="card empty">You haven’t placed any orders yet. Press <b>New order</b> to start one.</div>`}`;
 }
 function openOrder(id) {
@@ -564,8 +565,10 @@ async function formPdf(o, s) {
   const W = 210, M = 10, BOTTOM = 284, GAP = 4;
   const qty = {}; (o.lines || []).forEach(l => { if (l.pack_id) qty[l.pack_id] = l.qty; });
     // Only the form(s) for the groups this order uses: a Conventional order gets the Conventional form.
-  const own = S.products.filter(p => p.supplier_id === s.id);
-  const used = new Set((o.lines || []).map(l => prodOf(l.product_id)).filter(p => p && p.supplier_id === s.id).map(groupOf));
+  // s.id '*' means every product the viewer can see (a customer's printout, where suppliers aren't visible).
+  const mine = p => s.id === '*' || p.supplier_id === s.id;
+  const own = S.products.filter(mine);
+  const used = new Set((o.lines || []).map(l => prodOf(l.product_id)).filter(p => p && mine(p)).map(groupOf));
   const gs = GROUPS.filter(g => used.has(g)), mixed = gs.length > 1;
   const secs = gs.flatMap(g => sectionsFor(own.filter(p => groupOf(p) === g)).map(x => mixed && !x.name.toLowerCase().startsWith(g.toLowerCase()) ? { ...x, name: `${g} ${x.name}` } : x));
   // Two side-by-side blocks: sections fill the left until it holds about half the rows.
@@ -636,6 +639,18 @@ async function formPdf(o, s) {
   doc.setPage(lastPage); doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5);
   text(`${lines} line${lines === 1 ? '' : 's'} · ${units} in total · Grey boxes are not available`, M, Math.min(lastY + 3, BOTTOM + 6));
   return { buf: doc.output('arraybuffer'), lines };
+}
+// Customer printout: their order on the order form (same layout as the supplier's copy), opened ready to print.
+async function printOrder(id, btn) {
+  const o = S.orders.find(x => x.id === id); if (!o) return;
+  const w = window.open('', '_blank'); // opened straight from the click so the browser allows it
+  btn.disabled = true;
+  try {
+    const { buf } = await formPdf(o, { id: '*', name: 'Organic' });
+    const url = URL.createObjectURL(new Blob([buf], { type: 'application/pdf' }));
+    if (w) w.location.href = url; else download(buf, safeName(`${orderNo(o.number)} order`) + '.pdf');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) { if (w) w.close(); toast(e.message); } finally { btn.disabled = false; }
 }
 function download(buf, name) {
   const url = URL.createObjectURL(new Blob([buf], { type: 'application/pdf' }));
