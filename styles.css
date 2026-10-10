@@ -173,3 +173,6 @@ th .stgrid span{text-align:center}
 .contact[hidden]{display:none}
 .contact b{color:var(--fg);font-size:14px}
 .contact a{color:var(--accent);text-decoration:none}
+.notify{margin:12px 0 0;padding:8px 10px;border-radius:8px;background:#fdecea;color:#a5352b;font-size:13px}
+.notify.ok{background:var(--accent-soft);color:var(--accent)}
+.notify button{margin-left:6px;padding:4px 10px;font-size:12px}

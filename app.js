@@ -309,7 +309,11 @@ async function setReceived(id, received, btn) {
   const { error } = await sb.rpc('set_received', { order_id: id, received });
   btn.disabled = false;
   if (error) return toast(/set_received/.test(error.message) ? 'One step first: run 010_receiver_role.sql in Supabase.' : friendly(error));
-  await reloadOrders(); render(); toast(received ? 'Marked as received' : 'Received tick removed', true);
+  let msg = received ? 'Marked as received' : 'Received tick removed';
+  // Missing items: the customer is emailed straight away. If that can't happen, SMFW sees it on the order and can resend.
+  const o = S.orders.find(x => x.id === id);
+  if (received && o?.customer_id && missingOf(o).length) { const r = await notifyCustomer(id); if (r.sent) msg += `. ${custOf(o.customer_id)?.name || 'The customer'} has been emailed about the missing items`; }
+  await reloadOrders(); render(); toast(msg, true);
 }
 function viewInbox() {
   const os = S.orders.filter(o => o.status === 'submitted').sort((a, b) => (a.submitted_at || '').localeCompare(b.submitted_at || ''));
@@ -480,7 +484,29 @@ function summaryHtml() {
   return `<h2>Order summary</h2>
     <p class="muted" style="margin:4px 0 0">${esc(custOf(d.customer_id)?.name || (needsCustomer(d) ? 'No customer chosen' : 'Conventional order'))}${d.required_date ? ' · needed ' + esc(fmtDate(d.required_date)) : ''}</p>
     ${lines.length ? body + `<p style="margin:12px 0 0"><b>${got.length}</b> line${got.length === 1 ? '' : 's'} · <b>${total}</b> in total${nd ? ` · <span class="ndtxt">${nd} not delivered</span>` : ''}</p>` : '<p class="muted">No quantities entered yet.</p>'}
-    <div class="row" style="margin-top:16px">${btns}</div>${del}`;
+    ${notifyHtml(d)}<div class="row" style="margin-top:16px">${btns}</div>${del}`;
+}
+// ---------- customer emails about missing items (supabase/functions/notify-undelivered) ----------
+// Lines the customer is told about: not delivered at all, or delivered short.
+const missingOf = o => (o?.lines || []).filter(l => l.undelivered || !(+l.qty > 0) || (l.ordered_qty != null && +l.qty < +l.ordered_qty));
+async function notifyCustomer(id, resend = false) {
+  const { data, error } = await sb.functions.invoke('notify-undelivered', { body: { order_id: id, resend } });
+  if (error) { let m = ''; try { m = (await error.context.json()).error; } catch { } return { sent: false, reason: m || 'The customer email service isn’t set up yet.' }; }
+  return data;
+}
+function notifyHtml(d) {
+  const o = d.id && S.orders.find(x => x.id === d.id);
+  if (!isAdmin() || !o?.received_at || !missingOf(o).length || !('customer_notified_at' in o)) return '';
+  return o.customer_notified_at
+    ? `<p class="notify ok">Customer emailed about the missing items ${esc(fmtWhen(o.customer_notified_at))}${o.customer_notified_to ? ' to ' + esc(o.customer_notified_to) : ''}. <button class="ghost" onclick="emailCustomer(this, true)">Send again</button></p>`
+    : `<p class="notify">Customer not emailed about the missing items yet.${o.notify_error ? ' ' + esc(o.notify_error) : ''} ${o.customer_id ? '<button class="ghost" onclick="emailCustomer(this)">Email customer</button>' : ''}</p>`;
+}
+async function emailCustomer(btn, resend = false) {
+  btn.disabled = true;
+  const r = await notifyCustomer(draft.id, resend);
+  btn.disabled = false;
+  await reloadOrders(); render();
+  toast(r.sent ? `Customer emailed (${r.to.join(', ')}).` : r.reason, !!r.sent);
 }
 function wireEntry() {
   const sync = () => { $('#summary').innerHTML = summaryHtml(); };

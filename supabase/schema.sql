@@ -126,7 +126,7 @@ begin
   new.updated_at := now();
   if new.status = 'submitted' and (tg_op = 'INSERT' or old.status <> 'submitted') then new.submitted_at := now(); end if;
   if new.status = 'complete' and (tg_op = 'INSERT' or old.status <> 'complete') then new.completed_at := now(); end if;
-  if not public.is_admin() and not public.is_manager() and not public.is_receiver() then
+  if auth.uid() is not null and not public.is_admin() and not public.is_manager() and not public.is_receiver() then
     new.source := 'customer';
     new.customer_id := public.my_customer_id();
     if tg_op = 'INSERT' then new.created_by := auth.uid(); else new.created_by := old.created_by; new.number := old.number; end if;
@@ -291,3 +291,8 @@ drop policy if exists customer_read on public.product_packs;
 create policy customer_read on public.product_packs for select using (
   exists (select 1 from public.products p where p.id = product_id and p.active and p.product_group = public.my_product_group()));
 
+
+-- ---------- customer emails about missing items (also in migrations/014_customer_notify.sql) ----------
+alter table public.orders add column if not exists customer_notified_at timestamptz;
+alter table public.orders add column if not exists customer_notified_to text;
+alter table public.orders add column if not exists notify_error text;
