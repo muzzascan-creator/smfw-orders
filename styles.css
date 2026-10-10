@@ -151,3 +151,14 @@ tr.nd input.rq{color:var(--danger)}
 .stgrid{display:grid;grid-template-columns:82px 70px 76px 44px;gap:6px;align-items:center}
 .stgrid .pill{text-align:center}
 th .stgrid span{text-align:center}
+/* Receiver on a tablet: bigger tap targets, and the order list fits without sideways scrolling */
+.okgreen{color:var(--accent);font-weight:700}
+.recvlist td.recvacts button{display:inline-block;margin:0}
+@media (max-width:760px){.recvlist th:nth-child(3),.recvlist td:nth-child(3){display:none}.recvlist td.recvacts button{display:block;margin-left:auto}}
+@media (pointer:coarse){
+  .recvlist td,.recvlist th{padding-block:12px}
+  .recvlist td.recvacts button,body:has(input.rq) .row button{min-height:44px;padding:10px 14px;font-size:16px}
+  .pick input[data-rc],.pick input[data-nd]{width:30px;height:30px}
+  th.pick,td.pick{width:64px}
+  input.rq{width:84px;height:44px;font-size:18px}
+}
