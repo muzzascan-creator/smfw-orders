@@ -223,7 +223,7 @@ function orderRow(o, opts = {}) {
     <td>${esc(fmtDate(o.required_date))}</td>
     ${opts.sent ? `<td>${esc(fmtWhen(o.submitted_at))}</td>` : ''}
     ${opts.source ? `<td>${o.source === 'customer' ? 'Customer' : 'SMFW'}</td>` : ''}
-    <td class="num lines">${(o.lines || []).length}</td>
+    <td class="num lines">${(o.lines || []).filter(l => !l.undelivered).length}</td>
     <td><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>${opts.pick && o.emailed_at ? ` <span class="pill emailed" title="Emailed ${esc(fmtWhen(o.emailed_at))}">Emailed</span>` : ''}${opts.pick && o.csv_at ? ` <span class="pill emailed" title="CSV created ${esc(fmtWhen(o.csv_at))}">CSV</span>` : ''}${opts.pick ? receivedPill(o) : ''}</td>
     ${opts.customer === false ? `<td class="num acts" onclick="event.stopPropagation()"><button class="ghost" onclick="openOrder('${o.id}')">View</button><button class="ghost" onclick="printOrder('${o.id}', this)">Print<span class="long"> Order</span></button></td>`
       : `<td class="num openc"><button class="ghost" onclick="event.stopPropagation();openOrder('${o.id}')">Open</button></td>`}
@@ -349,7 +349,7 @@ function viewMine() {
 function openOrder(id) {
   const o = S.orders.find(x => x.id === id); if (!o) return;
   draft = { id, number: o.number, customer_id: o.customer_id, order_date: o.order_date, required_date: o.required_date || '', special: o.special || '', status: o.status, source: o.source, submitted_at: o.submitted_at, qty: {} };
-  (o.lines || []).forEach(l => { if (l.pack_id) draft.qty[l.pack_id] = l.qty; });
+  (o.lines || []).forEach(l => { if (l.pack_id && !l.undelivered) draft.qty[l.pack_id] = l.qty; }); // lines a Receiver marked Not delivered drop off
   // Keep what a Receiver recorded (ordered_qty, undelivered) when an admin re-saves the order.
   draft.receipt = Object.fromEntries((o.lines || []).filter(l => l.pack_id && (l.ordered_qty != null || l.undelivered || l.received)).map(l => [l.pack_id, { ordered_qty: l.ordered_qty, undelivered: !!l.undelivered, received: !!l.received }]));
   draft.missing = (o.lines || []).filter(l => !packOf(l.pack_id));
