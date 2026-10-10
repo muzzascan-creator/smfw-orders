@@ -147,3 +147,7 @@ tr.nd input.rq{color:var(--danger)}
 .recvcust .mono{font-size:inherit}
 .sumlist li.nd,.sumlist li.nd .muted,.ndtxt{color:var(--danger);font-weight:700}
 .sumlist li.nd b{text-decoration:line-through}
+/* Admin Orders: status tags in fixed slots so they line up row to row: status, Emailed, Received, CSV */
+.stgrid{display:grid;grid-template-columns:82px 70px 76px 44px;gap:6px;align-items:center}
+.stgrid .pill{text-align:center}
+th .stgrid span{text-align:center}
