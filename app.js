@@ -489,8 +489,10 @@ function summaryHtml() {
 // ---------- customer emails about missing items (supabase/functions/notify-undelivered) ----------
 // Lines the customer is told about: not delivered at all, or delivered short.
 const missingOf = o => (o?.lines || []).filter(l => l.undelivered || !(+l.qty > 0) || (l.ordered_qty != null && +l.qty < +l.ordered_qty));
+// The function's name as deployed in Supabase (Edge Functions). Its code is supabase/functions/notify-undelivered/index.ts.
+const NOTIFY_FN = 'quick-api';
 async function notifyCustomer(id, resend = false) {
-  const { data, error } = await sb.functions.invoke('notify-undelivered', { body: { order_id: id, resend } });
+  const { data, error } = await sb.functions.invoke(NOTIFY_FN, { body: { order_id: id, resend } });
   if (error) { let m = ''; try { m = (await error.context.json()).error; } catch { } return { sent: false, reason: m || `The customer email service didn’t answer (${error.context?.status ? 'error ' + error.context.status : error.message}).` }; }
   return data;
 }
