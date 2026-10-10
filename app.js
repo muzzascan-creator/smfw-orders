@@ -698,12 +698,12 @@ function composeLinks(s, list) {
   ];
 }
 // Upload CSV, one file per order:
-//   H,<CID>,<date as YYYYMMDD>
+//   H,<CID>,<order date as YYYYMMDD>
 //   D,<Ref>,<order qty × outer multiple>   (one line per order line)
 const ymd = d => (d || '').replace(/-/g, '');
 const csvCell = v => /[",\r\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? '');
 function orderCsv(o) {
-  const c = custOf(o.customer_id), missing = [], rows = [['H', c?.cid ?? '', ymd(o.required_date || o.order_date)]];
+  const c = custOf(o.customer_id), missing = [], rows = [['H', c?.cid ?? '', ymd(o.order_date)]];
   for (const l of o.lines || []) {
     const k = packOf(l.pack_id)?.k, ref = (k?.ref || '').trim();
     if (!ref) { missing.push(`${l.product_name} (${l.pack_name})`); continue; }
