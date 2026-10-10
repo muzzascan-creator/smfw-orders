@@ -26,7 +26,10 @@ const fmtWhen = t => t ? new Date(t).toLocaleString('en-AU', { day: 'numeric', m
 const byName = (a, b) => (a.name || '').localeCompare(b.name || '');
 const bySort = (a, b) => (a.sort ?? 999) - (b.sort ?? 999) || byName(a, b);
 const orderNo = n => n == null ? '' : 'SO-' + String(n).padStart(4, '0');
-const isAdmin = () => profile?.role === 'admin' && profile?.approved;
+// Admins and Managers share the office dashboard; only Admins see Suppliers, Emails and Logins (migrations/012).
+const isAdmin = () => ['admin', 'manager'].includes(profile?.role) && profile?.approved;
+const isManager = () => profile?.role === 'manager' && profile?.approved;
+const ADMIN_ONLY = ['suppliers', 'emails', 'users'];
 // Receivers see every order read-only (migrations/010).
 const isReceiver = () => profile?.role === 'receiver' && profile?.approved;
 // Conventional orders are entered by SMFW for its own supply, so they have no customer.
@@ -55,7 +58,7 @@ function friendly(err) {
     return 'That value is already in use.';
   }
   if (err.code === '23502' && /customer_id/.test(m)) return 'Orders without a customer need one more database update. Run 007_conventional_no_customer.sql in the Supabase SQL Editor.';
-  if (err.code === '23514' && /profiles_role_check/.test(m)) return 'The Receiver role needs one more database update. Run 010_receiver_role.sql in the Supabase SQL Editor.';
+  if (err.code === '23514' && /profiles_role_check/.test(m)) return 'This role needs one more database update. Run 010_receiver_role.sql and 012_manager_role.sql in the Supabase SQL Editor.';
   if (err.code === '23503') return 'This is still used elsewhere, so it can’t be deleted.';
   if (err.code === '42501' || /row-level security/i.test(m)) return 'You don’t have permission to do that.';
   return m;
@@ -130,7 +133,7 @@ async function enter() {
   if (!profile || !profile.approved || (!isAdmin() && !isReceiver() && !profile.customer_id)) { $('#top').hidden = true; return renderPending(); }
   $('#top').hidden = false;
   $('#contact').hidden = isAdmin() || isReceiver(); // customers see who to call or email
-  $('#whoami').textContent = (profile.full_name || profile.email) + (isAdmin() ? ' · Admin' : isReceiver() ? ' · Receiver' : '');
+  $('#whoami').textContent = (profile.full_name || profile.email) + (isManager() ? ' · Manager' : isAdmin() ? ' · Admin' : isReceiver() ? ' · Receiver' : '');
   await loadAll();
   if (isAdmin()) await loadCsvDir();
   listenForOrders();
@@ -200,7 +203,7 @@ const homeView = () => isAdmin() ? 'inbox' : isReceiver() ? 'recv' : 'mine';
 function navItems() {
   if (isReceiver()) return [['recv', 'Orders']];
   return isAdmin()
-    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['customers', 'Customers'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['emails', 'Emails'], ['users', 'Logins']]
+    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['customers', 'Customers'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['emails', 'Emails'], ['users', 'Logins']].filter(([v]) => !isManager() || !ADMIN_ONLY.includes(v))
     : [['mine', 'My orders'], ['entry', 'New order']];
 }
 function inboxCount() { return S.orders.filter(o => o.status === 'submitted').length; }
@@ -213,7 +216,7 @@ function render() {
   const nav = $('#nav');
   nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" aria-current="${v === view && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
   const views = { recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers };
-  const allowed = isAdmin() ? null : isReceiver() ? ['recv', 'recvorder'] : ['mine', 'entry'];
+  const allowed = isManager() ? Object.keys(views).filter(v => !ADMIN_ONLY.includes(v) && !v.startsWith('recv')) : isAdmin() ? null : isReceiver() ? ['recv', 'recvorder'] : ['mine', 'entry'];
   if (!views[view] || ['recv', 'recvorder'].includes(view) && !isReceiver() || (allowed && !allowed.includes(view))) view = homeView();
   if (view === 'entry' && !draft) draft = blankOrder();
   $('#app').innerHTML = views[view]();
@@ -531,9 +534,9 @@ async function deleteOrder(btn) {
 // ---------- admin: reference lists ----------
 function viewCustomers() {
   const cs = S.customers.slice().sort(byName);
-  return `<div class="row spread"><div><h1>Customers</h1><p class="sub">The businesses who order from you. Link a login to a customer under <b>Logins</b>.</p></div><button class="primary" onclick="editCustomer()">Add customer</button></div>
-  ${cs.length ? `<div class="tablewrap"><table><thead><tr><th class="num">CID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th class="num">Logins</th><th class="num">Orders</th><th></th></tr></thead><tbody>
-    ${cs.map(c => `<tr><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td><td class="num">${S.profiles.filter(u => u.customer_id === c.id).length}</td><td class="num">${S.orders.filter(o => o.customer_id === c.id).length}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
+  return `<div class="row spread"><div><h1>Customers</h1><p class="sub">The businesses who order from you.${isManager() ? '' : ' Link a login to a customer under <b>Logins</b>.'}</p></div><button class="primary" onclick="editCustomer()">Add customer</button></div>
+  ${cs.length ? `<div class="tablewrap"><table><thead><tr><th class="num">CID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th>${isManager() ? '' : '<th class="num">Logins</th>'}<th class="num">Orders</th><th></th></tr></thead><tbody>
+    ${cs.map(c => `<tr><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td>${isManager() ? '' : `<td class="num">${S.profiles.filter(u => u.customer_id === c.id).length}</td>`}<td class="num">${S.orders.filter(o => o.customer_id === c.id).length}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
   </tbody></table></div>` : `<div class="card empty">No customers yet.</div>`}`;
 }
 function viewSuppliers() {
@@ -565,8 +568,8 @@ function viewUsers() {
   const link = location.origin + location.pathname;
   return `<h1>Logins</h1><p class="sub">Customers create their own account at <span class="mono">${esc(link)}</span>. Link each new account to its customer so they can start ordering.${waiting ? ` <b>${waiting} waiting.</b>` : ''}</p>
   <div class="tablewrap"><table><thead><tr><th>Name</th><th>Email</th><th>Business they gave</th><th>Role</th><th>Linked customer</th><th>Access</th><th></th></tr></thead><tbody>
-  ${us.map(u => `<tr><td>${esc(u.full_name)}</td><td class="mono">${esc(u.email)}</td><td>${esc(u.business || '')}</td><td>${u.role === 'admin' ? 'Admin' : u.role === 'receiver' ? 'Receiver' : 'Customer'}</td>
-    <td>${u.role === 'admin' ? '<span class="muted">All customers</span>' : u.role === 'receiver' ? '<span class="muted">All orders, view only</span>' : esc(custOf(u.customer_id)?.name || '')}</td>
+  ${us.map(u => `<tr><td>${esc(u.full_name)}</td><td class="mono">${esc(u.email)}</td><td>${esc(u.business || '')}</td><td>${u.role === 'admin' ? 'Admin' : u.role === 'manager' ? 'Manager' : u.role === 'receiver' ? 'Receiver' : 'Customer'}</td>
+    <td>${['admin', 'manager'].includes(u.role) ? '<span class="muted">All customers</span>' : u.role === 'receiver' ? '<span class="muted">All orders, view only</span>' : esc(custOf(u.customer_id)?.name || '')}</td>
     <td>${u.approved ? '<span class="pill complete">Active</span>' : '<span class="pill draft">Waiting</span>'}</td>
     <td class="num">${u.id === profile.id ? '<span class="muted">You</span>' : `<button class="ghost" onclick="editLogin('${u.id}')">${u.approved ? 'Edit' : 'Approve'}</button>`}</td></tr>`).join('')}
   </tbody></table></div>`;
@@ -757,7 +760,7 @@ function emailPicked() {
   const blocks = groups.map(([s, list], i) => {
     const r = recipients(s), none = !r.to.length && !r.cc.length && !r.bcc.length;
     return `<div class="card" style="padding:12px"><div class="row spread"><b>${esc(s.name)}</b><span class="muted" style="font-size:12px">${list.length} form${list.length > 1 ? 's' : ''}</span></div>
-      <p style="margin:6px 0;font-size:13px">${none ? '<span class="err">No addresses are switched on for this supplier. Add them under <b>Emails</b> first.</span>' : ['to', 'cc', 'bcc'].filter(k => r[k].length).map(k => `<b>${SEND_AS[k]}:</b> <span class="mono">${r[k].map(esc).join(', ')}</span>`).join('<br>')}</p>
+      <p style="margin:6px 0;font-size:13px">${none ? `<span class="err">No addresses are switched on for this supplier. ${isManager() ? 'Ask an Admin to add them under <b>Emails</b>.' : 'Add them under <b>Emails</b> first.'}</span>` : ['to', 'cc', 'bcc'].filter(k => r[k].length).map(k => `<b>${SEND_AS[k]}:</b> <span class="mono">${r[k].map(esc).join(', ')}</span>`).join('<br>')}</p>
       <ul class="sumlist" style="margin:6px 0">${list.map(o => `<li><span class="mono">${esc(formFileName(o, s))}</span></li>`).join('')}</ul>
       <div class="row"><button type="button" class="primary" ${none ? 'disabled' : ''} onclick="outlookEmail(${i}, this)">Open in Outlook</button><span class="muted" style="font-size:12px">Saves an email with the PDF${list.length > 1 ? 's' : ''} attached. Open it from Downloads, then press Send.</span></div></div>`;
   }).join('');
@@ -1034,8 +1037,8 @@ function editLogin(uid) {
   const u = S.profiles.find(x => x.id === uid);
   openDialog(u.approved ? 'Edit login' : 'Approve login',
     `<p style="margin:0"><b>${esc(u.full_name || u.email)}</b><br><span class="mono muted">${esc(u.email)}</span>${u.business ? `<br>Business they gave: ${esc(u.business)}` : ''}</p>
-    <label class="f">Role<select name="role" id="f-role" onchange="document.getElementById('custpick').hidden = this.value!=='customer'"><option value="customer" ${!['admin', 'receiver'].includes(u.role) ? 'selected' : ''}>Customer: orders for one business</option><option value="receiver" ${u.role === 'receiver' ? 'selected' : ''}>Receiver: checks deliveries and marks orders received</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin: full access, like you</option></select></label>
-    <label class="f" id="custpick" ${u.role === 'admin' || u.role === 'receiver' ? 'hidden' : ''}>Customer this login orders for<select name="customer_id" id="f-customer_id"><option value="">Choose a customer…</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === u.customer_id ? 'selected' : ''}>${esc(c.cid)} · ${esc(c.name)}</option>`).join('')}</select></label>
+    <label class="f">Role<select name="role" id="f-role" onchange="document.getElementById('custpick').hidden = this.value!=='customer'"><option value="customer" ${!['admin', 'manager', 'receiver'].includes(u.role) ? 'selected' : ''}>Customer: orders for one business</option><option value="receiver" ${u.role === 'receiver' ? 'selected' : ''}>Receiver: checks deliveries and marks orders received</option><option value="manager" ${u.role === 'manager' ? 'selected' : ''}>Manager: orders, customers and products, but not Suppliers, Emails or Logins</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin: full access, like you</option></select></label>
+    <label class="f" id="custpick" ${['admin', 'manager', 'receiver'].includes(u.role) ? 'hidden' : ''}>Customer this login orders for<select name="customer_id" id="f-customer_id"><option value="">Choose a customer…</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === u.customer_id ? 'selected' : ''}>${esc(c.cid)} · ${esc(c.name)}</option>`).join('')}</select></label>
     <label class="f">Access<select name="approved" id="f-approved"><option value="1" selected>Allowed to sign in</option><option value="0">Blocked</option></select></label>`,
     f => {
       const role = f.get('role'), customer_id = f.get('customer_id') || null, approved = f.get('approved') === '1';

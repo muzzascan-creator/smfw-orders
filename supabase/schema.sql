@@ -56,7 +56,7 @@ create table public.profiles (
   email text,
   full_name text,
   business text,
-  role text not null default 'customer' check (role in ('admin','customer','receiver')),
+  role text not null default 'customer' check (role in ('admin','manager','customer','receiver')),
   customer_id uuid references public.customers(id) on delete set null,
   approved boolean not null default false,
   created_at timestamptz not null default now()
@@ -126,7 +126,7 @@ begin
   new.updated_at := now();
   if new.status = 'submitted' and (tg_op = 'INSERT' or old.status <> 'submitted') then new.submitted_at := now(); end if;
   if new.status = 'complete' and (tg_op = 'INSERT' or old.status <> 'complete') then new.completed_at := now(); end if;
-  if not public.is_admin() and not public.is_receiver() then
+  if not public.is_admin() and not public.is_manager() and not public.is_receiver() then
     new.source := 'customer';
     new.customer_id := public.my_customer_id();
     if tg_op = 'INSERT' then new.created_by := auth.uid(); else new.created_by := old.created_by; new.number := old.number; end if;
@@ -246,3 +246,29 @@ begin
   update public.orders set lines = result where id = order_id;
 end $$;
 grant execute on function public.save_receipt(uuid, jsonb) to authenticated;
+
+-- ---------- managers (also in migrations/012_manager_role.sql) ----------
+alter table public.profiles drop constraint if exists profiles_role_check;
+alter table public.profiles add constraint profiles_role_check check (role in ('admin','manager','customer','receiver'));
+
+create or replace function public.is_manager() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role = 'manager' and approved);
+$$;
+
+-- Full access to orders, customers and products.
+drop policy if exists manager_all on public.orders;
+create policy manager_all on public.orders for all using (public.is_manager()) with check (public.is_manager());
+drop policy if exists manager_all on public.customers;
+create policy manager_all on public.customers for all using (public.is_manager()) with check (public.is_manager());
+drop policy if exists manager_all on public.products;
+create policy manager_all on public.products for all using (public.is_manager()) with check (public.is_manager());
+drop policy if exists manager_all on public.product_packs;
+create policy manager_all on public.product_packs for all using (public.is_manager()) with check (public.is_manager());
+
+-- Read only: suppliers and their order addresses, so managers can email orders out. No access to other logins.
+drop policy if exists manager_read on public.suppliers;
+create policy manager_read on public.suppliers for select using (public.is_manager());
+drop policy if exists manager_read on public.supplier_emails;
+create policy manager_read on public.supplier_emails for select using (public.is_manager());
+
