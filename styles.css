@@ -142,3 +142,5 @@ td.acts button{padding-inline:6px}
 input.rq{width:72px;text-align:right}
 tr.nd td{color:var(--danger);background:color-mix(in srgb,var(--danger) 12%,transparent)}
 tr.nd input.rq{color:var(--danger)}
+.recvcust{font-size:22px;font-weight:600;margin:4px 0 2px}
+.recvcust .mono{font-size:inherit}
