@@ -222,3 +222,26 @@ begin
   where id = order_id;
 end $$;
 grant execute on function public.set_received(uuid, boolean) to authenticated;
+
+-- Receivers record what was delivered (also in migrations/011_receiving.sql).
+create or replace function public.save_receipt(order_id uuid, items jsonb) returns void
+language plpgsql security definer set search_path = public as $$
+declare cur jsonb; done timestamptz; l jsonb; it jsonb; result jsonb := '[]';
+begin
+  if not (public.is_receiver() or public.is_admin()) then raise exception 'Only receivers can record deliveries'; end if;
+  select lines, received_at into cur, done from public.orders where id = order_id for update;
+  if cur is null then raise exception 'Order not found'; end if;
+  if done is not null then raise exception 'This order is already marked received'; end if;
+  for l in select * from jsonb_array_elements(cur) loop
+    select x into it from jsonb_array_elements(items) x where x->>'pack_id' = l->>'pack_id' limit 1;
+    if it is not null then
+      l := l || jsonb_build_object(
+        'ordered_qty', coalesce(l->'ordered_qty', l->'qty'),
+        'qty', greatest(0, coalesce((it->>'qty')::int, 0)),
+        'undelivered', coalesce((it->>'undelivered')::boolean, false));
+    end if;
+    result := result || jsonb_build_array(l);
+  end loop;
+  update public.orders set lines = result where id = order_id;
+end $$;
+grant execute on function public.save_receipt(uuid, jsonb) to authenticated;

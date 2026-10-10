@@ -203,13 +203,14 @@ $('#nav').addEventListener('click', async e => { const b = e.target.closest('but
 function render() {
   const nav = $('#nav');
   nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" aria-current="${v === view && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
-  const views = { recv: viewRecv, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers };
-  const allowed = isAdmin() ? null : isReceiver() ? ['recv'] : ['mine', 'entry'];
-  if (!views[view] || view === 'recv' && !isReceiver() || (allowed && !allowed.includes(view))) view = homeView();
+  const views = { recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers };
+  const allowed = isAdmin() ? null : isReceiver() ? ['recv', 'recvorder'] : ['mine', 'entry'];
+  if (!views[view] || ['recv', 'recvorder'].includes(view) && !isReceiver() || (allowed && !allowed.includes(view))) view = homeView();
   if (view === 'entry' && !draft) draft = blankOrder();
   $('#app').innerHTML = views[view]();
   if (view === 'entry') wireEntry();
   if (view === 'orders') wireOrderSearch();
+  if (view === 'recvorder') wireRecvOrder();
   if (view === 'recv') { const i = $('#osearch'); if (i) i.oninput = () => { search = i.value; render(); const j = $('#osearch'); j.focus(); j.setSelectionRange(j.value.length, j.value.length); }; }
 }
 
@@ -231,18 +232,49 @@ function orderRow(o, opts = {}) {
 }
 // Receiver: every sent or completed order, read only. View opens the order form as the supplier gets it.
 function viewRecv() {
-  let os = S.orders.filter(o => o.status !== 'draft');
+  let os = S.orders.filter(o => o.status !== 'draft' && !o.received_at);
   const q = search.trim().toLowerCase();
   if (q) os = os.filter(o => [orderNo(o.number), custOf(o.customer_id)?.name, custOf(o.customer_id)?.cid].join(' ').toLowerCase().includes(q));
-  return `<h1>Orders</h1><p class="sub">Every order that has been sent or transmitted. Press View to see it on the supplier’s order form, and Mark received when the delivery arrives.</p>
+  return `<h1>Orders</h1><p class="sub">Orders waiting to be received. Open an order to correct quantities or flag lines that didn’t arrive, save it, then press Mark received.</p>
     <div class="row" style="margin-bottom:12px"><input class="search" id="osearch" placeholder="Search order no., customer or CID" value="${esc(search)}"></div>
     ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>Status</th><th class="acts"></th></tr></thead><tbody>${os.map(o => {
       const c = custOf(o.customer_id);
       return `<tr><td class="mono">${esc(orderNo(o.number))}${orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conv.</span>' : ''}</td>
         <td>${c ? `${c.cid != null ? `<span class="mono muted">${esc(c.cid)}</span> ` : ''}${esc(c.name)}` : '<span class="muted">No customer</span>'}</td>
         <td>${esc(fmtDate(o.required_date))}</td><td><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>${receivedPill(o)}</td>
-        <td class="num acts">${o.received_at ? `<button class="ghost" onclick="setReceived('${o.id}', false, this)">Undo received</button>` : `<button class="primary" onclick="setReceived('${o.id}', true, this)">Mark received</button>`}${[...new Set((o.lines || []).map(supplierOfLine).filter(Boolean))].map(s => `<button class="ghost" title="${esc(s.name)}" onclick="viewSupplierForm('${o.id}', '${s.id}', this)">View${new Set((o.lines || []).map(supplierOfLine).filter(Boolean)).size > 1 ? ' · ' + esc(s.name) : ''}</button>`).join('')}</td></tr>`;
-    }).join('')}</tbody></table></div>` : `<div class="card empty">${S.orders.length ? 'No orders match this search.' : 'No orders yet.'}</div>`}`;
+        <td class="num acts"><button class="ghost" onclick="openReceipt('${o.id}')">Open</button><button class="primary" onclick="setReceived('${o.id}', true, this)">Mark received</button>${[...new Set((o.lines || []).map(supplierOfLine).filter(Boolean))].map(s => `<button class="ghost" title="${esc(s.name)}" onclick="viewSupplierForm('${o.id}', '${s.id}', this)">View${new Set((o.lines || []).map(supplierOfLine).filter(Boolean)).size > 1 ? ' · ' + esc(s.name) : ''}</button>`).join('')}</td></tr>`;
+    }).join('')}</tbody></table></div>` : `<div class="card empty">${S.orders.some(o => o.status !== 'draft' && !o.received_at) ? 'No orders match this search.' : 'Nothing waiting. Every order has been received.'}</div>`}`;
+}
+// Receiver: one order's lines, with the quantity that arrived and a Not delivered tick for each.
+let receipt = null;
+function openReceipt(id) {
+  const o = S.orders.find(x => x.id === id); if (!o) return;
+  receipt = { id, lines: (o.lines || []).map(l => ({ ...l, ordered: l.ordered_qty ?? l.qty, qty: l.qty, undelivered: !!l.undelivered })) };
+  go('recvorder', false);
+}
+function viewRecvOrder() {
+  const o = S.orders.find(x => x.id === receipt?.id); if (!o) { view = 'recv'; return viewRecv(); }
+  const c = custOf(o.customer_id), sup = l => S.suppliers.find(s => s.id === prodOf(l.product_id)?.supplier_id)?.name || 'Other';
+  const bySup = {}; receipt.lines.forEach((l, i) => (bySup[sup(l)] ||= []).push([l, i]));
+  return `<div class="row spread"><div><h1>Order ${esc(orderNo(o.number))}</h1><p class="sub">${c ? esc(c.name) : 'No customer'}${o.required_date ? ' · needed ' + esc(fmtDate(o.required_date)) : ''}. Change the quantity if a different amount arrived, or tick Not delivered.</p></div>
+      <div class="row"><button onclick="receipt=null;go('recv',false)">Back</button><button class="primary" onclick="saveReceipt(this)">Save</button></div></div>
+    ${Object.entries(bySup).map(([sn, ls]) => `<h2 style="margin:16px 0 8px">${esc(sn)}</h2><div class="tablewrap"><table><thead><tr><th>Product</th><th>Pack</th><th class="num">Ordered</th><th class="num">Received</th><th class="pick">Not delivered</th></tr></thead><tbody>
+      ${ls.map(([l, i]) => `<tr${l.undelivered ? ' class="muted"' : ''}><td>${esc(l.product_name)}</td><td>${esc(l.pack_name)}</td><td class="num mono">${esc(l.ordered)}</td>
+        <td class="num"><input class="rq" inputmode="numeric" data-i="${i}" value="${esc(l.qty)}" ${l.undelivered ? 'disabled' : ''} aria-label="${esc(l.product_name)} received"></td>
+        <td class="pick"><input type="checkbox" data-nd="${i}" ${l.undelivered ? 'checked' : ''} aria-label="${esc(l.product_name)} not delivered"></td></tr>`).join('')}
+    </tbody></table></div>`).join('')}`;
+}
+function wireRecvOrder() {
+  document.querySelectorAll('input.rq').forEach(inp => inp.oninput = () => { const v = inp.value.replace(/[^\d]/g, ''); if (v !== inp.value) inp.value = v; receipt.lines[inp.dataset.i].qty = v === '' ? 0 : +v; });
+  document.querySelectorAll('input[data-nd]').forEach(cb => cb.onchange = () => { receipt.lines[cb.dataset.nd].undelivered = cb.checked; render(); });
+}
+async function saveReceipt(btn) {
+  btn.disabled = true;
+  const items = receipt.lines.map(l => ({ pack_id: l.pack_id, qty: l.qty, undelivered: l.undelivered || !(l.qty > 0) }));
+  const { error } = await sb.rpc('save_receipt', { order_id: receipt.id, items });
+  btn.disabled = false;
+  if (error) return toast(/save_receipt/.test(error.message) ? 'One step first: run 011_receiving.sql in Supabase.' : friendly(error));
+  await reloadOrders(); receipt = null; toast('Saved. Press Mark received when you’re done with this order.'); go('recv', false);
 }
 const receivedPill = o => o.received_at ? ` <span class="pill emailed" title="Received ${esc(fmtWhen(o.received_at))}${o.received_by ? ' by ' + esc(o.received_by) : ''}">Received</span>` : '';
 async function setReceived(id, received, btn) {
@@ -316,6 +348,8 @@ function openOrder(id) {
   const o = S.orders.find(x => x.id === id); if (!o) return;
   draft = { id, number: o.number, customer_id: o.customer_id, order_date: o.order_date, required_date: o.required_date || '', special: o.special || '', status: o.status, source: o.source, submitted_at: o.submitted_at, qty: {} };
   (o.lines || []).forEach(l => { if (l.pack_id) draft.qty[l.pack_id] = l.qty; });
+  // Keep what a Receiver recorded (ordered_qty, undelivered) when an admin re-saves the order.
+  draft.receipt = Object.fromEntries((o.lines || []).filter(l => l.pack_id && (l.ordered_qty != null || l.undelivered)).map(l => [l.pack_id, { ordered_qty: l.ordered_qty, undelivered: !!l.undelivered }]));
   draft.missing = (o.lines || []).filter(l => !packOf(l.pack_id));
   draft.group = orderGroup(o);
   go('entry', false);
@@ -410,14 +444,14 @@ function setGroup(g) {
 function draftLines() {
   return Object.entries(draft.qty).filter(([, q]) => +q > 0).map(([packId, q]) => {
     const f = packOf(packId); if (!f || !f.k.available) return null;
-    return { pack_id: f.k.id, product_id: f.p.id, sid: f.k.sid, code: f.p.code || '', product_name: f.p.name, pack_name: f.k.name, outer: outerOf(f.k), qty: +q };
+    return { pack_id: f.k.id, product_id: f.p.id, sid: f.k.sid, code: f.p.code || '', product_name: f.p.name, pack_name: f.k.name, outer: outerOf(f.k), qty: +q, ...(draft.receipt?.[packId] || {}) };
   }).filter(Boolean);
 }
 function summaryHtml() {
   const d = draft, admin = isAdmin(), lines = draftLines();
   const groups = {};
   lines.forEach(l => { const p = prodOf(l.product_id); const g = admin ? (S.suppliers.find(s => s.id === p?.supplier_id)?.name || 'Other') : (p?.section || 'Other'); (groups[g] ||= []).push(l); });
-  const body = Object.entries(groups).map(([g, ls]) => `<div class="sumsup">${esc(g)}</div><ul class="sumlist">${ls.map(l => `<li><span>${esc(l.product_name)} <span class="muted">· ${esc(l.pack_name)}</span></span><b class="mono">${l.qty}</b></li>`).join('')}</ul>`).join('');
+  const body = Object.entries(groups).map(([g, ls]) => `<div class="sumsup">${esc(g)}</div><ul class="sumlist">${ls.map(l => `<li><span>${esc(l.product_name)} <span class="muted">· ${esc(l.pack_name)}</span>${l.undelivered ? ' <span class="pill">Not delivered</span>' : l.ordered_qty != null && +l.ordered_qty !== +l.qty ? ` <span class="muted">(ordered ${esc(l.ordered_qty)})</span>` : ''}</span><b class="mono"${l.undelivered ? ' style="text-decoration:line-through"' : ''}>${l.qty}</b></li>`).join('')}</ul>`).join('');
   const total = lines.reduce((a, l) => a + l.qty, 0);
   let btns = '';
   if (admin) {
@@ -794,6 +828,7 @@ function orderCsv(o) {
   const cust = orderGroup(o) === 'Conventional' ? CONVENTIONAL_CID : custOf(o.customer_id)?.cid ?? '';
   const missing = [], rows = [['H', cust, ymd(o.required_date || o.order_date)]];
   for (const l of o.lines || []) {
+    if (l.undelivered || !(+l.qty > 0)) continue; // undelivered lines never go in the upload
     const k = packOf(l.pack_id)?.k, ref = (k?.ref || '').trim();
     if (!ref) { missing.push(`${l.product_name} (${l.pack_name})`); continue; }
     rows.push(['D', ref, (+l.qty || 0) * (Number(l.outer) || Number(k?.outer_multiple) || 1)]);
