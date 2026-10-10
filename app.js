@@ -230,9 +230,9 @@ function orderRow(o, opts = {}) {
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
 }
-// Receiver: every sent or completed order, read only. View opens the order form as the supplier gets it.
+// Receiver: completed orders not yet received. View opens the order form as the supplier gets it.
 function viewRecv() {
-  let os = S.orders.filter(o => o.status !== 'draft' && !o.received_at);
+  let os = S.orders.filter(o => o.status === 'complete' && !o.received_at);
   const q = search.trim().toLowerCase();
   if (q) os = os.filter(o => [orderNo(o.number), custOf(o.customer_id)?.name, custOf(o.customer_id)?.cid].join(' ').toLowerCase().includes(q));
   return `<h1>Orders</h1><p class="sub">Orders waiting to be received. Open an order to correct quantities or flag lines that didn’t arrive, save it, then press Mark received.</p>
@@ -243,7 +243,7 @@ function viewRecv() {
         <td>${c ? `${c.cid != null ? `<span class="mono muted">${esc(c.cid)}</span> ` : ''}${esc(c.name)}` : '<span class="muted">No customer</span>'}</td>
         <td>${esc(fmtDate(o.required_date))}</td><td><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>${receivedPill(o)}</td>
         <td class="num acts"><button class="ghost" onclick="openReceipt('${o.id}')">Open</button><button class="primary" onclick="setReceived('${o.id}', true, this)">Mark received</button>${[...new Set((o.lines || []).map(supplierOfLine).filter(Boolean))].map(s => `<button class="ghost" title="${esc(s.name)}" onclick="viewSupplierForm('${o.id}', '${s.id}', this)">View${new Set((o.lines || []).map(supplierOfLine).filter(Boolean)).size > 1 ? ' · ' + esc(s.name) : ''}</button>`).join('')}</td></tr>`;
-    }).join('')}</tbody></table></div>` : `<div class="card empty">${S.orders.some(o => o.status !== 'draft' && !o.received_at) ? 'No orders match this search.' : 'Nothing waiting. Every order has been received.'}</div>`}`;
+    }).join('')}</tbody></table></div>` : `<div class="card empty">${S.orders.some(o => o.status === 'complete' && !o.received_at) ? 'No orders match this search.' : 'Nothing waiting. Every order has been received.'}</div>`}`;
 }
 // Receiver: one order's lines, with the quantity that arrived and a Not delivered tick for each.
 let receipt = null;
