@@ -176,3 +176,8 @@ th .stgrid span{text-align:center}
 .notify{margin:12px 0 0;padding:8px 10px;border-radius:8px;background:#fdecea;color:#a5352b;font-size:13px}
 .notify.ok{background:var(--accent-soft);color:var(--accent)}
 .notify button{margin-left:6px;padding:4px 10px;font-size:12px}
+/* Receiver order: title, supplier and column headings stay frozen; product lines scroll underneath */
+.recvscroll{overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px;-webkit-overflow-scrolling:touch}
+.recvsup{position:sticky;top:0;left:0;z-index:3;margin:0;height:44px;line-height:44px;padding:0 14px;background:var(--bg);font-size:18px}
+.recvtbl table{border:0}
+.recvtbl thead th{position:sticky;top:44px;z-index:2;background:var(--sunk)}

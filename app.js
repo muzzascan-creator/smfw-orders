@@ -223,10 +223,11 @@ function render() {
   const allowed = isManager() ? Object.keys(views).filter(v => !ADMIN_ONLY.includes(v) && !v.startsWith('recv')) : isAdmin() ? null : isReceiver() ? ['recv', 'recvorder'] : ['mine', 'entry'];
   if (!views[view] || ['recv', 'recvorder'].includes(view) && !isReceiver() || (allowed && !allowed.includes(view))) view = homeView();
   if (view === 'entry' && !draft) draft = blankOrder();
+  const keep = view === 'recvorder' ? $('.recvscroll')?.scrollTop : 0; // ticking a line re-draws the screen; stay where you were
   $('#app').innerHTML = views[view]();
   if (view === 'entry') wireEntry();
   if (view === 'orders') wireOrderSearch();
-  if (view === 'recvorder') wireRecvOrder();
+  if (view === 'recvorder') { wireRecvOrder(); if (keep) $('.recvscroll').scrollTop = keep; }
   if (view === 'recv') { const i = $('#osearch'); if (i) i.oninput = () => { search = i.value; render(); const j = $('#osearch'); j.focus(); j.setSelectionRange(j.value.length, j.value.length); }; }
 }
 
@@ -273,16 +274,21 @@ function viewRecvOrder() {
   const o = S.orders.find(x => x.id === receipt?.id); if (!o) { view = 'recv'; return viewRecv(); }
   const c = custOf(o.customer_id), sup = l => S.suppliers.find(s => s.id === prodOf(l.product_id)?.supplier_id)?.name || 'Other';
   const bySup = {}; receipt.lines.forEach((l, i) => (bySup[sup(l)] ||= []).push([l, i]));
-  return `<div class="row spread"><div><h1>Order ${esc(orderNo(o.number))}</h1><div class="recvcust">${c ? esc(c.name) : '<span class="muted">No customer</span>'}</div><p class="sub">${o.required_date ? 'Needed ' + esc(fmtDate(o.required_date)) + '. ' : ''}Tick Received for each line that arrived, changing the quantity if a different amount came, or tick Not delivered.</p></div>
+  // Everything down to the column headings stays put; only the product lines scroll (see sizeRecvScroll).
+  return `<div class="row spread recvhead"><div><h1>Order ${esc(orderNo(o.number))}</h1><div class="recvcust">${c ? esc(c.name) : '<span class="muted">No customer</span>'}</div><p class="sub">${o.required_date ? 'Needed ' + esc(fmtDate(o.required_date)) + '. ' : ''}Tick Received for each line that arrived, changing the quantity if a different amount came, or tick Not delivered.</p></div>
       <div class="row"><button onclick="receipt=null;go('recv',false)">Back</button><button class="primary" onclick="saveReceipt(this)">Save</button></div></div>
-    ${Object.entries(bySup).map(([sn, ls]) => `<h2 style="margin:16px 0 8px">${esc(sn)}</h2><div class="tablewrap"><table><thead><tr><th>Product</th><th>Pack</th><th class="num">Ordered</th><th class="num">Qty received</th><th class="pick">Received</th><th class="pick">Not delivered</th></tr></thead><tbody>
+    <div class="recvscroll">${Object.entries(bySup).map(([sn, ls]) => `<h2 class="recvsup">${esc(sn)}</h2><div class="recvtbl"><table><thead><tr><th>Product</th><th>Pack</th><th class="num">Ordered</th><th class="num">Qty received</th><th class="pick">Received</th><th class="pick">Not delivered</th></tr></thead><tbody>
       ${ls.map(([l, i]) => `<tr${l.undelivered ? ' class="nd"' : ''}><td>${esc(l.product_name)}</td><td>${esc(l.pack_name)}</td><td class="num mono">${esc(l.ordered)}</td>
         <td class="num"><input class="rq" inputmode="numeric" data-i="${i}" value="${esc(l.qty)}" ${l.undelivered ? 'disabled' : ''} aria-label="${esc(l.product_name)} received"></td>
         <td class="pick"><input type="checkbox" data-rc="${i}" ${l.received ? 'checked' : ''} aria-label="${esc(l.product_name)} received"></td>
         <td class="pick"><input type="checkbox" data-nd="${i}" ${l.undelivered ? 'checked' : ''} aria-label="${esc(l.product_name)} not delivered"></td></tr>`).join('')}
-    </tbody></table></div>`).join('')}`;
+    </tbody></table></div>`).join('')}</div>`;
 }
+// The line list fills the rest of the window so the top of the screen stays frozen while it scrolls.
+function sizeRecvScroll() { const el = $('.recvscroll'); if (el) el.style.maxHeight = Math.max(240, innerHeight - el.getBoundingClientRect().top - 12) + 'px'; }
+addEventListener('resize', sizeRecvScroll);
 function wireRecvOrder() {
+  sizeRecvScroll();
   document.querySelectorAll('input.rq').forEach(inp => inp.oninput = () => { const v = inp.value.replace(/[^\d]/g, ''); if (v !== inp.value) inp.value = v; receipt.lines[inp.dataset.i].qty = v === '' ? 0 : +v; });
   document.querySelectorAll('input[data-nd]').forEach(cb => cb.onchange = () => { const l = receipt.lines[cb.dataset.nd]; l.undelivered = cb.checked; if (cb.checked) l.received = false; render(); });
   document.querySelectorAll('input[data-rc]').forEach(cb => cb.onchange = () => { const l = receipt.lines[cb.dataset.rc]; l.received = cb.checked; if (cb.checked) l.undelivered = false; render(); });
