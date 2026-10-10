@@ -162,3 +162,9 @@ th .stgrid span{text-align:center}
   th.pick,td.pick{width:64px}
   input.rq{width:84px;height:44px;font-size:18px}
 }
+/* Coolibah Salads Sydney logo: black artwork, flipped to white in dark mode */
+.brand img{height:52px;width:auto;display:block}
+.authlogo{display:block;width:min(300px,100%);height:auto;margin:0 auto 4px}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .brand img,:root:not([data-theme="light"]) .authlogo{filter:invert(1)}}
+:root[data-theme="dark"] .brand img,:root[data-theme="dark"] .authlogo{filter:invert(1)}
+@media (max-width:600px){.brand img{height:44px}}

@@ -161,7 +161,7 @@ function renderAuth() {
       <form id="af" class="grid"><label class="f">New password (at least 8 characters)<input id="a-pass" type="password" autocomplete="new-password" minlength="8" required></label>
       <button class="primary" type="submit">Save password</button></form>`,
   };
-  app.innerHTML = `<div class="auth card">${forms[authMode]}</div>`;
+  app.innerHTML = `<div class="auth card"><img class="authlogo" src="logo.png?v=2" alt="Coolibah Salads Sydney">${forms[authMode]}</div>`;
   app.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { authMode = b.dataset.mode; authMsg = ''; renderAuth(); });
   $('#af').onsubmit = async e => {
     e.preventDefault();
@@ -185,7 +185,7 @@ function renderAuth() {
   };
 }
 function renderPending() {
-  $('#app').innerHTML = `<div class="auth card"><h1>Almost there</h1>
+  $('#app').innerHTML = `<div class="auth card"><img class="authlogo" src="logo.png?v=2" alt="Coolibah Salads Sydney"><h1>Almost there</h1>
     <p>Thanks${profile?.full_name ? ', ' + esc(profile.full_name) : ''}. Your account is waiting for SMFW to link it to your business. You’ll be able to order as soon as that’s done.</p>
     <p class="muted">Signed in as ${esc(session.user.email)}</p>
     <div class="row"><button id="recheck" class="primary">Check again</button><button id="so2">Sign out</button></div></div>`;
