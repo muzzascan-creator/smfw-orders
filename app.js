@@ -529,8 +529,24 @@ function wireEntry() {
     inp.classList.toggle('has', +v > 0); sync();
   }));
   // Enter or Down arrow moves to the next quantity box, Shift+Enter or Up arrow goes back, skipping rows the search hides.
+  // Left and Right arrows move across.
   // On the order-form grid this stays in the same pack column, running on through the sections below.
   document.querySelectorAll('input[data-k]').forEach(inp => inp.addEventListener('keydown', e => {
+    const usable = x => !x.closest('tr').hidden && !x.disabled;
+    // Left / Right: the next box along the same product row (order form), or the same row of the next pack list (flat view).
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      const dir = e.key === 'ArrowRight' ? 1 : -1;
+      let next;
+      if (inp.dataset.pk !== undefined) { const row = [...inp.closest('tr').querySelectorAll('input[data-k]')].filter(usable); next = row[row.indexOf(inp) + dir]; }
+      else {
+        const lists = [...document.querySelectorAll('.flatsec')].map(sec => [...sec.querySelectorAll('input[data-k]')].filter(usable)).filter(l => l.length);
+        const li = lists.findIndex(l => l.includes(inp)), to = lists[li + dir];
+        if (to) next = to[Math.min(lists[li].indexOf(inp), to.length - 1)];
+      }
+      if (next) { next.focus(); next.select(); }
+      return;
+    }
     const step = e.key === 'ArrowDown' || (e.key === 'Enter' && !e.shiftKey) ? 1 : e.key === 'ArrowUp' || e.key === 'Enter' ? -1 : 0;
     if (!step) return;
     e.preventDefault();
