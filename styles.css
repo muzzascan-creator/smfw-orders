@@ -220,3 +220,4 @@ body.staff td.packs .pill{font-size:10.5px;padding:0 6px}
   .recvlist td.recvacts{grid-row:3;grid-column:1/-1;display:flex;gap:10px;margin-top:6px}
   .recvlist td.recvacts button{display:block;flex:1;margin:0}
 }
+td.mono .pill{font-family:var(--f-body)}
