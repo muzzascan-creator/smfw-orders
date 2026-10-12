@@ -24,23 +24,24 @@ type Line = { product_name: string; pack_name: string; qty: number; ordered_qty?
 export function missingLines(lines: Line[]) {
   return (lines || []).flatMap(l => {
     const ordered = Number(l.ordered_qty ?? l.qty) || 0, got = Number(l.qty) || 0;
-    if (l.undelivered || got <= 0) return [{ ...l, ordered, got: 0, note: 'Not delivered' }];
-    if (got < ordered) return [{ ...l, ordered, got, note: `Short: ${got} of ${ordered} delivered` }];
+    if (l.undelivered || got <= 0) return [{ ...l, ordered, got: 0, short: ordered, note: 'Not delivered' }];
+    if (got < ordered) return [{ ...l, ordered, got, short: ordered - got, note: `Short ${ordered - got}` }];
     return [];
   });
 }
 
 export function emailFor(o: any, cust: any, missing: ReturnType<typeof missingLines>) {
-  const subject = `Order ${orderNo(o.number)}: items not delivered`;
-  const rows = missing.map(m => `<tr><td style="padding:6px 10px;border-bottom:1px solid #e3e8e3">${esc(m.product_name)}</td><td style="padding:6px 10px;border-bottom:1px solid #e3e8e3">${esc(m.pack_name)}</td><td style="padding:6px 10px;border-bottom:1px solid #e3e8e3;text-align:right">${m.ordered}</td><td style="padding:6px 10px;border-bottom:1px solid #e3e8e3;color:#a5352b;font-weight:bold">${esc(m.note)}</td></tr>`).join('');
+  const subject = `Order ${orderNo(o.number)}: delivery shortages`;
+  const td = 'padding:6px 10px;border-bottom:1px solid #e3e8e3', num = td + ';text-align:right';
+  const rows = missing.map(m => `<tr><td style="${td}">${esc(m.product_name)}</td><td style="${td}">${esc(m.pack_name)}</td><td style="${num}">${m.ordered}</td><td style="${num}">${m.got}</td><td style="${num};color:#a5352b;font-weight:bold">${m.short}</td><td style="${td};color:#a5352b">${m.got ? 'Short supplied' : 'Not delivered'}</td></tr>`).join('');
   const html = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1d241f">
 <p>Dear ${esc(cust.contact || cust.name)},</p>
-<p>Your order <b>${orderNo(o.number)}</b>${o.required_date ? `, required ${esc(fmtDate(o.required_date))},` : ''} has been delivered, but the following ${missing.length === 1 ? 'item was' : 'items were'} not delivered in full:</p>
-<table style="border-collapse:collapse;font-size:14px"><thead><tr style="background:#eef3ee"><th style="padding:6px 10px;text-align:left">Product</th><th style="padding:6px 10px;text-align:left">Pack</th><th style="padding:6px 10px;text-align:right">Ordered</th><th style="padding:6px 10px;text-align:left"></th></tr></thead><tbody>${rows}</tbody></table>
+<p>Your order <b>${orderNo(o.number)}</b>${o.required_date ? `, required ${esc(fmtDate(o.required_date))},` : ''} has been delivered, but the following ${missing.length === 1 ? 'item was' : 'items were'} short supplied or not delivered:</p>
+<table style="border-collapse:collapse;font-size:14px"><thead><tr style="background:#eef3ee"><th style="padding:6px 10px;text-align:left">Product</th><th style="padding:6px 10px;text-align:left">Pack</th><th style="padding:6px 10px;text-align:right">Ordered</th><th style="padding:6px 10px;text-align:right">Supplied</th><th style="padding:6px 10px;text-align:right">Short</th><th style="padding:6px 10px;text-align:left"></th></tr></thead><tbody>${rows}</tbody></table>
 <p>If you need these items replaced, just reply to this email or call us on 0417 375 591.</p>
 <p>Regards,<br>Coolibah Salads Sydney<br>0417 375 591 · sales@cssydney.com.au</p></div>`;
-  const text = `Dear ${cust.contact || cust.name},\n\nYour order ${orderNo(o.number)}${o.required_date ? `, required ${fmtDate(o.required_date)},` : ''} has been delivered, but the following ${missing.length === 1 ? 'item was' : 'items were'} not delivered in full:\n\n` +
-    missing.map(m => `- ${m.product_name} (${m.pack_name}), ordered ${m.ordered}: ${m.note}`).join('\n') +
+  const text = `Dear ${cust.contact || cust.name},\n\nYour order ${orderNo(o.number)}${o.required_date ? `, required ${fmtDate(o.required_date)},` : ''} has been delivered, but the following ${missing.length === 1 ? 'item was' : 'items were'} short supplied or not delivered:\n\n` +
+    missing.map(m => `- ${m.product_name} (${m.pack_name}): ordered ${m.ordered}, supplied ${m.got}, short ${m.short}${m.got ? '' : ' (not delivered)'}`).join('\n') +
     `\n\nIf you need these items replaced, just reply to this email or call us on 0417 375 591.\n\nRegards,\nCoolibah Salads Sydney\n0417 375 591 · sales@cssydney.com.au\n`;
   return { subject, html, text };
 }

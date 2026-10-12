@@ -325,7 +325,7 @@ async function setReceived(id, received, btn) {
   let msg = received ? 'Marked as received' : 'Received tick removed';
   // Missing items: the customer is emailed straight away. If that can't happen, SMFW sees it on the order and can resend.
   const o = S.orders.find(x => x.id === id);
-  if (received && o?.customer_id && missingOf(o).length) { const r = await notifyCustomer(id); if (r.sent) msg += `. ${custOf(o.customer_id)?.name || 'The customer'} has been emailed about the missing items`; }
+  if (received && o?.customer_id && missingOf(o).length) { const r = await notifyCustomer(id); if (r.sent) msg += `. ${custOf(o.customer_id)?.name || 'The customer'} has been emailed about the shortages`; }
   await reloadOrders(); render(); toast(msg, true);
 }
 function viewInbox() {
@@ -540,8 +540,8 @@ function notifyHtml(d) {
   const o = d.id && S.orders.find(x => x.id === d.id);
   if (!isAdmin() || !o?.received_at || !missingOf(o).length || !('customer_notified_at' in o)) return '';
   return o.customer_notified_at
-    ? `<p class="notify ok">Customer emailed about the missing items ${esc(fmtWhen(o.customer_notified_at))}${o.customer_notified_to ? ' to ' + esc(o.customer_notified_to) : ''}. <button class="ghost" onclick="emailCustomer(this, true)">Send again</button></p>`
-    : `<p class="notify">Customer not emailed about the missing items yet.${o.notify_error ? ' ' + esc(o.notify_error) : ''} ${o.customer_id ? '<button class="ghost" onclick="emailCustomer(this)">Email customer</button>' : ''}</p>`;
+    ? `<p class="notify ok">Customer emailed about the shortages ${esc(fmtWhen(o.customer_notified_at))}${o.customer_notified_to ? ' to ' + esc(o.customer_notified_to) : ''}. <button class="ghost" onclick="emailCustomer(this, true)">Send again</button></p>`
+    : `<p class="notify">Customer not emailed about the shortages yet.${o.notify_error ? ' ' + esc(o.notify_error) : ''} ${o.customer_id ? '<button class="ghost" onclick="emailCustomer(this)">Email customer</button>' : ''}</p>`;
 }
 async function emailCustomer(btn, resend = false) {
   btn.disabled = true;
