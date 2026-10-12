@@ -228,3 +228,5 @@ input.rq{width:56px;text-align:center;padding-inline:4px}
 @media (min-width:761px) and (pointer:coarse){.recvtbl td.rprod{font-size:21px}}
 .recvtbl td.rord{font-size:14px;font-family:var(--f-body)}
 @media (pointer:coarse){.recvtbl td.rord{font-size:18px}}
+label.chk{display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--fg);line-height:1.35}
+label.chk input{width:auto;margin-top:2px}

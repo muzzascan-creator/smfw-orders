@@ -25,6 +25,25 @@ const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getT
 // Latest allowed date required: a year ahead. Also stops the date box accepting a 5- or 6-digit year.
 const latestReq = () => { const d = new Date(); d.setFullYear(d.getFullYear() + 1); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
 const tomorrow = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+// Organic order times (Sydney): Tue, Wed and Thu deliveries close at 7:30am the day before; Mon (and Sun, for
+// customers ticked Sunday delivery) close at 7:30am on the Friday. Same rule as the database (migrations/018).
+function sydNow() {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).map(x => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, minutes: +p.hour * 60 + +p.minute };
+}
+const shiftDate = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+function organicCutoff(d, sunday) {
+  const back = { 2: 1, 3: 1, 4: 1, 1: 3, 0: sunday ? 2 : null }[new Date(d + 'T12:00:00Z').getUTCDay()];
+  return back == null ? null : shiftDate(d, -back);
+}
+// Why a customer can't send an Organic order for date d right now, or '' when they can.
+function organicProblem(d, cust) {
+  const sun = !!cust?.sunday_delivery, cut = organicCutoff(d, sun), now = sydNow();
+  if (!cut) return `Organic deliveries are Monday, Tuesday, Wednesday and Thursday${sun ? ' and Sunday' : ''}. Please choose one of those days.`;
+  if (now.date > cut || (now.date === cut && now.minutes >= 450)) return `Orders for ${fmtDate(d)} delivery closed at 7:30am on ${fmtDate(cut)}. Please choose a later delivery day, or call us on 0417 375 591.`;
+  return '';
+}
+const organicHint = cust => `Organic orders close at 7:30am: Monday for Tuesday, Tuesday for Wednesday, Wednesday for Thursday, and Friday for ${cust?.sunday_delivery ? 'Sunday and ' : ''}Monday delivery.`;
 const fmtDate = d => { if (!d) return ''; const [y, m, dd] = d.split('-'); return new Date(+y, m - 1, +dd).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); };
 const fmtWhen = t => t ? new Date(t).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
 const byName = (a, b) => (a.name || '').localeCompare(b.name || '');
@@ -80,6 +99,9 @@ async function loadAll() {
   S.refMissing = !!probe.error && /ref/.test(probe.error.message || '');
   probe = await sb.from('customers').select('product_group').limit(1);
   S.custGroupMissing = !!probe.error && /product_group/.test(probe.error.message || '');
+  // Sunday delivery and reminder settings arrive with migrations/018.
+  probe = await sb.from('customers').select('sunday_delivery').limit(1);
+  S.remMissing = !!probe.error && /sunday_delivery/.test(probe.error.message || '');
   const prods = sb.from('products').select(cols(!S.groupsMissing));
   const orders = sb.from('orders').select('*').order('number', { ascending: false });
   if (isReceiver()) {
@@ -98,7 +120,7 @@ async function loadAll() {
     S.emailsMissing = !!m.error; S.emails = m.data || [];
     if (m.error && !['42P01', 'PGRST205'].includes(m.error.code)) toast(friendly(m.error));
   } else {
-    const [c, p, o] = await Promise.all([sb.from('customers').select(`id,cid,name${S.custGroupMissing ? '' : ',product_group'}`), prods.eq('active', true), orders]);
+    const [c, p, o] = await Promise.all([sb.from('customers').select(`id,cid,name${S.custGroupMissing ? '' : ',product_group'}${S.remMissing ? '' : ',sunday_delivery'}`), prods.eq('active', true), orders]);
     for (const r of [c, p, o]) if (r.error) toast(friendly(r.error));
     S.customers = c.data || []; S.suppliers = []; S.products = p.data || []; S.orders = o.data || [];
   }
@@ -484,7 +506,7 @@ function viewEntry() {
       <div class="card grid g2">
         ${custField}
         <label class="f">Today’s date<input type="date" id="e-date" disabled title="Set automatically" value="${esc(d.status === 'draft' ? today() : d.order_date)}"></label>
-        <label class="f">Day / date required<input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${tomorrow()}"` : ''} max="${latestReq()}" value="${esc(d.required_date)}"></label>
+        <label class="f">Day / date required<input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${tomorrow()}"` : ''} max="${latestReq()}" value="${esc(d.required_date)}">${!admin && (d.group || 'Organic') === 'Organic' && d.status === 'draft' ? `<span class="muted" style="font-size:12px;font-weight:400">${organicHint(custOf(d.customer_id))}</span>` : ''}</label>
         <label class="f" style="grid-column:1/-1">Special requirements<textarea id="e-special" ${dis}>${esc(d.special)}</textarea></label>
       </div>
       <div class="row" style="margin-top:16px"><input class="search" id="e-find" placeholder="Find a product by name or code"></div>
@@ -599,6 +621,7 @@ async function saveOrder(status) {
     if (!draft.required_date) return toast('Add the day/date required first.');
     // Only checked when the order is placed, so older orders can still be processed after their date.
     if (draft.status === 'draft' && draft.required_date < tomorrow()) return toast(`The date required must be tomorrow (${fmtDate(tomorrow())}) or later.`);
+    if (!isAdmin() && draft.status === 'draft' && (draft.group || 'Organic') === 'Organic') { const why = organicProblem(draft.required_date, custOf(draft.customer_id)); if (why) return toast(why); }
   } else if (needsCustomer(draft) && !draft.customer_id) return toast('Choose a customer first.');
   // Today's date is fixed: an order is dated the day it's saved, and keeps that date once it's sent.
   const row = { customer_id: needsCustomer(draft) ? draft.customer_id : null, order_date: draft.status === 'draft' ? today() : draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
@@ -628,7 +651,7 @@ function viewCustomers() {
   const cs = S.customers.slice().sort(byName);
   return `<div class="row spread"><div><h1>Customers</h1><p class="sub">The businesses who order from you.${isManager() ? '' : ' Link a login to a customer under <b>Logins</b>.'}</p></div><button class="primary" onclick="editCustomer()">Add customer</button></div>
   ${cs.length ? `<div class="tablewrap"><table><thead><tr><th class="num">CID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th>${S.custGroupMissing ? '' : '<th>Type</th>'}${isManager() ? '' : '<th class="num">Logins</th>'}<th class="num">Orders</th><th></th></tr></thead><tbody>
-    ${cs.map(c => `<tr><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td>${S.custGroupMissing ? '' : `<td><span class="pill grp-${custGroup(c).toLowerCase()}">${custGroup(c)}</span></td>`}${isManager() ? '' : `<td class="num">${S.profiles.filter(u => u.role === 'customer' && loginCustIds(u).includes(c.id)).length}</td>`}<td class="num">${S.orders.filter(o => o.customer_id === c.id).length}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
+    ${cs.map(c => `<tr><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.sunday_delivery ? ' <span class="pill">Sunday delivery</span>' : ''}${c.reminders === false ? ' <span class="pill">No reminders</span>' : ''}${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td>${S.custGroupMissing ? '' : `<td><span class="pill grp-${custGroup(c).toLowerCase()}">${custGroup(c)}</span></td>`}${isManager() ? '' : `<td class="num">${S.profiles.filter(u => u.role === 'customer' && loginCustIds(u).includes(c.id)).length}</td>`}<td class="num">${S.orders.filter(o => o.customer_id === c.id).length}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
   </tbody></table></div>` : `<div class="card empty">No customers yet.</div>`}`;
 }
 function viewSuppliers() {
@@ -1054,10 +1077,12 @@ function editCustomer(id) {
   openDialog(id ? 'Edit customer' : 'Add customer',
     `<div class="grid g2">${fld('cid', 'CID (unique number)', c.cid ?? nextCid(), 'number', 'required min="1" step="1"')}${fld('name', 'Customer name', c.name, 'text', 'required')}</div>
      <div class="grid g2">${fld('contact', 'Contact person', c.contact)}${fld('phone', 'Contact phone', c.phone)}</div><div class="grid g2">${fld('email', 'Email', c.email, 'email')}${S.custGroupMissing ? '' : `<label class="f">Orders products<select name="product_group" id="f-product_group">${GROUPS.map(g => `<option value="${g}" ${custGroup(c) === g ? 'selected' : ''}>${g}</option>`).join('')}</select></label>`}</div>
+     ${S.remMissing ? '' : `<div class="grid g2"><label class="chk"><input type="checkbox" name="reminders" value="1" ${c.reminders !== false ? 'checked' : ''}> Email a reminder at 7:20am if no Organic order is in</label><label class="chk"><input type="checkbox" name="sunday_delivery" value="1" ${c.sunday_delivery ? 'checked' : ''}> Sunday delivery (orders Friday for Sunday)</label></div>`}
      <label class="f">Notes<textarea name="notes" id="f-notes">${esc(c.notes)}</textarea></label>`,
     f => {
       const row = { cid: Number(f.get('cid')), name: f.get('name').trim(), contact: f.get('contact').trim(), phone: f.get('phone').trim(), email: f.get('email').trim(), notes: f.get('notes').trim() };
       if (!S.custGroupMissing) row.product_group = f.get('product_group');
+      if (!S.remMissing) { row.sunday_delivery = f.get('sunday_delivery') === '1'; row.reminders = f.get('reminders') === '1'; }
       if (!Number.isInteger(row.cid) || row.cid < 1) { toast('CID must be a whole number above 0.'); return false; }
       const clash = S.customers.find(x => x.id !== id && x.cid === row.cid); if (clash) { toast(`CID ${row.cid} is already used by ${clash.name}. Next free CID is ${nextCid()}.`); return false; }
       return run(id ? sb.from('customers').update(row).eq('id', id) : sb.from('customers').insert(row), 'Customer saved');

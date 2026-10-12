@@ -3,6 +3,8 @@
 //    The Receiver app calls this straight after Mark received; Admins and Managers can resend from the order.
 // 2. Supplier emails (action "supplier"): the order form PDFs the Admin app builds, sent to the supplier's
 //    active addresses under Emails. Admins and Managers only.
+// 3. Order reminders (action "reminders"): at 7:20am on each Organic order day, Organic customers who haven't
+//    sent an order for the next delivery get a reminder. Called by the Supabase Cron job in migrations/018.
 // Needs the RESEND_API_KEY secret (resend.com). Optional: FROM_EMAIL, REPLY_TO.
 const URL_ = Deno.env.get('SUPABASE_URL')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -12,7 +14,7 @@ const RESEND_URL = Deno.env.get('RESEND_URL') || 'https://api.resend.com/emails'
 const FROM = Deno.env.get('FROM_EMAIL') || 'Coolibah Salads Sydney <orders@csorders.org>';
 const REPLY_TO = Deno.env.get('REPLY_TO') || 'sales@cssydney.com.au';
 
-const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
+const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-key' };
 const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 const db = (path: string, init: RequestInit = {}) => fetch(`${URL_}/rest/v1/${path}`, { ...init, headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json', ...(init.headers || {}) } });
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
@@ -61,9 +63,77 @@ async function sendToSupplier({ supplier_id, subject, text, files }: { supplier_
   return reply({ sent: true, to, cc, bcc });
 }
 
+// ---------- order reminders ----------
+// Organic order days (Sydney): Mon -> Tue delivery, Tue -> Wed, Wed -> Thu, Fri -> Sun (Sunday-delivery customers only) and Mon.
+// Days are counted from Sunday = 0. Orders close at 7:30am; the reminder goes at 7:20am.
+const ORDER_DAYS: Record<number, { ahead: number; sundayOnly?: boolean }[]> = {
+  1: [{ ahead: 1 }], 2: [{ ahead: 1 }], 3: [{ ahead: 1 }],
+  5: [{ ahead: 2, sundayOnly: true }, { ahead: 3 }],
+};
+export function sydneyNow(now = new Date()) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    .formatToParts(now).map(x => [x.type, x.value]));
+  const date = `${p.year}-${p.month}-${p.day}`;
+  return { date, dow: new Date(date + 'T12:00:00Z').getUTCDay(), minutes: +p.hour * 60 + +p.minute };
+}
+const addDays = (d: string, n: number) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+export function reminderEmail(cust: any, delivery: string, hasDraft: boolean) {
+  const day = fmtDate(delivery);
+  const subject = `Reminder: order by 7:30am today for ${day} delivery`;
+  const lead = hasDraft ? `you have an order saved as a draft for ${esc(day)} delivery, but it hasn’t been sent yet` : `we haven’t received your order for ${esc(day)} delivery yet`;
+  const html = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1d241f">
+<p>Dear ${esc(cust.contact || cust.name)},</p>
+<p>Just a reminder that ${lead}. Organic orders for that delivery close at <b>7:30am today</b>.</p>
+<p><a href="https://csorders.org" style="display:inline-block;background:#2f6b3a;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:bold">${hasDraft ? 'Open and send your order' : 'Place your order'}</a></p>
+<p>If you don’t need a delivery that day, please ignore this email.</p>
+<p>Regards,<br>Coolibah Salads Sydney<br>0417 375 591 · sales@cssydney.com.au</p></div>`;
+  const text = `Dear ${cust.contact || cust.name},\n\nJust a reminder that ${hasDraft ? `you have an order saved as a draft for ${day} delivery, but it hasn't been sent yet` : `we haven't received your order for ${day} delivery yet`}. Organic orders for that delivery close at 7:30am today.\n\n${hasDraft ? 'Open and send your order' : 'Place your order'} at https://csorders.org\n\nIf you don't need a delivery that day, please ignore this email.\n\nRegards,\nCoolibah Salads Sydney\n0417 375 591 · sales@cssydney.com.au\n`;
+  return { subject, html, text };
+}
+// dry: list who would be reminded without sending. force: run outside the 7:20am window (Admin testing).
+async function sendReminders({ dry = false, force = false, now }: { dry?: boolean; force?: boolean; now?: string }) {
+  const t = sydneyNow(now ? new Date(now) : new Date());
+  if (!force && (t.minutes < 7 * 60 + 10 || t.minutes >= 7 * 60 + 30)) return reply({ skipped: 'Not 7:20am in Sydney.' });
+  const due = ORDER_DAYS[t.dow] || [];
+  if (!due.length) return reply({ skipped: 'Not an Organic order day.' });
+  const custs: any[] = await (await db(`customers?product_group=eq.Organic&reminders=eq.true&select=id,name,contact,email,sunday_delivery`)).json();
+  const out: any[] = [];
+  for (const d of due) {
+    const delivery = addDays(t.date, d.ahead);
+    const orders: any[] = await (await db(`orders?required_date=eq.${delivery}&customer_id=not.is.null&select=customer_id,status`)).json();
+    const sent = new Set(orders.filter(o => o.status !== 'draft').map(o => o.customer_id)), drafts = new Set(orders.filter(o => o.status === 'draft').map(o => o.customer_id));
+    const done = new Set(((await (await db(`reminder_log?delivery_date=eq.${delivery}&select=customer_id`)).json()) as any[]).map(r => r.customer_id));
+    for (const c of custs) {
+      if (d.sundayOnly && !c.sunday_delivery) continue;
+      if (sent.has(c.id) || done.has(c.id)) continue;
+      const to = String(c.email || '').split(/[,;\s]+/).filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
+      const row: any = { customer: c.name, delivery, to: to.join(', '), draft: drafts.has(c.id) };
+      if (!to.length) { row.error = 'No email address'; out.push(row); continue; }
+      if (dry) { out.push(row); continue; }
+      let error = null;
+      if (!RESEND_KEY) error = 'RESEND_API_KEY is missing';
+      else {
+        const { subject, html, text } = reminderEmail(c, delivery, drafts.has(c.id));
+        const r = await fetch(RESEND_URL, { method: 'POST', headers: { Authorization: `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from: FROM, to, reply_to: REPLY_TO, subject, html, text }) });
+        if (!r.ok) error = (await r.text()).slice(0, 200);
+      }
+      await db('reminder_log', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates' }, body: JSON.stringify({ customer_id: c.id, delivery_date: delivery, sent_to: to.join(', '), error }) });
+      out.push({ ...row, sent: !error, error });
+    }
+  }
+  return reply({ day: t.date, dry, reminders: out });
+}
+
 export async function handler(req: Request) {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   try {
+    // The scheduled 7:20am job proves itself with the private key stored in app_settings (migrations/018).
+    const cronKey = req.headers.get('x-cron-key');
+    if (cronKey) {
+      const [k] = await (await db(`app_settings?key=eq.cron_key&select=value`)).json();
+      if (!k?.value || k.value !== cronKey) return reply({ error: 'Not allowed.' }, 403);
+      return await sendReminders({});
+    }
     // Only signed-in Receivers, Managers and Admins may trigger an email.
     const auth = req.headers.get('Authorization') || '';
     const who = await fetch(`${URL_}/auth/v1/user`, { headers: { apikey: ANON, Authorization: auth } });
@@ -73,6 +143,10 @@ export async function handler(req: Request) {
     if (!me?.approved || !['receiver', 'manager', 'admin'].includes(me.role)) return reply({ error: 'Not allowed.' }, 403);
 
     const body = await req.json();
+    if (body.action === 'reminders') {
+      if (!['manager', 'admin'].includes(me.role)) return reply({ error: 'Not allowed.' }, 403);
+      return await sendReminders({ dry: body.dry !== false, force: !!body.force, now: body.now });
+    }
     if (body.action === 'supplier') {
       if (!['manager', 'admin'].includes(me.role)) return reply({ error: 'Not allowed.' }, 403);
       return await sendToSupplier(body);
