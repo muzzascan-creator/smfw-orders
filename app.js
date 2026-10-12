@@ -87,7 +87,9 @@ async function loadAll() {
     for (const r of [c, s, p, o]) if (r.error) toast(friendly(r.error));
     S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; S.orders = o.data || [];
   } else if (isAdmin()) {
-    const [c, s, p, o, u, m] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort')]);
+    const [c, s, p, o, u, m, sec] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort'), sb.from('product_sections').select('name')]);
+    // The sections list arrives with migrations/016; until then sections are just the ones products already use.
+    S.secMissing = !!sec.error; S.sections = (sec.data || []).map(r => r.name);
     for (const r of [c, s, p, o, u]) if (r.error) toast(friendly(r.error));
     S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; S.orders = o.data || []; S.profiles = u.data || [];
     // The order-emails table arrives with migrations/002; until it is run, fall back to the addresses on each supplier.
@@ -621,7 +623,7 @@ function viewProducts() {
   const n = g => g === 'all' ? S.products.length : S.products.filter(p => groupOf(p) === g).length;
   const filters = `<div class="row" style="margin-bottom:4px">${['all', ...GROUPS].map(g => `<button class="${groupFilter === g ? 'primary' : ''}" onclick="groupFilter='${g}';render()">${g === 'all' ? 'All' : g} (${n(g)})</button>`).join('')}</div>`;
   const note = S.groupsMissing ? `<div class="banner">To use the Organic and Conventional groups, run <a href="https://raw.githubusercontent.com/muzzascan-creator/smfw-orders/main/supabase/migrations/004_product_groups.sql" target="_blank" rel="noopener">004_product_groups.sql</a> in Supabase’s SQL Editor, then reload. Until then every product counts as Organic.</div>` : '';
-  return `<div class="row spread"><div><h1>Products</h1><p class="sub">Grouped by supplier, in the same sections as their order forms.</p></div>${S.suppliers.length ? `<button class="primary" onclick="editProduct()">Add product</button>` : ''}</div>
+  return `<div class="row spread"><div><h1>Products</h1><p class="sub">Grouped by supplier, in the same sections as their order forms.</p></div>${S.suppliers.length ? `<div class="row"><button onclick="editSections()">Sections</button><button class="primary" onclick="editProduct()">Add product</button></div>` : ''}</div>
   ${note}${S.products.length ? filters : ''}
   ${blocks || `<div class="card empty">${S.products.length ? 'No products in this group yet.' : `No products yet.${S.suppliers.length ? '' : ' Add a supplier first.'}`}</div>`}`;
 }
@@ -1067,15 +1069,42 @@ function addPackRow() {
   const box = $('#packrows'); const used = [...box.querySelectorAll('input[name=psid]')].map(x => Number(x.value) || 0);
   box.insertAdjacentHTML('beforeend', packRow({ sid: nextSid(used) }));
 }
+// Every section: the saved list (Products > Sections) plus any a product already uses.
+const allSections = () => [...new Set([...(S.sections || []), ...S.products.map(x => x.section).filter(Boolean)])].sort((a, b) => a.localeCompare(b));
+function editSections() {
+  const used = n => S.products.filter(p => p.section === n).length;
+  const rows = allSections().map(n => `<div class="secrow"><input name="secname" value="${esc(n)}" aria-label="Section name"><input type="hidden" name="secold" value="${esc(n)}"><span class="muted">${used(n)} product${used(n) === 1 ? '' : 's'}</span>${used(n) ? '<span></span>' : `<label class="muted"><input type="checkbox" name="secdel" value="${esc(n)}"> Remove</label>`}</div>`).join('');
+  openDialog('Sections',
+    `${S.secMissing ? '<div class="banner">To add new sections, first run <b>016_sections.sql</b> in Supabase’s SQL Editor. Renaming works already.</div>' : ''}
+     <p class="sub" style="margin:0">The headings on the order forms. Change a name to rename it on every product in that section.</p>
+     <div class="grid" style="gap:6px">${rows || '<p class="muted">No sections yet.</p>'}</div>
+     ${S.secMissing ? '' : `<label class="f">New section<input name="secnew" id="f-secnew" placeholder="e.g. Microgreens"></label>`}`,
+    async f => {
+      const olds = f.getAll('secold'), news = f.getAll('secname').map(x => x.trim()), dels = new Set(f.getAll('secdel')), add = (f.get('secnew') || '').trim();
+      const final = olds.map((o, i) => dels.has(o) ? null : news[i]).filter(Boolean).concat(add ? [add] : []);
+      if (news.some((n, i) => !n && !dels.has(olds[i]))) { toast('A section name can’t be empty.'); return false; }
+      const dup = final.find((n, i) => final.findIndex(x => x.toLowerCase() === n.toLowerCase()) !== i); if (dup) { toast(`There are two sections called “${dup}”.`); return false; }
+      for (const [i, o] of olds.entries()) {
+        const n = news[i];
+        if (dels.has(o)) { if (!S.secMissing && !(await run(sb.from('product_sections').delete().eq('name', o)))) return false; continue; }
+        if (n === o) continue;
+        if (!(await run(sb.from('products').update({ section: n }).eq('section', o)))) return false;
+        if (!S.secMissing && !(await run(sb.from('product_sections').upsert({ name: n })))) return false;
+        if (!S.secMissing) await sb.from('product_sections').delete().eq('name', o);
+      }
+      if (add && !(await run(sb.from('product_sections').upsert({ name: add })))) return false;
+      toast('Sections saved', true); return true;
+    });
+}
 function editProduct(id) {
   const p = id ? prodOf(id) : { supplier_id: S.suppliers[0]?.id, product_packs: [] };
-  const secs = [...new Set(S.products.map(x => x.section).filter(Boolean))];
+  const secs = allSections();
   const packs = p.product_packs?.length ? p.product_packs : [{ sid: nextSid() }];
   openDialog(id ? 'Edit product' : 'Add product',
     `<label class="f">Supplier<select name="supplier_id" id="f-supplier_id">${S.suppliers.slice().sort(byName).map(s => `<option value="${s.id}" ${s.id === p.supplier_id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label>
     <div class="grid g2">${fld('code', 'Supplier code', p.code)}${fld('name', 'Product name', p.name, 'text', 'required')}</div>
     ${S.groupsMissing ? '' : `<label class="f">Product group<select name="product_group" id="f-product_group">${GROUPS.map(g => `<option ${groupOf(p) === g ? 'selected' : ''}>${g}</option>`).join('')}</select></label>`}
-    <label class="f">Section on the form<input name="section" id="f-section" list="seclist" value="${esc(p.section)}"><datalist id="seclist">${secs.map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>
+    <label class="f">Section on the form<select name="section" id="f-section"><option value="">No section</option>${secs.map(x => `<option ${x === p.section ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select><span class="muted" style="font-size:12px">Add or rename sections with the <b>Sections</b> button on the Products page.</span></label>
     <div class="grid" style="gap:6px"><div class="packrow packhead${S.refMissing ? '' : ' withref'}"><span>SID</span>${S.refMissing ? '' : '<span>Ref</span>'}<span>Pack type (match the form’s column heading)</span><span>Outer</span><span>Availability</span><span></span></div>
       <div class="grid" style="gap:6px" id="packrows">${packs.map(packRow).join('')}</div>
       <div><button type="button" class="ghost" onclick="addPackRow()">+ Add pack type</button></div></div>

@@ -192,3 +192,5 @@ body.staff .tablewrap button.ghost{padding-top:2px;padding-bottom:2px;min-height
 body.staff td.packs{font-size:12.5px;line-height:1.35}
 body.staff td.packs div{white-space:nowrap}
 body.staff td.packs .pill{font-size:10.5px;padding:0 6px}
+.secrow{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center}
+.secrow .muted{font-size:12px;white-space:nowrap;min-width:72px}
