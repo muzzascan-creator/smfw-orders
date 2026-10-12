@@ -184,7 +184,11 @@ th .stgrid span{text-align:center}
 .est{font-size:12px;color:var(--muted)}
 .est.ok{color:var(--accent);font-weight:600}
 .est.err{color:#a5352b;font-weight:600}
-/* Tight rows (Logins), so more fit on the page */
-table.compact td{padding-top:3px;padding-bottom:3px}
-table.compact .pill{padding-top:1px;padding-bottom:1px}
-table.compact button.ghost{padding-top:2px;padding-bottom:2px;min-height:0}
+/* Tight rows on every Admin / Manager list, so more fit on the page */
+body.staff .tablewrap td{padding-top:3px;padding-bottom:3px}
+body.staff .tablewrap th{padding-top:6px;padding-bottom:6px}
+body.staff .tablewrap .pill{padding-top:1px;padding-bottom:1px}
+body.staff .tablewrap button.ghost{padding-top:2px;padding-bottom:2px;min-height:0}
+body.staff td.packs{font-size:12.5px;line-height:1.35}
+body.staff td.packs div{white-space:nowrap}
+body.staff td.packs .pill{font-size:10.5px;padding:0 6px}
