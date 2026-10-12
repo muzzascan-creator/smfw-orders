@@ -37,12 +37,12 @@ export function emailFor(o: any, cust: any, missing: ReturnType<typeof missingLi
   const td = 'padding:6px 10px;border-bottom:1px solid #e3e8e3', num = td + ';text-align:right';
   const rows = missing.map(m => `<tr><td style="${td}">${esc(m.product_name)}</td><td style="${td}">${esc(m.pack_name)}</td><td style="${num}">${m.ordered}</td><td style="${num}">${m.got}</td><td style="${num};color:#a5352b;font-weight:bold">${m.short}</td><td style="${td};color:#a5352b">${m.got ? 'Short supplied' : 'Not delivered'}</td></tr>`).join('');
   const html = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1d241f">
-<p>Dear ${esc(cust.contact || cust.name)},</p>
+<p>Dear Customer,</p>
 <p>Your order <b>${orderNo(o.number)}</b>${o.required_date ? `, required ${esc(fmtDate(o.required_date))},` : ''} has been delivered, but the following ${missing.length === 1 ? 'item was' : 'items were'} short supplied or not delivered:</p>
 <table style="border-collapse:collapse;font-size:14px"><thead><tr style="background:#eef3ee"><th style="padding:6px 10px;text-align:left">Product</th><th style="padding:6px 10px;text-align:left">Pack</th><th style="padding:6px 10px;text-align:right">Ordered</th><th style="padding:6px 10px;text-align:right">Supplied</th><th style="padding:6px 10px;text-align:right">Short</th><th style="padding:6px 10px;text-align:left"></th></tr></thead><tbody>${rows}</tbody></table>
 <p>If you need these items replaced, just reply to this email or call us on 0417 375 591.</p>
 <p>Regards,<br>Coolibah Salads Sydney<br>0417 375 591 · sales@cssydney.com.au</p></div>`;
-  const text = `Dear ${cust.contact || cust.name},\n\nYour order ${orderNo(o.number)}${o.required_date ? `, required ${fmtDate(o.required_date)},` : ''} has been delivered, but the following ${missing.length === 1 ? 'item was' : 'items were'} short supplied or not delivered:\n\n` +
+  const text = `Dear Customer,\n\nYour order ${orderNo(o.number)}${o.required_date ? `, required ${fmtDate(o.required_date)},` : ''} has been delivered, but the following ${missing.length === 1 ? 'item was' : 'items were'} short supplied or not delivered:\n\n` +
     missing.map(m => `- ${m.product_name} (${m.pack_name}): ordered ${m.ordered}, supplied ${m.got}, short ${m.short}${m.got ? '' : ' (not delivered)'}`).join('\n') +
     `\n\nIf you need these items replaced, just reply to this email or call us on 0417 375 591.\n\nRegards,\nCoolibah Salads Sydney\n0417 375 591 · sales@cssydney.com.au\n`;
   return { subject, html, text };
@@ -82,12 +82,12 @@ export function reminderEmail(cust: any, delivery: string, hasDraft: boolean) {
   const subject = `Reminder: order by 7:30am today for ${day} delivery`;
   const lead = hasDraft ? `you have an order saved as a draft for ${esc(day)} delivery, but it hasn’t been sent yet` : `we haven’t received your order for ${esc(day)} delivery yet`;
   const html = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1d241f">
-<p>Dear ${esc(cust.contact || cust.name)},</p>
+<p>Dear Customer,</p>
 <p>Just a reminder that ${lead}. Organic orders for that delivery close at <b>7:30am today</b>.</p>
 <p><a href="https://csorders.org" style="display:inline-block;background:#2f6b3a;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:bold">${hasDraft ? 'Open and send your order' : 'Place your order'}</a></p>
 <p>If you don’t need a delivery that day, please ignore this email.</p>
 <p>Regards,<br>Coolibah Salads Sydney<br>0417 375 591 · sales@cssydney.com.au</p></div>`;
-  const text = `Dear ${cust.contact || cust.name},\n\nJust a reminder that ${hasDraft ? `you have an order saved as a draft for ${day} delivery, but it hasn't been sent yet` : `we haven't received your order for ${day} delivery yet`}. Organic orders for that delivery close at 7:30am today.\n\n${hasDraft ? 'Open and send your order' : 'Place your order'} at https://csorders.org\n\nIf you don't need a delivery that day, please ignore this email.\n\nRegards,\nCoolibah Salads Sydney\n0417 375 591 · sales@cssydney.com.au\n`;
+  const text = `Dear Customer,\n\nJust a reminder that ${hasDraft ? `you have an order saved as a draft for ${day} delivery, but it hasn't been sent yet` : `we haven't received your order for ${day} delivery yet`}. Organic orders for that delivery close at 7:30am today.\n\n${hasDraft ? 'Open and send your order' : 'Place your order'} at https://csorders.org\n\nIf you don't need a delivery that day, please ignore this email.\n\nRegards,\nCoolibah Salads Sydney\n0417 375 591 · sales@cssydney.com.au\n`;
   return { subject, html, text };
 }
 // dry: list who would be reminded without sending. force: run outside the 7:20am window (Admin testing).
