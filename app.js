@@ -1133,7 +1133,13 @@ function editLogin(uid) {
       const role = f.get('role'), customer_id = f.get('customer_id') || null, approved = f.get('approved') === '1';
       if (role === 'customer' && approved && !customer_id) { toast('Choose which customer this login orders for.'); return false; }
       return run(sb.from('profiles').update({ role, customer_id: role === 'customer' ? customer_id : null, approved }).eq('id', uid), 'Login saved');
-    });
+    },
+    // Deleting removes the sign-in for good (migrations/015). Not offered on your own login.
+    uid !== profile.id ? async () => {
+      const { error } = await sb.rpc('delete_login', { user_id: uid });
+      if (error) { toast(/delete_login/.test(error.message) && /function|schema cache/i.test(error.message) ? 'One step first: run 015_delete_login.sql in Supabase.' : friendly(error)); return false; }
+      toast('Login deleted', true); return true;
+    } : null);
 }
 
 start();

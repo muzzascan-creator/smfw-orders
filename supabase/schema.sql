@@ -296,3 +296,20 @@ create policy customer_read on public.product_packs for select using (
 alter table public.orders add column if not exists customer_notified_at timestamptz;
 alter table public.orders add column if not exists customer_notified_to text;
 alter table public.orders add column if not exists notify_error text;
+
+-- ---------- deleting logins (also in migrations/015_delete_login.sql) ----------
+create or replace function public.delete_login(user_id uuid) returns void
+language plpgsql security definer set search_path = public, auth as $$
+begin
+  if not public.is_admin() then raise exception 'Only an Admin can delete logins'; end if;
+  if user_id = auth.uid() then raise exception 'You can''t delete your own login'; end if;
+  if exists (select 1 from public.profiles where id = user_id and role = 'admin')
+     and (select count(*) from public.profiles where role = 'admin' and approved) <= 1 then
+    raise exception 'You can''t delete the last Admin login';
+  end if;
+  -- Orders keep their details; they just no longer point at the deleted login.
+  update public.orders set created_by = null where created_by = user_id;
+  delete from auth.users where id = user_id; -- the profile row goes with it
+end $$;
+revoke all on function public.delete_login(uuid) from public;
+grant execute on function public.delete_login(uuid) to authenticated;
