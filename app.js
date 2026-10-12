@@ -12,7 +12,7 @@ const custGroup = c => c?.product_group || 'Organic';
 // An order's group comes from its products: Organic unless every line is Conventional.
 const orderGroups = o => [...new Set((o.lines || []).map(l => prodOf(l.product_id)).filter(Boolean).map(groupOf))];
 const orderGroup = o => { const g = orderGroups(o); return g.length === 1 ? g[0] : 'Organic'; };
-let session = null, profile = null, view = null, draft = null, listFilter = 'all', search = '', authMode = 'signin', authMsg = '', ordersChannel = null;
+let session = null, profile = null, view = null, draft = null, listFilter = 'pending', search = '', authMode = 'signin', authMsg = '', ordersChannel = null;
 let groupFilter = 'all';
 const picked = new Set(); // orders ticked on the Orders tab for emailing
 const upPicked = new Set(); // orders ticked on the Orders tab for an upload CSV
@@ -329,15 +329,17 @@ function viewInbox() {
     ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>Sent</th><th>From</th><th class="num lines">Lines</th><th>Status</th><th class="openc"></th></tr></thead><tbody>${os.map(o => orderRow(o, { sent: true, source: true })).join('')}</tbody></table></div>`
       : `<div class="card empty">No orders waiting. New customer orders appear here as soon as they’re sent.</div>`}`;
 }
+const finished = o => o.status === 'complete' && !!o.emailed_at && !!o.received_at && !!o.csv_at;
 function viewOrders() {
-  let os = S.orders.slice();
-  if (listFilter !== 'all') os = os.filter(o => o.status === listFilter);
+  // Pending holds every order until it is Complete, Emailed, Received and has its CSV; then it moves to Complete.
+  const inTab = (o, f) => f === 'pending' ? !finished(o) : f === 'complete' ? finished(o) : o.status === f;
+  let os = S.orders.filter(o => inTab(o, listFilter));
   const q = search.trim().toLowerCase();
   if (q) os = os.filter(o => [orderNo(o.number), custOf(o.customer_id)?.name, custOf(o.customer_id)?.cid].join(' ').toLowerCase().includes(q));
-  const count = f => f === 'all' ? S.orders.length : S.orders.filter(o => o.status === f).length;
+  const count = f => S.orders.filter(o => inTab(o, f)).length;
   return `<div class="row spread"><div><h1>Orders</h1><p class="sub">Every order, whether a customer sent it or you entered it.</p></div><button class="primary" onclick="go('entry')">New order</button></div>
     <div class="row" style="margin-bottom:12px">
-      ${['all', 'draft', 'submitted', 'complete'].map(f => `<button class="${listFilter === f ? 'primary' : ''}" onclick="listFilter='${f}';render()">${f === 'all' ? 'All' : f === 'draft' ? 'Drafts' : f === 'submitted' ? 'Sent' : 'Complete'} (${count(f)})</button>`).join('')}
+      ${['pending', 'draft', 'submitted', 'complete'].map(f => `<button class="${listFilter === f ? 'primary' : ''}" onclick="listFilter='${f}';render()">${f === 'pending' ? 'Pending' : f === 'draft' ? 'Drafts' : f === 'submitted' ? 'Sent' : 'Complete'} (${count(f)})</button>`).join('')}
       <input class="search" id="osearch" placeholder="Search order no., customer or CID" value="${esc(search)}">
     </div>
     ${os.length ? `<div class="pickbar row spread"><span id="pickcount">${pickText()}</span><div class="row"><button id="pickclear" ${picked.size || upPicked.size ? '' : 'hidden'} onclick="picked.clear();upPicked.clear();render()">Clear</button><button class="primary" id="pickup" ${upPicked.size ? '' : 'disabled'} onclick="uploadCsvs()">Create upload CSV</button>${csvFolderNote()}<button class="primary" id="pickmail" ${picked.size ? '' : 'disabled'} onclick="emailPicked()">Email selected</button></div></div>
