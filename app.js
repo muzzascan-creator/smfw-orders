@@ -265,9 +265,9 @@ function viewRecv() {
     ${os.length ? `<div class="tablewrap"><table class="recvlist"><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>Ticked</th><th class="acts"></th></tr></thead><tbody>${os.map(o => {
       const c = custOf(o.customer_id);
       return `<tr><td class="mono">${esc(orderNo(o.number))}${orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conv.</span>' : ''}</td>
-        <td>${c ? esc(c.name) : '<span class="muted">No customer</span>'}</td>
+        <td class="rcust">${c ? esc(c.name) : '<span class="muted">No customer</span>'}</td>
         <td>${esc(fmtDate(o.required_date))}</td><td><span class="${tickedCount(o) < (o.lines || []).length ? 'ndtxt' : 'okgreen'}">${tickedCount(o)}/${(o.lines || []).length}</span></td>
-        <td class="num acts recvacts"><button class="ghost" onclick="openReceipt('${o.id}')">Open</button><button class="ghost" onclick="markReceived('${o.id}', this)">Mark received</button></td></tr>`;
+        <td class="num acts recvacts"><button class="ghost ropen" onclick="openReceipt('${o.id}')">Open</button><button class="ghost rmark" onclick="markReceived('${o.id}', this)">Mark received</button></td></tr>`;
     }).join('')}</tbody></table></div>` : `<div class="card empty">${S.orders.some(o => o.status === 'complete' && !o.received_at) ? 'No orders match this search.' : 'Nothing waiting. Every order has been received.'}</div>`}`;
 }
 // Receiver: one order's lines, with the quantity that arrived and a Not delivered tick for each.

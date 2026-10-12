@@ -201,3 +201,22 @@ body.staff td.packs .pill{font-size:10.5px;padding:0 6px}
 .custlist input{width:auto;margin:0}
 .custpicker{max-width:340px;margin-bottom:4px}
 .custpick[hidden]{display:none}
+/* Receiver list on phones and tablets (Android): bigger, darker customer name and solid buttons that are easy to hit outdoors. */
+@media (max-width:760px),(pointer:coarse){
+  .recvlist td.rcust,.recvlist td.rcust .muted{font-size:18px;font-weight:700;color:var(--fg);line-height:1.3}
+  .recvlist td.recvacts button{font-size:17px;font-weight:700;min-height:48px;padding:10px 18px;border-radius:8px;margin:0 0 0 8px}
+  .recvlist td.recvacts button.ropen{background:var(--surface);color:var(--accent);border:2px solid var(--accent)}
+  .recvlist td.recvacts button.rmark{background:var(--accent);color:var(--accent-fg);border:2px solid var(--accent)}
+}
+/* Phones: each order becomes a card: number and ticks, then the customer, then the two buttons side by side. */
+@media (max-width:760px){
+  .recvlist thead{display:none}
+  .recvlist tr{display:grid;grid-template-columns:1fr auto;gap:6px 12px;padding:14px;border-bottom:1px solid var(--line)}
+  .recvlist tr:last-child{border-bottom:0}
+  .recvlist td{padding:0;border:0}
+  .recvlist td:nth-child(1){grid-row:1;grid-column:1;font-size:15px}
+  .recvlist td:nth-child(4){grid-row:1;grid-column:2;font-weight:700;font-size:15px}
+  .recvlist td.rcust{grid-row:2;grid-column:1/-1;font-size:20px}
+  .recvlist td.recvacts{grid-row:3;grid-column:1/-1;display:flex;gap:10px;margin-top:6px}
+  .recvlist td.recvacts button{display:block;flex:1;margin:0}
+}
