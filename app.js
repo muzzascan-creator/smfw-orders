@@ -25,7 +25,7 @@ const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getT
 // Latest allowed date required: a year ahead. Also stops the date box accepting a 5- or 6-digit year.
 const latestReq = () => { const d = new Date(); d.setFullYear(d.getFullYear() + 1); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
 const tomorrow = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
-// Organic order times (Sydney): Tue, Wed and Thu deliveries close at 7:30am the day before; Mon (and Sun, for
+// Organic order times (Sydney): Tue, Wed, Thu and Fri deliveries close at 7:30am the day before; Mon (and Sun, for
 // customers ticked Sunday delivery) close at 7:30am on the Friday. Same rule as the database (migrations/018).
 function sydNow() {
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).map(x => [x.type, x.value]));
@@ -33,17 +33,17 @@ function sydNow() {
 }
 const shiftDate = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
 function organicCutoff(d, sunday) {
-  const back = { 2: 1, 3: 1, 4: 1, 1: 3, 0: sunday ? 2 : null }[new Date(d + 'T12:00:00Z').getUTCDay()];
+  const back = { 2: 1, 3: 1, 4: 1, 5: 1, 1: 3, 0: sunday ? 2 : null }[new Date(d + 'T12:00:00Z').getUTCDay()];
   return back == null ? null : shiftDate(d, -back);
 }
 // Why a customer can't send an Organic order for date d right now, or '' when they can.
 function organicProblem(d, cust) {
   const sun = !!cust?.sunday_delivery, cut = organicCutoff(d, sun), now = sydNow();
-  if (!cut) return `Organic deliveries are Monday, Tuesday, Wednesday and Thursday${sun ? ' and Sunday' : ''}. Please choose one of those days.`;
+  if (!cut) return `Organic deliveries are Monday to Friday${sun ? ' and Sunday' : ''}. Please choose one of those days.`;
   if (now.date > cut || (now.date === cut && now.minutes >= 450)) return `Orders for ${fmtDate(d)} delivery closed at 7:30am on ${fmtDate(cut)}. Please choose a later delivery day, or call us on 0417 375 591.`;
   return '';
 }
-const organicHint = cust => `Organic orders close at 7:30am: Monday for Tuesday, Tuesday for Wednesday, Wednesday for Thursday, and Friday for ${cust?.sunday_delivery ? 'Sunday and ' : ''}Monday delivery.`;
+const organicHint = cust => `Organic orders close at 7:30am: Monday for Tuesday, Tuesday for Wednesday, Wednesday for Thursday, Thursday for Friday, and Friday for ${cust?.sunday_delivery ? 'Sunday and ' : ''}Monday delivery.`;
 const fmtDate = d => { if (!d) return ''; const [y, m, dd] = d.split('-'); return new Date(+y, m - 1, +dd).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); };
 const fmtWhen = t => t ? new Date(t).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
 const byName = (a, b) => (a.name || '').localeCompare(b.name || '');

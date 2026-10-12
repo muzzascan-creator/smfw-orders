@@ -64,10 +64,10 @@ async function sendToSupplier({ supplier_id, subject, text, files }: { supplier_
 }
 
 // ---------- order reminders ----------
-// Organic order days (Sydney): Mon -> Tue delivery, Tue -> Wed, Wed -> Thu, Fri -> Sun (Sunday-delivery customers only) and Mon.
+// Organic order days (Sydney): Mon -> Tue delivery, Tue -> Wed, Wed -> Thu, Thu -> Fri, Fri -> Sun (Sunday-delivery customers only) and Mon.
 // Days are counted from Sunday = 0. Orders close at 7:30am; the reminder goes at 7:20am.
 const ORDER_DAYS: Record<number, { ahead: number; sundayOnly?: boolean }[]> = {
-  1: [{ ahead: 1 }], 2: [{ ahead: 1 }], 3: [{ ahead: 1 }],
+  1: [{ ahead: 1 }], 2: [{ ahead: 1 }], 3: [{ ahead: 1 }], 4: [{ ahead: 1 }],
   5: [{ ahead: 2, sundayOnly: true }, { ahead: 3 }],
 };
 export function sydneyNow(now = new Date()) {

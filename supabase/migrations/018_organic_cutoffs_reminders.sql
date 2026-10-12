@@ -68,7 +68,7 @@ begin
     -- Sending an Organic order: the delivery day must be one we deliver on, and before its 7:30am cut-off.
     if coalesce(g, 'Organic') = 'Organic' and new.status = 'submitted' and (tg_op = 'INSERT' or old.status = 'draft') then
       cut := public.organic_cutoff(new.required_date, coalesce(sun, false));
-      if cut is null then raise exception 'Organic deliveries are Monday, Tuesday, Wednesday and Thursday%. Please choose one of those days.', case when sun then ' and Sunday' else '' end; end if;
+      if cut is null then raise exception 'Organic deliveries are Monday to Friday%. Please choose one of those days.', case when sun then ' and Sunday' else '' end; end if;
       if (now() at time zone 'Australia/Sydney') >= cut then
         raise exception 'Orders for % delivery closed at 7:30am on %. Please choose a later delivery day, or call us on 0417 375 591.',
           to_char(new.required_date, 'FMDay DD Mon'), to_char(cut, 'FMDay DD Mon');
