@@ -285,7 +285,7 @@ function viewRecvOrder() {
   return `<div class="row spread recvhead"><div><h1>Order ${esc(orderNo(o.number))}</h1><div class="recvcust">${c ? esc(c.name) : '<span class="muted">No customer</span>'}</div><p class="sub">${o.required_date ? 'Needed ' + esc(fmtDate(o.required_date)) + '. ' : ''}Tick Received for each line that arrived, changing the quantity if a different amount came, or tick Not delivered.</p></div>
       <div class="row"><button onclick="receipt=null;go('recv',false)">Back</button><button class="primary" onclick="saveReceipt(this)">Save</button></div></div>
     <div class="recvscroll">${Object.entries(bySup).map(([sn, ls]) => `<h2 class="recvsup">${esc(sn)}</h2><div class="recvtbl"><table><thead><tr><th>Product</th><th>Pack</th><th class="num">Ordered</th><th class="rqh">Qty received</th><th class="pick">Received</th><th class="pick">Not delivered</th></tr></thead><tbody>
-      ${ls.map(([l, i]) => `<tr${l.undelivered ? ' class="nd"' : ''}><td class="rprod">${esc(l.product_name)}</td><td>${esc(l.pack_name)}</td><td class="num mono">${esc(l.ordered)}</td>
+      ${ls.map(([l, i]) => `<tr${l.undelivered ? ' class="nd"' : ''}><td class="rprod">${esc(l.product_name)}</td><td>${esc(l.pack_name)}</td><td class="num rord">${esc(l.ordered)}</td>
         <td class="rqc"><input class="rq" inputmode="numeric" data-i="${i}" value="${esc(l.qty)}" ${l.undelivered ? 'disabled' : ''} aria-label="${esc(l.product_name)} received"></td>
         <td class="pick"><input type="checkbox" data-rc="${i}" ${l.received ? 'checked' : ''} aria-label="${esc(l.product_name)} received"></td>
         <td class="pick"><input type="checkbox" data-nd="${i}" ${l.undelivered ? 'checked' : ''} aria-label="${esc(l.product_name)} not delivered"></td></tr>`).join('')}

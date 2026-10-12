@@ -226,3 +226,5 @@ td.mono .pill{font-family:var(--f-body)}
 input.rq{width:56px;text-align:center;padding-inline:4px}
 @media (pointer:coarse){input.rq{width:60px}}
 @media (min-width:761px) and (pointer:coarse){.recvtbl td.rprod{font-size:21px}}
+.recvtbl td.rord{font-size:14px;font-family:var(--f-body)}
+@media (pointer:coarse){.recvtbl td.rord{font-size:18px}}
