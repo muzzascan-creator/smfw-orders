@@ -194,3 +194,10 @@ body.staff td.packs div{white-space:nowrap}
 body.staff td.packs .pill{font-size:10.5px;padding:0 6px}
 .secrow{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center}
 .secrow .muted{font-size:12px;white-space:nowrap;min-width:72px}
+.custpick{display:grid;gap:4px;font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.02em}
+.custlist{max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px 10px;display:grid;gap:2px;background:var(--surface)}
+.custlist label{display:flex;gap:8px;align-items:center;font-size:14px;font-weight:400;color:var(--fg);letter-spacing:0;padding:2px 0}
+.custlist label[hidden]{display:none}
+.custlist input{width:auto;margin:0}
+.custpicker{max-width:340px;margin-bottom:4px}
+.custpick[hidden]{display:none}

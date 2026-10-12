@@ -87,7 +87,9 @@ async function loadAll() {
     for (const r of [c, s, p, o]) if (r.error) toast(friendly(r.error));
     S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; S.orders = o.data || [];
   } else if (isAdmin()) {
-    const [c, s, p, o, u, m, sec] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort'), sb.from('product_sections').select('name')]);
+    const [c, s, p, o, u, m, sec, lk] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort'), sb.from('product_sections').select('name'), sb.from('profile_customers').select('*')]);
+    // Extra customers per login arrive with migrations/017; until then each login has just its one customer.
+    S.linksMissing = !!lk.error; S.links = lk.data || [];
     // The sections list arrives with migrations/016; until then sections are just the ones products already use.
     S.secMissing = !!sec.error; S.sections = (sec.data || []).map(r => r.name);
     for (const r of [c, s, p, o, u]) if (r.error) toast(friendly(r.error));
@@ -370,11 +372,14 @@ function homeTip() {
   return `<div class="hometip" id="hometip"><span>Tip: tap <b>Share</b> <span aria-hidden="true">⬆︎</span> then <b>Add to Home Screen</b> to open SMFW Orders like an app.</span><button class="ghost" aria-label="Hide this tip" onclick="try{localStorage.setItem('smfw-hometip','off')}catch(e){};document.getElementById('hometip').remove()">✕</button></div>`;
 }
 function viewMine() {
-  const os = S.orders;
-  const me = custOf(profile.customer_id);
-  return `<div class="row spread"><div>${me?.name ? `<p class="custname">${esc(me.name)}</p>` : ''}<h1>My orders</h1></div><button class="primary" onclick="go('entry')">New order</button></div>
+  const os = S.orders, many = S.customers.length > 1;
+  const me = custOf(curCust());
+  const head = many
+    ? `<label class="f custpicker">Ordering for<select id="mycust" onchange="pickCust(this.value)">${myCusts().map(c => `<option value="${c.id}" ${c.id === me?.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`
+    : me?.name ? `<p class="custname">${esc(me.name)}</p>` : '';
+  return `<div class="row spread"><div>${head}<h1>My orders</h1></div><button class="primary" onclick="go('entry')">New order</button></div>
     ${homeTip()}
-    ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Required</th><th class="num lines">Lines</th><th>Status</th><th class="acts"></th></tr></thead><tbody>${os.map(o => orderRow(o, { customer: false })).join('')}</tbody></table></div>`
+    ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th>${many ? '<th>Customer</th>' : ''}<th>Required</th><th class="num lines">Lines</th><th>Status</th><th class="acts"></th></tr></thead><tbody>${os.map(o => orderRow(o, { customer: many })).join('')}</tbody></table></div>`
       : `<div class="card empty">You haven’t placed any orders yet. Press <b>New order</b> to start one.</div>`}`;
 }
 function openOrder(id) {
@@ -388,8 +393,28 @@ function openOrder(id) {
   go('entry', false);
 }
 
+// ---------- customers a login orders for ----------
+// A customer login can order for several businesses (migrations/017); the app only receives the customers it may order for.
+const myCusts = () => S.customers.slice().sort(byName);
+function curCust() {
+  let id = null; try { id = localStorage.getItem('smfw-cust'); } catch (e) {}
+  return S.customers.some(c => c.id === id) ? id : S.customers.some(c => c.id === profile?.customer_id) ? profile.customer_id : myCusts()[0]?.id || profile?.customer_id;
+}
+function pickCust(id) {
+  try { localStorage.setItem('smfw-cust', id); } catch (e) {}
+  if (draft && !draft.id && view === 'entry') {
+    const g = custGroup(custOf(id));
+    if (g !== draft.group && Object.values(draft.qty).some(q => q > 0) && !confirm(`${custOf(id)?.name} orders ${g} products, so the quantities entered so far will be cleared. Continue?`)) return render();
+    if (g !== draft.group) draft.qty = {};
+    draft.customer_id = id; draft.group = g;
+  }
+  render();
+}
+// Logins linked to a customer: their main customer or a linked one.
+const loginCustIds = u => [...new Set([u.customer_id, ...(S.links || []).filter(l => l.profile_id === u.id).map(l => l.customer_id)].filter(Boolean))];
+
 // ---------- order entry ----------
-function blankOrder() { return { id: null, number: null, customer_id: isAdmin() ? '' : profile?.customer_id, order_date: today(), required_date: '', special: '', status: 'draft', source: isAdmin() ? 'admin' : 'customer', qty: {}, missing: [], group: isAdmin() ? 'Organic' : custGroup(custOf(profile?.customer_id)) }; }
+function blankOrder() { return { id: null, number: null, customer_id: isAdmin() ? '' : curCust(), order_date: today(), required_date: '', special: '', status: 'draft', source: isAdmin() ? 'admin' : 'customer', qty: {}, missing: [], group: isAdmin() ? 'Organic' : custGroup(custOf(curCust())) }; }
 const outerOf = k => Number(k.outer_multiple) || 1;
 function sectionsFor(products) {
   const secs = [], idx = {};
@@ -439,13 +464,15 @@ function viewEntry() {
     }).join('') || `<div class="card empty" style="margin-top:16px">No ${g} products are set up yet. Add them under <b>Products</b>.</div>`;
   } else {
     // Customers order their own group only (set on the customer); Conventional uses the same flat list as the admin app.
-    const g = custGroup(custOf(profile?.customer_id)), mine = S.products.filter(p => groupOf(p) === g), secs = sectionsFor(mine);
+    const g = custGroup(custOf(d.customer_id)), mine = S.products.filter(p => groupOf(p) === g), secs = sectionsFor(mine);
     blocks = secs.length ? `<section class="supplier-block"><div class="supplier-head"><h2>${g}</h2><span>${g === 'Conventional' ? 'Fill in the quantities you need.' : 'Fill in the boxes you need. Grey boxes aren’t available.'}</span></div><div class="sections">${g === 'Conventional' ? flatHtml(mine, dis) : gridHtml(secs, dis)}</div></section>` : '';
   }
   const custField = admin
     ? `<label class="f">Customer<select id="e-cust" ${dis}><option value="">${needsCustomer(d) ? 'Choose a customer…' : 'No customer (SMFW, CID 1183)'}</option>${S.customers.filter(c => custGroup(c) === (d.group || 'Organic') || c.id === d.customer_id).sort(byName).map(c => `<option value="${c.id}" ${c.id === d.customer_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
        <label class="f">Contact phone<input id="e-phone" disabled value="${esc(custOf(d.customer_id)?.phone || '')}"></label>`
-    : `<label class="f">Customer<input disabled value="${esc(custOf(d.customer_id)?.name || '')}"></label>`;
+    : S.customers.length > 1 && !d.id
+      ? `<label class="f">Ordering for<select id="e-mycust" onchange="pickCust(this.value)">${myCusts().map(c => `<option value="${c.id}" ${c.id === d.customer_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`
+      : `<label class="f">Customer<input disabled value="${esc(custOf(d.customer_id)?.name || '')}"></label>`;
   const note = d.status === 'complete' ? (admin ? 'This order is complete. Reopen it to make changes.' : 'SMFW has processed this order.')
     : d.status === 'submitted' ? (admin ? `Sent by the customer ${esc(fmtWhen(d.submitted_at))}. Check it, make any changes, then mark it complete.` : 'You’ve sent this order to SMFW. Contact SMFW if anything needs to change.')
     : 'Fill in the quantities needed. Empty boxes are ignored.';
@@ -601,7 +628,7 @@ function viewCustomers() {
   const cs = S.customers.slice().sort(byName);
   return `<div class="row spread"><div><h1>Customers</h1><p class="sub">The businesses who order from you.${isManager() ? '' : ' Link a login to a customer under <b>Logins</b>.'}</p></div><button class="primary" onclick="editCustomer()">Add customer</button></div>
   ${cs.length ? `<div class="tablewrap"><table><thead><tr><th class="num">CID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th>${S.custGroupMissing ? '' : '<th>Type</th>'}${isManager() ? '' : '<th class="num">Logins</th>'}<th class="num">Orders</th><th></th></tr></thead><tbody>
-    ${cs.map(c => `<tr><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td>${S.custGroupMissing ? '' : `<td><span class="pill grp-${custGroup(c).toLowerCase()}">${custGroup(c)}</span></td>`}${isManager() ? '' : `<td class="num">${S.profiles.filter(u => u.customer_id === c.id).length}</td>`}<td class="num">${S.orders.filter(o => o.customer_id === c.id).length}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
+    ${cs.map(c => `<tr><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td>${S.custGroupMissing ? '' : `<td><span class="pill grp-${custGroup(c).toLowerCase()}">${custGroup(c)}</span></td>`}${isManager() ? '' : `<td class="num">${S.profiles.filter(u => u.role === 'customer' && loginCustIds(u).includes(c.id)).length}</td>`}<td class="num">${S.orders.filter(o => o.customer_id === c.id).length}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
   </tbody></table></div>` : `<div class="card empty">No customers yet.</div>`}`;
 }
 function viewSuppliers() {
@@ -634,7 +661,7 @@ function viewUsers() {
   return `<h1>Logins</h1><p class="sub">Customers create their own account at <span class="mono">${esc(link)}</span>. Link each new account to its customer so they can start ordering.${waiting ? ` <b>${waiting} waiting.</b>` : ''}</p>
   <div class="tablewrap"><table><thead><tr><th>Name</th><th>Email</th><th>Business they gave</th><th>Role</th><th>Linked customer</th><th>Access</th><th></th></tr></thead><tbody>
   ${us.map(u => `<tr><td>${esc(u.full_name)}</td><td class="mono">${esc(u.email)}</td><td>${esc(u.business || '')}</td><td>${u.role === 'admin' ? 'Admin' : u.role === 'manager' ? 'Manager' : u.role === 'receiver' ? 'Receiver' : 'Customer'}</td>
-    <td>${['admin', 'manager'].includes(u.role) ? '<span class="muted">All customers</span>' : u.role === 'receiver' ? '<span class="muted">All orders, view only</span>' : esc(custOf(u.customer_id)?.name || '')}</td>
+    <td>${['admin', 'manager'].includes(u.role) ? '<span class="muted">All customers</span>' : u.role === 'receiver' ? '<span class="muted">All orders, view only</span>' : loginCustIds(u).map(id => esc(custOf(id)?.name || '')).sort().join('<br>')}</td>
     <td>${u.approved ? '<span class="pill complete">Active</span>' : '<span class="pill draft">Waiting</span>'}</td>
     <td class="num">${u.id === profile.id ? '<span class="muted">You</span>' : `<button class="ghost" onclick="editLogin('${u.id}')">${u.approved ? 'Edit' : 'Approve'}</button>`}</td></tr>`).join('')}
   </tbody></table></div>`;
@@ -1156,13 +1183,24 @@ function editLogin(uid) {
   const u = S.profiles.find(x => x.id === uid);
   openDialog(u.approved ? 'Edit login' : 'Approve login',
     `<p style="margin:0"><b>${esc(u.full_name || u.email)}</b><br><span class="mono muted">${esc(u.email)}</span>${u.business ? `<br>Business they gave: ${esc(u.business)}` : ''}</p>
-    <label class="f">Role<select name="role" id="f-role" onchange="document.getElementById('custpick').hidden = this.value!=='customer'"><option value="customer" ${!['admin', 'manager', 'receiver'].includes(u.role) ? 'selected' : ''}>Customer: orders for one business</option><option value="receiver" ${u.role === 'receiver' ? 'selected' : ''}>Receiver: checks deliveries and marks orders received</option><option value="manager" ${u.role === 'manager' ? 'selected' : ''}>Manager: orders, customers and products, but not Suppliers, Emails or Logins</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin: full access, like you</option></select></label>
-    <label class="f" id="custpick" ${['admin', 'manager', 'receiver'].includes(u.role) ? 'hidden' : ''}>Customer this login orders for<select name="customer_id" id="f-customer_id"><option value="">Choose a customer…</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === u.customer_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+    <label class="f">Role<select name="role" id="f-role" onchange="document.getElementById('custpick').hidden = this.value!=='customer'"><option value="customer" ${!['admin', 'manager', 'receiver'].includes(u.role) ? 'selected' : ''}>Customer: orders for the businesses ticked below</option><option value="receiver" ${u.role === 'receiver' ? 'selected' : ''}>Receiver: checks deliveries and marks orders received</option><option value="manager" ${u.role === 'manager' ? 'selected' : ''}>Manager: orders, customers and products, but not Suppliers, Emails or Logins</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin: full access, like you</option></select></label>
+    ${S.linksMissing
+      ? `<label class="f" id="custpick" ${['admin', 'manager', 'receiver'].includes(u.role) ? 'hidden' : ''}>Customer this login orders for<select name="customer_id" id="f-customer_id"><option value="">Choose a customer…</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === u.customer_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`
+      : `<div class="custpick" id="custpick" ${['admin', 'manager', 'receiver'].includes(u.role) ? 'hidden' : ''}>Customers this login orders for<input class="search" placeholder="Find a customer" oninput="for(const l of document.querySelectorAll('#custlist label'))l.hidden=!l.textContent.toLowerCase().includes(this.value.toLowerCase())"><div class="custlist" id="custlist">${S.customers.slice().sort(byName).map(c => `<label><input type="checkbox" name="customer_ids" value="${c.id}" ${loginCustIds(u).includes(c.id) ? 'checked' : ''}> ${esc(c.name)}</label>`).join('')}</div><span class="muted" style="font-size:12px">Tick more than one and the customer picks which business each order is for.</span></div>`}
     <label class="f">Access<select name="approved" id="f-approved"><option value="1" selected>Allowed to sign in</option><option value="0">Blocked</option></select></label>`,
-    f => {
-      const role = f.get('role'), customer_id = f.get('customer_id') || null, approved = f.get('approved') === '1';
-      if (role === 'customer' && approved && !customer_id) { toast('Choose which customer this login orders for.'); return false; }
-      return run(sb.from('profiles').update({ role, customer_id: role === 'customer' ? customer_id : null, approved }).eq('id', uid), 'Login saved');
+    async f => {
+      const role = f.get('role'), approved = f.get('approved') === '1';
+      const ids = role !== 'customer' ? [] : S.linksMissing ? [f.get('customer_id')].filter(Boolean) : f.getAll('customer_ids');
+      if (role === 'customer' && approved && !ids.length) { toast('Choose which customer this login orders for.'); return false; }
+      // The main customer stays the same while it is still ticked; the rest are linked in profile_customers.
+      const customer_id = ids.includes(u.customer_id) ? u.customer_id : ids[0] || null;
+      if (!(await run(sb.from('profiles').update({ role, customer_id, approved }).eq('id', uid)))) return false;
+      if (!S.linksMissing) {
+        const gone = loginCustIds(u).filter(id => !ids.includes(id));
+        if (gone.length && !(await run(sb.from('profile_customers').delete().eq('profile_id', uid).in('customer_id', gone)))) return false;
+        if (ids.length && !(await run(sb.from('profile_customers').upsert(ids.map(id => ({ profile_id: uid, customer_id: id })))))) return false;
+      }
+      toast('Login saved', true); return true;
     },
     // Deleting removes the sign-in for good (migrations/015). Not offered on your own login.
     uid !== profile.id ? async () => {
