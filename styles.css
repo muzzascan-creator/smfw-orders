@@ -221,3 +221,4 @@ body.staff td.packs .pill{font-size:10.5px;padding:0 6px}
   .recvlist td.recvacts button{display:block;flex:1;margin:0}
 }
 td.mono .pill{font-family:var(--f-body)}
+.recvtbl td.rprod{font-size:17px;font-weight:700;color:var(--fg);line-height:1.3}
