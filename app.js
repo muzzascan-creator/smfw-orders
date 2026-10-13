@@ -649,7 +649,7 @@ async function deleteOrder(btn) {
 // ---------- admin: reference lists ----------
 function viewCustomers() {
   const cs = S.customers.slice().sort(byName);
-  return `<div class="row spread"><div><h1>Customers</h1><p class="sub">The businesses who order from you.${isManager() ? '' : ' Link a login to a customer under <b>Logins</b>.'}</p></div><button class="primary" onclick="editCustomer()">Add customer</button></div>
+  return `<div class="row spread"><div><h1>Customers</h1><p class="sub">The businesses who order from you.${isManager() ? '' : ' Link a login to a customer under <b>Logins</b>.'}</p></div><div class="row"><button onclick="importCustomers()">Import customers</button><button class="primary" onclick="editCustomer()">Add customer</button></div></div>
   ${cs.length ? `<div class="tablewrap"><table><thead><tr><th class="num">CID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th>${S.custGroupMissing ? '' : '<th>Type</th>'}${isManager() ? '' : '<th class="num">Logins</th>'}<th class="num">Orders</th><th></th></tr></thead><tbody>
     ${cs.map(c => `<tr><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.sunday_delivery ? ' <span class="pill">Sunday delivery</span>' : ''}${c.reminders === false ? ' <span class="pill">No reminders</span>' : ''}${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td>${S.custGroupMissing ? '' : `<td><span class="pill grp-${custGroup(c).toLowerCase()}">${custGroup(c)}</span></td>`}${isManager() ? '' : `<td class="num">${S.profiles.filter(u => u.role === 'customer' && loginCustIds(u).includes(c.id)).length}</td>`}<td class="num">${S.orders.filter(o => o.customer_id === c.id).length}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
   </tbody></table></div>` : `<div class="card empty">No customers yet.</div>`}`;
@@ -750,6 +750,81 @@ async function saveEmails(sid, btn) {
 // ---------- emailing orders to suppliers ----------
 // Each ticked order becomes the supplier's whole order form as an A4 PDF, with this order's quantities filled in.
 // The email itself opens in the admin's own email program, addressed from the Emails tab, ready to attach and send.
+// ---------- one-off customer import (CSV or Excel) ----------
+// Every imported customer is set to Conventional. Duplicates (same CID or same name, in the file or already in the
+// app) are shown and left unticked, so only new customers are added.
+const XLSX_URL = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+function loadXlsx() {
+  if (window.XLSX) return Promise.resolve();
+  return new Promise((ok, fail) => { const s = document.createElement('script'); s.src = XLSX_URL; s.onload = ok; s.onerror = () => fail(new Error('Couldn’t load the spreadsheet reader. Check your internet connection and try again.')); document.head.append(s); });
+}
+const normName = t => String(t || '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').replace(/\b(pty|ltd|limited|the)\b/g, '').replace(/\s+/g, ' ').trim();
+const IMPORT_COLS = [['cid', /^(cid|customer ?(id|no|number|code)|account ?(no|number|code)?|code|id)$/], ['name', /^(name|customer( name)?|business( name)?|company( name)?|trading name)$/],
+  ['contact', /^(contact( person| name)?|attention|attn)$/], ['phone', /^(phone|tel|telephone|mobile|contact phone|ph)$/], ['email', /^(e-?mail( address)?)$/], ['notes', /^(notes?|comments?)$/]];
+let importRows = [];
+function importCheck(raw) {
+  const head = (raw[0] || []).map(h => String(h ?? '').trim().toLowerCase());
+  const col = Object.fromEntries(IMPORT_COLS.map(([k, re]) => [k, head.findIndex(h => re.test(h))]));
+  if (col.name < 0) throw new Error('The file needs a column headed “Name” (or Customer, Business or Company) in its first row.');
+  const cell = (r, k) => col[k] < 0 ? '' : String(r[col[k]] ?? '').trim();
+  const rows = raw.slice(1).filter(r => r.some(v => String(v ?? '').trim())).map((r, i) => ({ line: i + 2, cid: cell(r, 'cid'), name: cell(r, 'name'), contact: cell(r, 'contact'), phone: cell(r, 'phone'), email: cell(r, 'email'), notes: cell(r, 'notes') }));
+  const byCid = new Map(S.customers.map(c => [String(c.cid), c])), byName = new Map(S.customers.map(c => [normName(c.name), c]));
+  const seenCid = new Map(), seenName = new Map();
+  for (const r of rows) {
+    r.issues = [];
+    if (!r.name) r.issues.push('No name');
+    if (r.cid && !/^\d+$/.test(r.cid)) r.issues.push(`CID “${r.cid}” isn’t a number`);
+    if (r.cid && byCid.has(r.cid)) r.issues.push(`CID ${r.cid} already used by ${byCid.get(r.cid).name}`);
+    if (r.name && byName.has(normName(r.name))) r.issues.push(`Already a customer: ${byName.get(normName(r.name)).name}`);
+    if (r.cid && seenCid.has(r.cid)) r.issues.push(`Same CID as line ${seenCid.get(r.cid)}`);
+    if (r.name && seenName.has(normName(r.name))) r.issues.push(`Same name as line ${seenName.get(normName(r.name))}`);
+    if (r.cid && !seenCid.has(r.cid)) seenCid.set(r.cid, r.line);
+    if (r.name && !seenName.has(normName(r.name))) seenName.set(normName(r.name), r.line);
+    r.ok = !r.issues.length;
+  }
+  return rows;
+}
+function importPreview() {
+  const good = importRows.filter(r => r.ok).length, bad = importRows.length - good;
+  $('#impprev').innerHTML = `<p style="margin:0"><b>${importRows.length}</b> rows: <b>${good}</b> new customer${good === 1 ? '' : 's'} to add${bad ? `, <b class="ndtxt">${bad}</b> duplicate or problem row${bad === 1 ? '' : 's'} left unticked` : ''}. All will be <b>Conventional</b>.</p>
+    <div class="tablewrap impwrap"><table><thead><tr><th></th><th>Line</th><th class="num">CID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Check</th></tr></thead><tbody>
+    ${importRows.map((r, i) => `<tr${r.ok ? '' : ' class="nd"'}><td><input type="checkbox" data-imp="${i}" ${r.ok ? 'checked' : ''} ${r.name ? '' : 'disabled'}></td><td class="muted">${r.line}</td><td class="num mono">${esc(r.cid)}</td><td><b>${esc(r.name)}</b></td><td>${esc(r.contact)}</td><td>${esc(r.phone)}</td><td>${esc(r.email)}</td><td class="${r.ok ? 'okgreen' : 'ndtxt'}">${r.ok ? 'New' : esc(r.issues.join('; '))}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
+function importCustomers() {
+  importRows = [];
+  openDialog('Import customers',
+    `<p class="sub" style="margin:0">Choose a CSV or Excel file. The first row must be headings, for example <b>CID, Name, Contact, Phone, Email, Notes</b>. Only Name is required; customers without a CID get the next free number. Every customer imported is set to <b>Conventional</b>.</p>
+     <input type="file" id="impfile" accept=".csv,.xlsx,.xls">
+     <div id="impprev"></div>`,
+    async f => {
+      const pick = [...document.querySelectorAll('input[data-imp]:checked')].map(x => importRows[+x.dataset.imp]).filter(r => r.name);
+      if (!pick.length) { toast('Choose a file and tick at least one customer to import.'); return false; }
+      let next = nextCid(); const used = new Set(S.customers.map(c => c.cid));
+      const rows = pick.map(r => {
+        let cid = /^\d+$/.test(r.cid) && !used.has(+r.cid) ? +r.cid : null;
+        if (cid == null) { while (used.has(next)) next++; cid = next; }
+        used.add(cid);
+        const row = { cid, name: r.name, contact: r.contact, phone: r.phone, email: r.email, notes: r.notes };
+        if (!S.custGroupMissing) row.product_group = 'Conventional';
+        if (!S.remMissing) row.reminders = false;
+        return row;
+      });
+      if (!(await run(sb.from('customers').insert(rows)))) return false;
+      toast(`${rows.length} customer${rows.length === 1 ? '' : 's'} imported as Conventional`, true); return true;
+    });
+  $('#dlg').classList.add('wide');
+  $('#dlg').addEventListener('close', () => $('#dlg').classList.remove('wide'), { once: true });
+  $('#impfile').onchange = async e => {
+    const file = e.target.files[0]; if (!file) return;
+    try {
+      await loadXlsx();
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      importRows = importCheck(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: '' }));
+      importPreview();
+    } catch (err) { importRows = []; $('#impprev').innerHTML = `<div class="banner">${esc(err.message || err)}</div>`; }
+  };
+}
 const JSPDF_URL = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js';
 function loadPdf() {
   if (window.jspdf) return Promise.resolve();

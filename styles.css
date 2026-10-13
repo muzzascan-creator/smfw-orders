@@ -230,3 +230,6 @@ input.rq{width:56px;text-align:center;padding-inline:4px}
 @media (pointer:coarse){.recvtbl td.rord{font-size:18px}}
 label.chk{display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--fg);line-height:1.35}
 label.chk input{width:auto;margin-top:2px}
+dialog.wide{width:min(1000px,calc(100vw - 32px))}
+.impwrap{max-height:50vh;overflow:auto;margin-top:8px}
+.impwrap td{font-size:13px}
