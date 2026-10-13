@@ -57,8 +57,11 @@ const ADMIN_ONLY = ['suppliers', 'emails', 'users'];
 const isReceiver = () => profile?.role === 'receiver' && profile?.approved;
 // Conventional orders are entered by SMFW for its own supply, so they have no customer.
 const needsCustomer = d => !(isAdmin() && d.group === 'Conventional');
-const custOf = id => S.customers.find(c => c.id === id);
-const prodOf = id => S.products.find(p => p.id === id);
+// Lookups by id use an index that is rebuilt whenever the list is reloaded, so long lists stay quick.
+const custIdx = (() => { let list, m; return () => { if (list !== S.customers) { list = S.customers; m = new Map(list.map(c => [c.id, c])); } return m; }; })();
+const prodIdx = (() => { let list, m; return () => { if (list !== S.products) { list = S.products; m = new Map(list.map(p => [p.id, p])); } return m; }; })();
+const custOf = id => custIdx().get(id);
+const prodOf = id => prodIdx().get(id);
 const packOf = id => { for (const p of S.products) { const k = (p.product_packs || []).find(x => x.id === id); if (k) return { p, k }; } return null; };
 const STATUS = { draft: 'Draft', submitted: 'Sent', complete: 'Complete' };
 
@@ -93,15 +96,15 @@ async function loadAll() {
   // product_group arrives with migrations/004; until it is run, load without it and treat everything as Organic.
   // ref arrives with migrations/008; until then packs load without it and the Ref box is hidden.
   const cols = g => `id,supplier_id,code,name,section,sort,active${g ? ',product_group' : ''},product_packs(id,name,sid${S.refMissing ? '' : ',ref'},outer_multiple,available,sort)`;
-  let probe = await sb.from('products').select('product_group').limit(1);
-  S.groupsMissing = !!probe.error && /product_group/.test(probe.error.message || '');
-  probe = await sb.from('product_packs').select('ref').limit(1);
-  S.refMissing = !!probe.error && /ref/.test(probe.error.message || '');
-  probe = await sb.from('customers').select('product_group').limit(1);
-  S.custGroupMissing = !!probe.error && /product_group/.test(probe.error.message || '');
   // Sunday delivery and reminder settings arrive with migrations/018.
-  probe = await sb.from('customers').select('sunday_delivery').limit(1);
-  S.remMissing = !!probe.error && /sunday_delivery/.test(probe.error.message || '');
+  // The database layout doesn't change while the app is open, so these checks run once, side by side.
+  if (!S.probed) {
+    const missing = (r, col) => !!r.error && new RegExp(col).test(r.error.message || '');
+    const [g, r, cg, sd] = await Promise.all([sb.from('products').select('product_group').limit(1), sb.from('product_packs').select('ref').limit(1),
+      sb.from('customers').select('product_group').limit(1), sb.from('customers').select('sunday_delivery').limit(1)]);
+    S.groupsMissing = missing(g, 'product_group'); S.refMissing = missing(r, 'ref'); S.custGroupMissing = missing(cg, 'product_group'); S.remMissing = missing(sd, 'sunday_delivery');
+    S.probed = true;
+  }
   const prods = sb.from('products').select(cols(!S.groupsMissing));
   const orders = sb.from('orders').select('*').order('number', { ascending: false });
   if (isReceiver()) {
@@ -242,8 +245,19 @@ function navItems() {
 function inboxCount() { return S.orders.filter(o => o.status === 'submitted').length; }
 function updateNavBadge() { const b = document.querySelector('#nav [data-v=inbox] .badge'); const n = inboxCount(); if (b) { b.textContent = n; b.hidden = !n; } }
 function go(v, fresh = true) { view = v; if (v === 'entry' && fresh) draft = blankOrder(); render(); window.scrollTo(0, 0); }
-// Each tab press fetches fresh data, so new sign-ups and other people's edits show up.
-$('#nav').addEventListener('click', async e => { const b = e.target.closest('button[data-v]'); if (!b) return; await loadAll(); go(b.dataset.v); });
+// A tab press shows the page straight away from what is already loaded, then fetches fresh data in the background
+// (new sign-ups, other people's edits) and redraws only if something changed and you aren't mid-edit.
+let refreshing = null;
+$('#nav').addEventListener('click', e => { const b = e.target.closest('button[data-v]'); if (!b) return; go(b.dataset.v); refreshInBackground(); });
+function refreshInBackground() {
+  if (refreshing) return refreshing;
+  const v = view, snap = () => JSON.stringify([S.customers, S.suppliers, S.products, S.orders, S.profiles, S.emails, S.sections, S.links]);
+  const before = snap();
+  return refreshing = loadAll().then(() => {
+    const busy = document.querySelector('dialog[open]') || ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName);
+    if (view === v && view !== 'entry' && !busy && snap() !== before) render(); else updateNavBadge();
+  }).finally(() => { refreshing = null; });
+}
 
 function render() {
   const nav = $('#nav');
@@ -650,9 +664,13 @@ async function deleteOrder(btn) {
 // ---------- admin: reference lists ----------
 function viewCustomers() {
   const cs = S.customers.slice().sort(byName);
+  // Count orders and logins per customer once, rather than scanning every order for every row.
+  const nOrders = new Map(), nLogins = new Map();
+  S.orders.forEach(o => nOrders.set(o.customer_id, (nOrders.get(o.customer_id) || 0) + 1));
+  if (!isManager()) S.profiles.filter(u => u.role === 'customer').forEach(u => new Set(loginCustIds(u)).forEach(id => nLogins.set(id, (nLogins.get(id) || 0) + 1)));
   return `<div class="row spread"><div><h1>Customers</h1><p class="sub">The businesses who order from you.${isManager() ? '' : ' Link a login to a customer under <b>Logins</b>.'}</p></div><div class="row"><button onclick="importCustomers()">Import customers</button><button class="primary" onclick="editCustomer()">Add customer</button></div></div>
   ${cs.length ? `<div class="tablewrap"><table><thead><tr><th class="num">CID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th>${S.custGroupMissing ? '' : '<th>Type</th>'}${isManager() ? '' : '<th class="num">Logins</th>'}<th class="num">Orders</th><th></th></tr></thead><tbody>
-    ${cs.map(c => `<tr><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.sunday_delivery ? ' <span class="pill">Sunday delivery</span>' : ''}${!S.remMissing && c.reminders !== false && custGroup(c) === 'Organic' ? ' <span class="pill">Reminders</span>' : ''}${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td>${S.custGroupMissing ? '' : `<td><span class="pill grp-${custGroup(c).toLowerCase()}">${custGroup(c)}</span></td>`}${isManager() ? '' : `<td class="num">${S.profiles.filter(u => u.role === 'customer' && loginCustIds(u).includes(c.id)).length}</td>`}<td class="num">${S.orders.filter(o => o.customer_id === c.id).length}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
+    ${cs.map(c => `<tr><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.sunday_delivery ? ' <span class="pill">Sunday delivery</span>' : ''}${!S.remMissing && c.reminders !== false && custGroup(c) === 'Organic' ? ' <span class="pill">Reminders</span>' : ''}${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td>${S.custGroupMissing ? '' : `<td><span class="pill grp-${custGroup(c).toLowerCase()}">${custGroup(c)}</span></td>`}${isManager() ? '' : `<td class="num">${nLogins.get(c.id) || 0}</td>`}<td class="num">${nOrders.get(c.id) || 0}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
   </tbody></table></div>` : `<div class="card empty">No customers yet.</div>`}`;
 }
 function viewSuppliers() {
