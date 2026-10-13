@@ -358,8 +358,9 @@ function viewInbox() {
 }
 const finished = o => o.status === 'complete' && !!o.emailed_at && !!o.received_at && !!o.csv_at;
 function viewOrders() {
-  // Pending holds every order until it is Complete, Emailed, Received and has its CSV; then it moves to Complete.
-  const inTab = (o, f) => f === 'pending' ? !finished(o) : f === 'complete' ? finished(o) : o.status === f;
+  // Pending holds every transmitted order until it is Complete, Emailed, Received and has its CSV; then it moves to Complete.
+  // Orders still in the Inbox (sent by a customer, not yet transmitted) stay out of Pending.
+  const inTab = (o, f) => f === 'pending' ? o.status !== 'submitted' && !finished(o) : f === 'complete' ? finished(o) : o.status === f;
   let os = S.orders.filter(o => inTab(o, listFilter));
   const q = search.trim().toLowerCase();
   if (q) os = os.filter(o => [orderNo(o.number), custOf(o.customer_id)?.name, custOf(o.customer_id)?.cid].join(' ').toLowerCase().includes(q));
