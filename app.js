@@ -624,7 +624,7 @@ async function saveOrder(status) {
     if (!isAdmin() && draft.status === 'draft' && (draft.group || 'Organic') === 'Organic') { const why = organicProblem(draft.required_date, custOf(draft.customer_id)); if (why) return toast(why); }
   } else if (needsCustomer(draft) && !draft.customer_id) return toast('Choose a customer first.');
   // Today's date is fixed: an order is dated the day it's saved, and keeps that date once it's sent.
-  const row = { customer_id: needsCustomer(draft) ? draft.customer_id : null, order_date: draft.status === 'draft' ? today() : draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
+  const row = { customer_id: draft.customer_id || null, order_date: draft.status === 'draft' ? today() : draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
   saving = true;
   const q = draft.id ? sb.from('orders').update(row).eq('id', draft.id).select().single() : sb.from('orders').insert({ ...row, source: isAdmin() ? 'admin' : 'customer' }).select().single();
   const { data, error } = await q;
