@@ -162,7 +162,7 @@ async function start() {
   await enter();
 }
 async function enter() {
-  if (!session) { profile = null; view = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
+  if (!session) { clearInterval(autoRefresh); autoRefresh = null; profile = null; view = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
   if (authMode === 'newpass') return renderAuth();
   await loadProfile();
   if (!profile || !profile.approved || (!isAdmin() && !isReceiver() && !profile.customer_id)) { $('#top').hidden = true; return renderPending(); }
@@ -173,6 +173,8 @@ async function enter() {
   await loadAll();
   if (isAdmin()) await loadCsvDir();
   listenForOrders();
+  // Admin dashboard refreshes itself every 30 seconds (skipped while the tab is hidden; no redraw mid-edit).
+  clearInterval(autoRefresh); autoRefresh = isAdmin() ? setInterval(() => { if (!document.hidden && profile) refreshInBackground(); }, 30000) : null;
   if (!view) view = homeView();
   render();
 }
@@ -247,7 +249,7 @@ function updateNavBadge() { const b = document.querySelector('#nav [data-v=inbox
 function go(v, fresh = true) { view = v; if (v === 'entry' && fresh) draft = blankOrder(); render(); window.scrollTo(0, 0); }
 // A tab press shows the page straight away from what is already loaded, then fetches fresh data in the background
 // (new sign-ups, other people's edits) and redraws only if something changed and you aren't mid-edit.
-let refreshing = null;
+let refreshing = null, autoRefresh = null;
 $('#nav').addEventListener('click', e => { const b = e.target.closest('button[data-v]'); if (!b) return; go(b.dataset.v); refreshInBackground(); });
 function refreshInBackground() {
   if (refreshing) return refreshing;
