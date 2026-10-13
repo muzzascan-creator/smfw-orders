@@ -751,8 +751,8 @@ async function saveEmails(sid, btn) {
 // Each ticked order becomes the supplier's whole order form as an A4 PDF, with this order's quantities filled in.
 // The email itself opens in the admin's own email program, addressed from the Emails tab, ready to attach and send.
 // ---------- one-off customer import (CSV or Excel) ----------
-// Every imported customer is set to Conventional. Duplicates (same CID or same name, in the file or already in the
-// app) are shown and left unticked, so only new customers are added.
+// Every imported customer is set to Conventional. Rows with a blank, non-numeric or duplicated CID are never imported;
+// rows whose name is already used (in the file or in the app) are left unticked.
 const XLSX_URL = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
 function loadXlsx() {
   if (window.XLSX) return Promise.resolve();
@@ -769,43 +769,40 @@ function importCheck(raw) {
   const cell = (r, k) => col[k] < 0 ? '' : String(r[col[k]] ?? '').trim();
   const rows = raw.slice(1).filter(r => r.some(v => String(v ?? '').trim())).map((r, i) => ({ line: i + 2, cid: cell(r, 'cid'), name: cell(r, 'name'), contact: cell(r, 'contact'), phone: cell(r, 'phone'), email: cell(r, 'email'), notes: cell(r, 'notes') }));
   const byCid = new Map(S.customers.map(c => [String(c.cid), c])), byName = new Map(S.customers.map(c => [normName(c.name), c]));
-  const seenCid = new Map(), seenName = new Map();
+  const seenName = new Map();
   for (const r of rows) {
     r.issues = [];
     if (!r.name) r.issues.push('No name');
     if (r.cid && !/^\d+$/.test(r.cid)) r.issues.push(`CID “${r.cid}” isn’t a number`);
     if (r.cid && byCid.has(r.cid)) r.issues.push(`CID ${r.cid} already used by ${byCid.get(r.cid).name}`);
+    r.blocked = !r.name || !/^\d+$/.test(r.cid) || byCid.has(r.cid) || rows.filter(x => x.cid === r.cid).length > 1;
+    if (!r.cid) r.issues.push('No CID');
+    if (r.cid && rows.filter(x => x.cid === r.cid).length > 1) r.issues.push(`CID ${r.cid} is in the file more than once (lines ${rows.filter(x => x.cid === r.cid).map(x => x.line).join(', ')})`);
     if (r.name && byName.has(normName(r.name))) r.issues.push(`Already a customer: ${byName.get(normName(r.name)).name}`);
-    if (r.cid && seenCid.has(r.cid)) r.issues.push(`Same CID as line ${seenCid.get(r.cid)}`);
     if (r.name && seenName.has(normName(r.name))) r.issues.push(`Same name as line ${seenName.get(normName(r.name))}`);
-    if (r.cid && !seenCid.has(r.cid)) seenCid.set(r.cid, r.line);
     if (r.name && !seenName.has(normName(r.name))) seenName.set(normName(r.name), r.line);
     r.ok = !r.issues.length;
   }
   return rows;
 }
 function importPreview() {
-  const good = importRows.filter(r => r.ok).length, bad = importRows.length - good;
-  $('#impprev').innerHTML = `<p style="margin:0"><b>${importRows.length}</b> rows: <b>${good}</b> new customer${good === 1 ? '' : 's'} to add${bad ? `, <b class="ndtxt">${bad}</b> duplicate or problem row${bad === 1 ? '' : 's'} left unticked` : ''}. All will be <b>Conventional</b>.</p>
+  const good = importRows.filter(r => r.ok).length, bad = importRows.length - good, blocked = importRows.filter(r => r.blocked).length;
+  $('#impprev').innerHTML = `<p style="margin:0"><b>${importRows.length}</b> rows: <b>${good}</b> new customer${good === 1 ? '' : 's'} to add${bad ? `, <b class="ndtxt">${bad}</b> duplicate or problem row${bad === 1 ? '' : 's'} left unticked` : ''}${blocked ? ` (${blocked} can’t be imported because the CID is blank, not a number or duplicated)` : ''}. All will be <b>Conventional</b>.</p>
     <div class="tablewrap impwrap"><table><thead><tr><th></th><th>Line</th><th class="num">CID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Check</th></tr></thead><tbody>
-    ${importRows.map((r, i) => `<tr${r.ok ? '' : ' class="nd"'}><td><input type="checkbox" data-imp="${i}" ${r.ok ? 'checked' : ''} ${r.name ? '' : 'disabled'}></td><td class="muted">${r.line}</td><td class="num mono">${esc(r.cid)}</td><td><b>${esc(r.name)}</b></td><td>${esc(r.contact)}</td><td>${esc(r.phone)}</td><td>${esc(r.email)}</td><td class="${r.ok ? 'okgreen' : 'ndtxt'}">${r.ok ? 'New' : esc(r.issues.join('; '))}</td></tr>`).join('')}
+    ${importRows.map((r, i) => `<tr${r.ok ? '' : ' class="nd"'}><td><input type="checkbox" data-imp="${i}" ${r.ok ? 'checked' : ''} ${r.blocked ? 'disabled' : ''}></td><td class="muted">${r.line}</td><td class="num mono">${esc(r.cid)}</td><td><b>${esc(r.name)}</b></td><td>${esc(r.contact)}</td><td>${esc(r.phone)}</td><td>${esc(r.email)}</td><td class="${r.ok ? 'okgreen' : 'ndtxt'}">${r.ok ? 'New' : esc(r.issues.join('; '))}</td></tr>`).join('')}
     </tbody></table></div>`;
 }
 function importCustomers() {
   importRows = [];
   openDialog('Import customers',
-    `<p class="sub" style="margin:0">Choose a CSV or Excel file. The first row must be headings, for example <b>CID, Name, Contact, Phone, Email, Notes</b>. Only Name is required; customers without a CID get the next free number. Every customer imported is set to <b>Conventional</b>.</p>
+    `<p class="sub" style="margin:0">Choose a CSV or Excel file. The first row must be headings, for example <b>CID, Name, Contact, Phone, Email, Notes</b>. Each customer needs a <b>CID</b> and a <b>Name</b>; rows with a blank or duplicated CID aren’t imported. Every customer imported is set to <b>Conventional</b>.</p>
      <input type="file" id="impfile" accept=".csv,.xlsx,.xls">
      <div id="impprev"></div>`,
     async f => {
-      const pick = [...document.querySelectorAll('input[data-imp]:checked')].map(x => importRows[+x.dataset.imp]).filter(r => r.name);
+      const pick = [...document.querySelectorAll('input[data-imp]:checked')].map(x => importRows[+x.dataset.imp]).filter(r => !r.blocked);
       if (!pick.length) { toast('Choose a file and tick at least one customer to import.'); return false; }
-      let next = nextCid(); const used = new Set(S.customers.map(c => c.cid));
       const rows = pick.map(r => {
-        let cid = /^\d+$/.test(r.cid) && !used.has(+r.cid) ? +r.cid : null;
-        if (cid == null) { while (used.has(next)) next++; cid = next; }
-        used.add(cid);
-        const row = { cid, name: r.name, contact: r.contact, phone: r.phone, email: r.email, notes: r.notes };
+        const row = { cid: +r.cid, name: r.name, contact: r.contact, phone: r.phone, email: r.email, notes: r.notes };
         if (!S.custGroupMissing) row.product_group = 'Conventional';
         if (!S.remMissing) row.reminders = false;
         return row;
