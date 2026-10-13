@@ -766,7 +766,8 @@ function importCheck(raw) {
   const head = (raw[0] || []).map(h => String(h ?? '').trim().toLowerCase());
   const col = Object.fromEntries(IMPORT_COLS.map(([k, re]) => [k, head.findIndex(h => re.test(h))]));
   if (col.name < 0) throw new Error('The file needs a column headed “Name” (or Customer, Business or Company) in its first row.');
-  const cell = (r, k) => col[k] < 0 ? '' : String(r[col[k]] ?? '').trim();
+  // Placeholders such as "." or "0" count as blank; an email without an @ is dropped.
+  const cell = (r, k) => { const v = col[k] < 0 ? '' : String(r[col[k]] ?? '').trim(); return /^[.,\-0\s]*$/.test(v) || (k === 'email' && !v.includes('@')) ? '' : v; };
   const rows = raw.slice(1).filter(r => r.some(v => String(v ?? '').trim())).map((r, i) => ({ line: i + 2, cid: cell(r, 'cid'), name: cell(r, 'name'), contact: cell(r, 'contact'), phone: cell(r, 'phone'), email: cell(r, 'email'), notes: cell(r, 'notes') }));
   const byCid = new Map(S.customers.map(c => [String(c.cid), c])), byName = new Map(S.customers.map(c => [normName(c.name), c]));
   const seenName = new Map();
