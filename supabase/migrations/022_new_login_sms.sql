@@ -1,5 +1,5 @@
 -- 022: Text SMFW when a new login is waiting to be activated.
--- When someone signs up, the database asks quick-api to send an SMS (via ClickSend) to the number(s) below.
+-- When someone signs up, the database asks quick-api to send an SMS (via SMS Broadcast) to the number(s) below.
 -- BEFORE RUNNING: replace 04XX XXX XXX with your mobile. Several numbers can be separated by commas.
 -- Safe to run more than once (it just updates the number).
 insert into public.app_settings (key, value) values ('sms_to', '04XX XXX XXX')
