@@ -9,7 +9,8 @@
 //    Called by the database the moment the login is made (migrations/022). Action "test-sms" sends a test text.
 // Needs the RESEND_API_KEY secret (resend.com). Optional: FROM_EMAIL, REPLY_TO.
 // Texts go through SMS Broadcast (smsbroadcast.com.au) and need the SMSBROADCAST_USERNAME and
-// SMSBROADCAST_PASSWORD secrets; SMSBROADCAST_FROM (sender name, up to 11 letters/digits) is optional.
+// SMSBROADCAST_PASSWORD secrets, or the sms_username / sms_password settings in app_settings (migrations/022);
+// SMSBROADCAST_FROM / sms_from (sender name, up to 11 letters/digits) is optional.
 // The mobile number(s) are the sms_to setting in app_settings.
 const URL_ = Deno.env.get('SUPABASE_URL')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -20,7 +21,7 @@ const FROM = Deno.env.get('FROM_EMAIL') || 'Coolibah Salads Sydney <orders@csord
 const REPLY_TO = Deno.env.get('REPLY_TO') || 'sales@cssydney.com.au';
 const SMS_USER = Deno.env.get('SMSBROADCAST_USERNAME') || '';
 const SMS_PASS = Deno.env.get('SMSBROADCAST_PASSWORD') || '';
-const SMS_FROM = (Deno.env.get('SMSBROADCAST_FROM') || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 11);
+const SMS_FROM = Deno.env.get('SMSBROADCAST_FROM') || '';
 const SMS_URL = Deno.env.get('SMSBROADCAST_URL') || 'https://api.smsbroadcast.com.au/api-adv.php';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-key' };
@@ -136,11 +137,13 @@ async function sendReminders({ dry = false, force = false, now }: { dry?: boolea
 // SMS Broadcast wants digits only: 0412 345 678 → 0412345678, +61 412 345 678 → 61412345678.
 export const smsNumber = (n: string) => n.replace(/\D/g, '');
 async function sendSms(text: string) {
-  const [s] = await (await db(`app_settings?key=eq.sms_to&select=value`)).json();
-  const to = String(s?.value || '').split(/[,;]+/).map(n => n.trim()).filter(n => /\d{8,}/.test(n.replace(/\D/g, ''))).map(smsNumber);
+  const set: Record<string, string> = Object.fromEntries((await (await db(`app_settings?key=like.sms_*&select=key,value`)).json()).map((r: any) => [r.key, r.value || '']));
+  const user = SMS_USER || set.sms_username || '', pass = SMS_PASS || set.sms_password || '';
+  const from = (SMS_FROM || set.sms_from || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 11);
+  const to = String(set.sms_to || '').split(/[,;]+/).map(n => n.trim()).filter(n => /\d{8,}/.test(n.replace(/\D/g, ''))).map(smsNumber);
   if (!to.length) return { sent: false, reason: 'No mobile number set (sms_to in app_settings).' };
-  if (!SMS_USER || !SMS_PASS) return { sent: false, reason: 'Texts aren’t set up yet (SMSBROADCAST_USERNAME / SMSBROADCAST_PASSWORD missing).' };
-  const form = new URLSearchParams({ username: SMS_USER, password: SMS_PASS, to: to.join(','), from: SMS_FROM, message: text.slice(0, 300), ref: 'csorders', maxsplit: '2' });
+  if (!user || !pass || /^YOUR /.test(user)) return { sent: false, reason: 'Texts aren’t set up yet (no SMS Broadcast username / password).' };
+  const form = new URLSearchParams({ username: user, password: pass, to: to.join(','), from, message: text.slice(0, 300), ref: 'csorders', maxsplit: '2' });
   const r = await fetch(SMS_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form });
   // One line back per number: "OK: 61412345678:2942263", "BAD:0412abc:Invalid Number" or a single "ERROR: ...".
   const out = (await r.text()).trim();

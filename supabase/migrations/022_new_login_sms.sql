@@ -1,8 +1,13 @@
--- 022: Text SMFW when a new login is waiting to be activated.
--- When someone signs up, the database asks quick-api to send an SMS (via SMS Broadcast) to the number(s) below.
--- BEFORE RUNNING: replace 04XX XXX XXX with your mobile. Several numbers can be separated by commas.
--- Safe to run more than once (it just updates the number).
-insert into public.app_settings (key, value) values ('sms_to', '04XX XXX XXX')
+-- 022: Text SMFW when a new login is waiting to be activated (via SMS Broadcast).
+-- BEFORE RUNNING, change the three values in quotes just below:
+--   your mobile (several can be separated by commas), and your SMS Broadcast username and password.
+-- These are kept in a private settings table that only the server can read.
+-- Safe to run more than once (it just updates the values).
+insert into public.app_settings (key, value) values
+  ('sms_to',       '04XX XXX XXX'),
+  ('sms_username', 'YOUR SMS BROADCAST USERNAME'),
+  ('sms_password', 'YOUR SMS BROADCAST PASSWORD'),
+  ('sms_from',     'Coolibah')
   on conflict (key) do update set value = excluded.value;
 
 create or replace function public.sms_new_login() returns trigger
