@@ -100,9 +100,10 @@ async function loadAll() {
   // The database layout doesn't change while the app is open, so these checks run once, side by side.
   if (!S.probed) {
     const missing = (r, col) => !!r.error && new RegExp(col).test(r.error.message || '');
-    const [g, r, cg, sd] = await Promise.all([sb.from('products').select('product_group').limit(1), sb.from('product_packs').select('ref').limit(1),
-      sb.from('customers').select('product_group').limit(1), sb.from('customers').select('sunday_delivery').limit(1)]);
-    S.groupsMissing = missing(g, 'product_group'); S.refMissing = missing(r, 'ref'); S.custGroupMissing = missing(cg, 'product_group'); S.remMissing = missing(sd, 'sunday_delivery');
+    // The Special Order tick box arrives with migrations/021.
+    const [g, r, cg, sd, so] = await Promise.all([sb.from('products').select('product_group').limit(1), sb.from('product_packs').select('ref').limit(1),
+      sb.from('customers').select('product_group').limit(1), sb.from('customers').select('sunday_delivery').limit(1), sb.from('orders').select('special_order').limit(1)]);
+    S.groupsMissing = missing(g, 'product_group'); S.refMissing = missing(r, 'ref'); S.custGroupMissing = missing(cg, 'product_group'); S.remMissing = missing(sd, 'sunday_delivery'); S.spoMissing = missing(so, 'special_order');
     S.probed = true;
   }
   const prods = sb.from('products').select(cols(!S.groupsMissing));
@@ -280,7 +281,7 @@ function render() {
 function orderRow(o, opts = {}) {
   const c = custOf(o.customer_id);
   return `<tr class="rowlink" onclick="openOrder('${o.id}')">
-    <td class="mono">${esc(orderNo(o.number))}${!S.groupsMissing && orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conventional</span>' : ''}</td>
+    <td class="mono">${esc(orderNo(o.number))}${!S.groupsMissing && orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conventional</span>' : ''}${o.special_order ? ' <span class="pill spo">Special Order</span>' : ''}</td>
     ${opts.customer === false ? '' : `<td>${c ? esc(c.name) : o.customer_id ? 'Unknown customer' : '<span class="muted">No customer</span>'}</td>`}
     <td>${esc(fmtDate(o.required_date))}</td>
     ${opts.sent ? `<td>${esc(fmtWhen(o.submitted_at))}</td>` : ''}
@@ -423,7 +424,7 @@ function viewMine() {
 }
 function openOrder(id) {
   const o = S.orders.find(x => x.id === id); if (!o) return;
-  draft = { id, number: o.number, customer_id: o.customer_id, order_date: o.order_date, required_date: o.required_date || '', special: o.special || '', status: o.status, source: o.source, submitted_at: o.submitted_at, qty: {} };
+  draft = { id, number: o.number, customer_id: o.customer_id, order_date: o.order_date, required_date: o.required_date || '', special: o.special || '', special_order: !!o.special_order, status: o.status, source: o.source, submitted_at: o.submitted_at, qty: {} };
   (o.lines || []).forEach(l => { if (l.pack_id) draft.qty[l.pack_id] = l.qty; });
   // Keep what a Receiver recorded (ordered_qty, undelivered) when an admin re-saves the order.
   draft.receipt = Object.fromEntries((o.lines || []).filter(l => l.pack_id && (l.ordered_qty != null || l.undelivered || l.received)).map(l => [l.pack_id, { ordered_qty: l.ordered_qty, undelivered: !!l.undelivered, received: !!l.received }]));
@@ -453,7 +454,7 @@ function pickCust(id) {
 const loginCustIds = u => [...new Set([u.customer_id, ...(S.links || []).filter(l => l.profile_id === u.id).map(l => l.customer_id)].filter(Boolean))];
 
 // ---------- order entry ----------
-function blankOrder() { return { id: null, number: null, customer_id: isAdmin() ? '' : curCust(), order_date: today(), required_date: '', special: '', status: 'draft', source: isAdmin() ? 'admin' : 'customer', qty: {}, missing: [], group: isAdmin() ? 'Organic' : custGroup(custOf(curCust())) }; }
+function blankOrder() { return { id: null, number: null, customer_id: isAdmin() ? '' : curCust(), order_date: today(), required_date: '', special: '', special_order: false, status: 'draft', source: isAdmin() ? 'admin' : 'customer', qty: {}, missing: [], group: isAdmin() ? 'Organic' : custGroup(custOf(curCust())) }; }
 const outerOf = k => Number(k.outer_multiple) || 1;
 function sectionsFor(products) {
   const secs = [], idx = {};
@@ -523,7 +524,7 @@ function viewEntry() {
       <div class="card grid g2">
         ${custField}
         <label class="f">Today’s date<input type="date" id="e-date" disabled title="Set automatically" value="${esc(d.status === 'draft' ? today() : d.order_date)}"></label>
-        <label class="f">Day / date required<input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${tomorrow()}"` : ''} max="${latestReq()}" value="${esc(d.required_date)}">${!admin && (d.group || 'Organic') === 'Organic' && d.status === 'draft' ? `<span class="muted" style="font-size:12px;font-weight:400">${organicHint(custOf(d.customer_id))}</span>` : ''}</label>
+        <div class="f"><label for="e-req">Day / date required</label><div class="reqrow"><input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${tomorrow()}"` : ''} max="${latestReq()}" value="${esc(d.required_date)}">${spoBox(d, dis)}</div>${!admin && (d.group || 'Organic') === 'Organic' && d.status === 'draft' ? `<span class="muted" style="font-size:12px;font-weight:400">${organicHint(custOf(d.customer_id))}</span>` : ''}</div>
         <label class="f" style="grid-column:1/-1">Special requirements<textarea id="e-special" ${dis}>${esc(d.special)}</textarea></label>
       </div>
       <div class="row" style="margin-top:16px"><input class="search" id="e-find" placeholder="Find a product by name or code"></div>
@@ -531,6 +532,9 @@ function viewEntry() {
     </div>
     <aside class="card summary" id="summary">${summaryHtml()}</aside></div>`;
 }
+// Special Order: Conventional orders entered by SMFW. Ticked, the upload CSV's H line ends in ,S.
+const spoBox = (d, dis) => isAdmin() && !S.spoMissing && (d.group || 'Organic') === 'Conventional'
+  ? `<label class="chk spo"><input type="checkbox" id="e-spo" ${dis} ${d.special_order ? 'checked' : ''}>Special Order</label>` : '';
 function setGroup(g) {
   if (draft.group === g) return;
   // Quantities belong to one group's form; switching drops the other group's lines after a check.
@@ -594,6 +598,7 @@ function wireEntry() {
   $('#e-cust')?.addEventListener('change', e => { draft.customer_id = e.target.value; $('#e-phone').value = custOf(draft.customer_id)?.phone || ''; sync(); });
   $('#e-req')?.addEventListener('change', e => { draft.required_date = e.target.value; sync(); });
   $('#e-special')?.addEventListener('input', e => draft.special = e.target.value);
+  $('#e-spo')?.addEventListener('change', e => draft.special_order = e.target.checked);
   document.querySelectorAll('input[data-k]').forEach(inp => inp.addEventListener('input', () => {
     const v = inp.value.replace(/[^\d]/g, ''); if (v !== inp.value) inp.value = v;
     if (+v > 0) draft.qty[inp.dataset.k] = +v; else delete draft.qty[inp.dataset.k];
@@ -642,6 +647,7 @@ async function saveOrder(status) {
   } else if (needsCustomer(draft) && !draft.customer_id) return toast('Choose a customer first.');
   // Today's date is fixed: an order is dated the day it's saved, and keeps that date once it's sent.
   const row = { customer_id: draft.customer_id || null, order_date: draft.status === 'draft' ? today() : draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
+  if (!S.spoMissing && isAdmin()) row.special_order = draft.group === 'Conventional' && !!draft.special_order;
   saving = true;
   const q = draft.id ? sb.from('orders').update(row).eq('id', draft.id).select().single() : sb.from('orders').insert({ ...row, source: isAdmin() ? 'admin' : 'customer' }).select().single();
   const { data, error } = await q;
@@ -1035,7 +1041,7 @@ function composeLinks(s, list) {
   ];
 }
 // Upload CSV, one file per order:
-//   H,<CID>,<date required as YYYYMMDD>
+//   H,<CID>,<date required as YYYYMMDD>[,S]   (S only when Special Order is ticked)
 //   D,<Ref>,<order qty × outer multiple>   (one line per order line)
 const CONVENTIONAL_CID = 1183;
 const ymd = d => (d || '').replace(/-/g, '');
@@ -1043,7 +1049,7 @@ const csvCell = v => /[",\r\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"
 function orderCsv(o) {
   // An order goes under its customer's CID; a Conventional order SMFW enters without a customer goes under 1183.
   const cust = o.customer_id ? custOf(o.customer_id)?.cid ?? '' : orderGroup(o) === 'Conventional' ? CONVENTIONAL_CID : '';
-  const missing = [], rows = [['H', cust, ymd(o.required_date || o.order_date)]];
+  const missing = [], rows = [['H', cust, ymd(o.required_date || o.order_date), ...(o.special_order ? ['S'] : [])]];
   for (const l of o.lines || []) {
     if (l.undelivered || !(+l.qty > 0)) continue; // undelivered lines never go in the upload
     const k = packOf(l.pack_id)?.k, ref = (k?.ref || '').trim();
