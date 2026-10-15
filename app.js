@@ -211,7 +211,7 @@ async function stillMyDevice() {
   const { data, error } = await sb.rpc('check_device', { device: deviceId(), claim });
   if (error || data !== false) return true; // not set up yet (025 not run) or still ours
   clearInterval(deviceTimer); deviceTimer = null;
-  authMode = 'signin'; authMsg = 'You were signed out because this login was used on another device.';
+  authMode = 'signin'; authMsg = '!You were signed out because this login was used on another device.';
   await sb.auth.signOut({ scope: 'local' }); // local only: the other device stays signed in
   return false;
 }

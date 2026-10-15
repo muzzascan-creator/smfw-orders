@@ -260,3 +260,5 @@ label.chk.spo input{margin:0;width:18px;height:18px}
   .supblock h2{position:sticky;top:calc(var(--hdr,0px) + var(--ph,0px));z-index:3;background:var(--bg)}
   .supblock .tablewrap.stickyhead thead th{top:calc(var(--hdr,0px) + var(--ph,0px) + 44px)}
 }
+/* Sign-in screen warnings (e.g. signed out because the login was used on another device): white on red. */
+.auth p.err{background:#c62828;color:#fff;border-radius:8px;padding:10px 14px;font-size:15px;font-weight:600}
