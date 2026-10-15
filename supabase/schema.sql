@@ -1,5 +1,7 @@
--- SMFW Order Manager: database, logins and access rules.
--- Run once in Supabase: Dashboard > SQL Editor > New query > paste > Run.
+-- Coolibah Orders: database, logins and access rules, as they were up to migration 019.
+-- New system: run this once in Supabase (Dashboard > SQL Editor > New query > paste > Run), then run every file in
+-- supabase/migrations from 020 onward, in number order. Those later files change some of what is set up here
+-- (e.g. orders_guard, the reminder schedule, who becomes Admin), so this file alone is not the current state.
 
 create extension if not exists pgcrypto;
 
@@ -480,9 +482,9 @@ begin
   return new;
 end $$;
 
--- ---------- the 7:20am schedule (Supabase Cron) ----------
--- Runs at 20:20 and 21:20 UTC every day, which is 7:20am in Sydney in summer and in winter.
--- The email function itself checks the Sydney time and day, and does nothing at the run that isn't 7:20am.
+-- ---------- the reminder schedule (Supabase Cron) ----------
+-- Set up here at 20:20 and 21:20 UTC; migration 026 changes it to every 10 minutes, and the email function works out
+-- which order cut-offs are coming up (Administration › Cut-offs).
 create extension if not exists pg_cron;
 create extension if not exists pg_net;
 select cron.unschedule(jobid) from cron.job where jobname = 'order-reminders';

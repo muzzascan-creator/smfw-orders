@@ -1,4 +1,4 @@
-/* SMFW Order Manager. Layout: top bar with tabs, one working column; order entry = form-style product grid + sticky summary */
+/* Coolibah Orders. Layout: top bar with tabs, one working column; order entry = form-style product grid + sticky summary */
 :root{
   --bg:#f5f7f4; --surface:#ffffff; --sunk:#eaefe8; --line:#d3dccf; --fg:#1b261d; --muted:#5d6b5f;
   --accent:#2f6b3a; --accent-fg:#ffffff; --accent-soft:#dcebdc; --warn:#9a5b00; --warn-soft:#fbecd2; --danger:#a5352b;
@@ -22,7 +22,6 @@ body{background:var(--bg);color:var(--fg);font:14px/1.5 var(--f-body)}
 header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
 .topin{max-width:1180px;margin:0 auto;padding:12px 16px 0;display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px 24px}
 .brand{font:700 20px/1.1 var(--f-display);letter-spacing:-.01em;padding-bottom:10px}
-.brand small{display:block;font:500 11px var(--f-body);color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
 nav{display:flex;gap:2px;overflow-x:auto;flex:1;min-width:0}
 nav button{background:none;border:0;border-bottom:3px solid transparent;padding:10px 12px;font:500 14px var(--f-body);color:var(--muted);cursor:pointer;white-space:nowrap}
 nav button[aria-current="page"]{color:var(--fg);border-bottom-color:var(--accent)}
@@ -32,8 +31,7 @@ h2{font:600 18px/1.3 var(--f-display);margin:0}
 .sub{color:var(--muted);margin:0 0 16px}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .spread{justify-content:space-between}
-button,.btn{font:500 14px var(--f-body);border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--fg);padding:7px 14px;cursor:pointer}
-a.btn{display:inline-block;text-decoration:none}
+button{font:500 14px var(--f-body);border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--fg);padding:7px 14px;cursor:pointer}
 button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
 button.ghost{background:none;border-color:transparent;color:var(--accent);padding-inline:6px}
 button.danger{color:var(--danger)}
@@ -62,7 +60,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 /* order entry */
 .entry{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px;align-items:start}
 @media (max-width:900px){.entry{grid-template-columns:minmax(0,1fr)}}
-.summary{position:sticky;top:calc(env(safe-area-inset-top,0px) + 76px)}
+.summary{position:sticky;top:calc(var(--hdr,0px) + 8px)}
 .supplier-block{margin-top:20px}
 .supplier-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;align-items:baseline;padding:10px 14px;background:var(--accent);color:var(--accent-fg);border-radius:10px 10px 0 0}
 .supplier-head h2{font-size:16px}
@@ -111,7 +109,6 @@ th.pick,td.pick{width:36px;text-align:center;padding-inline:8px}
 .pill.emailed{background:var(--sunk);color:var(--accent)}
 #dlg .sumlist li{font-size:12px}
 .custname{font:700 34px/1.15 var(--f-display);color:var(--accent);margin:14px 0 8px;display:flex;flex-wrap:wrap;align-items:center;gap:10px}
-.custname .pill{font:600 13px/1 var(--f-body,inherit);padding:5px 10px}
 @media (max-width:520px){.custname{font-size:28px}}
 /* iPhone: 16px text stops Safari zooming into fields; respect the notch and home bar. */
 @media (hover:none) and (pointer:coarse){input,select,textarea{font-size:16px}.sec td.q input{width:64px;padding:8px 4px}nav button{padding:12px 12px}}
@@ -127,7 +124,6 @@ tr.rowlink{cursor:pointer}tr.rowlink:hover td{background:var(--sunk)}
 .pill.grp-organic{background:var(--accent-soft);color:var(--accent)}
 .pill.grp-conventional{background:var(--sunk);color:var(--fg)}
 .pill.grp-both{background:#ede7f6;color:#4a2c82}
-.supplier-head h2 .pill{vertical-align:middle;margin-left:6px}
 .grpswitch{display:inline-flex;border:1px solid var(--line);border-radius:999px;padding:3px;background:var(--surface);margin:0 0 12px;gap:2px}
 .grpswitch button{border:0;border-radius:999px;padding:8px 16px;background:none;font-weight:600;color:var(--muted)}
 .grpswitch button.on{background:var(--accent);color:var(--accent-fg)}
@@ -141,11 +137,9 @@ td.acts button{padding-inline:6px}
 @media (max-width:600px){td.acts{padding-inline:4px}td.acts button{display:block;margin-left:auto;padding:4px 2px}td.acts .long{display:none}}
 
 /* Receiver: narrow quantity box; a Not delivered line is shown in red */
-input.rq{width:72px;text-align:right}
 tr.nd td{color:var(--danger);background:color-mix(in srgb,var(--danger) 12%,transparent)}
 tr.nd input.rq{color:var(--danger)}
 .recvcust{font-size:22px;font-weight:600;margin:4px 0 2px}
-.recvcust .mono{font-size:inherit}
 .sumlist li.nd,.sumlist li.nd .muted,.ndtxt{color:var(--danger);font-weight:700}
 .sumlist li.nd b{text-decoration:line-through}
 /* Admin Orders: status tags in fixed slots so they line up row to row: status, Emailed, Received, CSV */
@@ -161,7 +155,7 @@ th .stgrid span{text-align:center}
   .recvlist td.recvacts button,body:has(input.rq) .row button{min-height:44px;padding:10px 14px;font-size:16px}
   .pick input[data-rc],.pick input[data-nd]{width:30px;height:30px}
   th.pick,td.pick{width:64px}
-  input.rq{width:84px;height:44px;font-size:18px}
+  input.rq{height:44px;font-size:18px}
 }
 /* Coolibah Salads Sydney logo: black artwork, flipped to white in dark mode */
 .brand img{height:76px;width:auto;display:block;margin:4px 0 -2px}
@@ -171,7 +165,6 @@ th .stgrid span{text-align:center}
 @media (max-width:600px){.brand img{height:60px}}
 /* Customer app: SMFW contact details beside the logo */
 .contact{display:flex;flex-direction:column;gap:1px;padding-bottom:10px;font-size:13px;line-height:1.35;color:var(--muted)}
-.contact[hidden]{display:none}
 .contact b{color:var(--fg);font-size:14px}
 .contact a{color:var(--accent);text-decoration:none}
 .notify{margin:12px 0 0;padding:8px 10px;border-radius:8px;background:#fdecea;color:#a5352b;font-size:13px}
@@ -198,10 +191,8 @@ body.staff td.packs .pill{font-size:10.5px;padding:0 6px}
 .custpick{display:grid;gap:4px;font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.02em}
 .custlist{max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px 10px;display:grid;gap:2px;background:var(--surface)}
 .custlist label{display:flex;gap:8px;align-items:center;font-size:14px;font-weight:400;color:var(--fg);letter-spacing:0;padding:2px 0}
-.custlist label[hidden]{display:none}
 .custlist input{width:auto;margin:0}
 .custpicker{max-width:340px;margin-bottom:4px}
-.custpick[hidden]{display:none}
 /* Receiver list on phones and tablets (Android): bigger, darker customer name and solid buttons that are easy to hit outdoors. */
 @media (max-width:760px),(pointer:coarse){
   .recvlist td.rcust,.recvlist td.rcust .muted{font-size:18px;font-weight:700;color:var(--fg);line-height:1.3}
@@ -241,12 +232,12 @@ dialog.wide{width:min(1000px,calc(100vw - 32px))}
 label.chk.spo{align-items:center;font-weight:600;white-space:nowrap;margin:0}
 label.chk.spo input{margin:0;width:18px;height:18px}
 .pill.spo{background:#fde8e8;color:#9b1c1c}
-/* Administration's Emails / Logins switch stays in view under the top bar while the page scrolls. */
+/* Administration's sub-tabs (Emails, Logins, SMS, Cut-offs) stays in view under the top bar while the page scrolls. */
 .adminbar{position:sticky;top:var(--hdr,0px);z-index:4;background:var(--bg);padding:20px 0 4px;margin-bottom:4px}
 .adminbar .grpswitch{margin:0}
-/* A page's title row that stays in view under the top bar while the list scrolls (Customers). */
+/* A page's title row that stays in view under the top bar while the list scrolls (Customers, Products, Suppliers). */
 .pagehead{position:sticky;top:var(--hdr,0px);z-index:4;background:var(--bg);padding:8px 0 10px;margin-top:-8px}
-/* Column headings that stay in view under the frozen title row (Customers). On narrow screens the
+/* Column headings that stay in view under the frozen title row (Customers, Products, Suppliers). On narrow screens the
    table scrolls sideways instead, so the headings scroll with it. */
 @media (min-width:900px){
   .tablewrap.stickyhead{overflow:visible}

@@ -1,4 +1,4 @@
-// SMFW Orders: one page app for admins (SMFW staff) and customers.
+// Coolibah Orders: one page app for SMFW staff (Admins, Managers, Receivers) and customers.
 // Data and logins live in Supabase; access rules in supabase/schema.sql decide what each person can see.
 
 const cfg = window.SMFW_CONFIG || {};
@@ -6,10 +6,10 @@ const cfg = window.SMFW_CONFIG || {};
 let claimDevice = /access_token|type=recovery/.test(location.hash) || new URLSearchParams(location.search).has('code');
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
 
-const S = { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], emailsMissing: false, groupsMissing: false };
+const S = { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], links: [], sections: [] };
 const GROUPS = ['Organic', 'Conventional'];
 const groupOf = p => p.product_group || 'Organic';
-// Each customer orders one group (migrations/013); customers saved before that are Organic.
+// Each customer orders Organic, Conventional or Both (migrations/013, 023); customers saved before 013 are Organic.
 const custGroup = c => c?.product_group || 'Organic';
 // A 'Both' customer orders from either location, one location per order.
 const custAllows = (c, g) => custGroup(c) === 'Both' || custGroup(c) === g;
@@ -25,24 +25,20 @@ const upPicked = new Set(); // orders ticked on the Orders tab for an upload CSV
 // ---------- helpers ----------
 const $ = s => document.querySelector(s);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
-// Orders being placed must be required tomorrow or later.
+// Dates are Sydney dates, wherever the browser is.
+const today = () => sydNow().date;
 // Latest allowed date required: a year ahead. Also stops the date box accepting a 5- or 6-digit year.
 const latestReq = () => { const d = new Date(); d.setFullYear(d.getFullYear() + 1); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
-const tomorrow = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+const tomorrow = () => shiftDate(today(), 1);
 // Order cut-offs, per product location (Sydney time). Set under Administration › Cut-offs (migrations/026); the database
-// holds customers to the same rules. Until 026 is run, these are the rules used before it.
+// holds customers to the same rules (orders_guard, migrations/027).
 function sydNow() {
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).map(x => [x.type, x.value]));
   return { date: `${p.year}-${p.month}-${p.day}`, minutes: +p.hour * 60 + +p.minute };
 }
 const shiftDate = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']; // dow 1 = Monday ... 7 = Sunday
-const DEFAULT_CUTOFFS = [
-  ...[[1, 'all', 3], [2, 'all', 1], [3, 'all', 1], [4, 'all', 1], [5, 'all', 1], [6, 'none', null], [7, 'sunday', 2]]
-    .map(([dow, delivers, days_before]) => ({ product_group: 'Organic', dow, delivers, days_before, cutoff_time: days_before == null ? null : '07:30:00' })),
-  ...DAYS.map((_, i) => ({ product_group: 'Conventional', dow: i + 1, delivers: 'all', days_before: null, cutoff_time: null }))];
-const cutRules = g => (S.cutRules?.length ? S.cutRules : DEFAULT_CUTOFFS).filter(r => r.product_group === g).sort((a, b) => a.dow - b.dow);
+const cutRules = g => (S.cutRules || []).filter(r => r.product_group === g).sort((a, b) => a.dow - b.dow);
 const isoDow = d => new Date(d + 'T12:00:00Z').getUTCDay() || 7;
 const toMins = t => +String(t || '0:0').split(':')[0] * 60 + +String(t || '0:0').split(':')[1];
 const fmtTime = t => { const m = toMins(t), h = Math.floor(m / 60); return `${h % 12 || 12}:${String(m % 60).padStart(2, '0')}${h < 12 ? 'am' : 'pm'}`; };
@@ -58,14 +54,14 @@ function orderProblem(g, d, cust) {
 }
 // Orders are for tomorrow or later, or for today when today's delivery for that location closes the same day.
 function earliestReq(g, cust) {
-  const t = sydNow().date, r = cutRules(g).find(x => x.dow === isoDow(t));
-  return r && r.days_before === 0 && (r.delivers === 'all' || (r.delivers === 'sunday' && cust?.sunday_delivery)) ? t : tomorrow();
+  const now = sydNow(), r = cutRules(g).find(x => x.dow === isoDow(now.date));
+  return r && r.days_before === 0 && now.minutes < toMins(r.cutoff_time) && (r.delivers === 'all' || (r.delivers === 'sunday' && cust?.sunday_delivery)) ? now.date : tomorrow();
 }
 // The rules in words, for the customer's order form.
 function orderHint(g, cust) {
   const rs = cutRules(g).filter(r => r.delivers === 'all' || (r.delivers === 'sunday' && cust?.sunday_delivery));
   const closes = rs.filter(r => r.days_before != null).map(r => `${fmtTime(r.cutoff_time)} ${r.days_before ? DAYS[(r.dow - 1 - r.days_before + 7) % 7] : 'the same day'} for ${DAYS[r.dow - 1]}`);
-  const off = DAYS.filter((_, i) => !rs.some(r => r.dow === i + 1));
+  const off = cutRules(g).filter(r => !rs.includes(r)).map(r => DAYS[r.dow - 1]);
   return [closes.length && `${g} orders close ${andList(closes)} delivery.`, off.length && `No ${g} deliveries on ${andList(off)}.`].filter(Boolean).join(' ');
 }
 const fmtDate = d => { if (!d) return ''; const [y, m, dd] = d.split('-'); return new Date(+y, m - 1, +dd).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); };
@@ -73,25 +69,26 @@ const fmtWhen = t => t ? new Date(t).toLocaleString('en-AU', { day: 'numeric', m
 const byName = (a, b) => (a.name || '').localeCompare(b.name || '');
 const bySort = (a, b) => (a.sort ?? 999) - (b.sort ?? 999) || byName(a, b);
 const orderNo = n => n == null ? '' : 'SO-' + String(n).padStart(4, '0');
-// Admins and Managers share the office dashboard; only Admins see Suppliers, Emails and Logins (migrations/012).
+// Admins and Managers share the office dashboard; only Admins see Suppliers and Administration (migrations/012).
 const isAdmin = () => ['admin', 'manager'].includes(profile?.role) && profile?.approved;
 const isManager = () => profile?.role === 'manager' && profile?.approved;
 const ADMIN_ONLY = ['suppliers', 'emails', 'users', 'sms', 'cutoffs', 'admin'];
-// The Administration tab holds Emails and Logins; it opens on whichever was used last.
+// The Administration tab holds Emails, Logins, SMS and Cut-offs; it opens on whichever was used last.
 const ADMIN_TABS = [['emails', 'Emails'], ['users', 'Logins'], ['sms', 'SMS'], ['cutoffs', 'Cut-offs']];
 // The top bar's height, so sticky bits (the Administration switch) sit just under it.
 new ResizeObserver(() => document.documentElement.style.setProperty('--hdr', $('#top').offsetHeight + 'px')).observe(document.getElementById('top'));
 let adminTab = 'emails';
 // Receivers see every order read-only (migrations/010).
 const isReceiver = () => profile?.role === 'receiver' && profile?.approved;
-// Conventional orders are entered by SMFW for its own supply, so they have no customer.
+// SMFW can enter a Conventional order for its own supply, with no customer; every other order needs one.
 const needsCustomer = d => !(isAdmin() && d.group === 'Conventional');
 // Lookups by id use an index that is rebuilt whenever the list is reloaded, so long lists stay quick.
 const custIdx = (() => { let list, m; return () => { if (list !== S.customers) { list = S.customers; m = new Map(list.map(c => [c.id, c])); } return m; }; })();
 const prodIdx = (() => { let list, m; return () => { if (list !== S.products) { list = S.products; m = new Map(list.map(p => [p.id, p])); } return m; }; })();
 const custOf = id => custIdx().get(id);
 const prodOf = id => prodIdx().get(id);
-const packOf = id => { for (const p of S.products) { const k = (p.product_packs || []).find(x => x.id === id); if (k) return { p, k }; } return null; };
+const packIdx = (() => { let list, m; return () => { if (list !== S.products) { list = S.products; m = new Map(list.flatMap(p => (p.product_packs || []).map(k => [k.id, { p, k }]))); } return m; }; })();
+const packOf = id => packIdx().get(id) || null;
 const STATUS = { draft: 'Draft', submitted: 'Sent', complete: 'Complete' };
 
 // Messages are errors unless marked ok: errors show red in the middle of the screen and stay a little longer.
@@ -112,8 +109,6 @@ function friendly(err) {
     if (/product_id, name|product_packs_product_id_name/i.test(m)) return 'A pack type is listed twice on this product.';
     return 'That value is already in use.';
   }
-  if (err.code === '23502' && /customer_id/.test(m)) return 'Orders without a customer need one more database update. Run 007_conventional_no_customer.sql in the Supabase SQL Editor.';
-  if (err.code === '23514' && /profiles_role_check/.test(m)) return 'This role needs one more database update. Run 010_receiver_role.sql and 012_manager_role.sql in the Supabase SQL Editor.';
   if (err.code === '23503') return 'This is still used elsewhere, so it can’t be deleted.';
   if (err.code === '42501' || /row-level security/i.test(m)) return 'You don’t have permission to do that.';
   return m;
@@ -122,58 +117,45 @@ async function run(promise, okMsg) { const { data, error } = await promise; if (
 
 // ---------- data ----------
 async function loadAll() {
-  // product_group arrives with migrations/004; until it is run, load without it and treat everything as Organic.
-  // ref arrives with migrations/008; until then packs load without it and the Ref box is hidden.
-  const cols = g => `id,supplier_id,code,name,section,sort,active${g ? ',product_group' : ''},product_packs(id,name,sid${S.refMissing ? '' : ',ref'},outer_multiple,available,sort)`;
-  // Sunday delivery and reminder settings arrive with migrations/018.
-  // The database layout doesn't change while the app is open, so these checks run once, side by side.
-  if (!S.probed) {
-    const missing = (r, col) => !!r.error && new RegExp(col).test(r.error.message || '');
-    // The Special Order tick box arrives with migrations/021.
-    const [g, r, cg, sd, so] = await Promise.all([sb.from('products').select('product_group').limit(1), sb.from('product_packs').select('ref').limit(1),
-      sb.from('customers').select('product_group').limit(1), sb.from('customers').select('sunday_delivery').limit(1), sb.from('orders').select('special_order').limit(1)]);
-    S.groupsMissing = missing(g, 'product_group'); S.refMissing = missing(r, 'ref'); S.custGroupMissing = missing(cg, 'product_group'); S.remMissing = missing(sd, 'sunday_delivery'); S.spoMissing = missing(so, 'special_order');
-    S.probed = true;
-  }
-  const prods = sb.from('products').select(cols(!S.groupsMissing));
-  const orders = sb.from('orders').select('*').order('number', { ascending: false });
+  const prods = sb.from('products').select('id,supplier_id,code,name,section,sort,active,product_group,product_packs(id,name,sid,ref,outer_multiple,available,sort)');
+  const seq = ++ordersSeq, orders = sb.from('orders').select('*').order('number', { ascending: false });
+  // Cut-off rules: receivers don't need them. If they can't be fetched, the last ones fetched stay in use.
+  const cuts = isReceiver() ? [] : [sb.from('cutoff_rules').select('*'), sb.from('cutoff_settings').select('*')];
+  let base, cr, cs;
   if (isReceiver()) {
-    const [c, s, p, o] = await Promise.all([sb.from('customers').select('id,cid,name,phone'), sb.from('suppliers').select('*'), prods, orders]);
-    for (const r of [c, s, p, o]) if (r.error) toast(friendly(r.error));
-    S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; S.orders = o.data || [];
+    const [c, s, p, o] = base = await Promise.all([sb.from('customers').select('id,cid,name,phone'), sb.from('suppliers').select('*'), prods, orders]);
+    S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; if (seq === ordersSeq) S.orders = o.data || [];
   } else if (isAdmin()) {
-    const [c, s, p, o, u, m, sec, lk] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort'), sb.from('product_sections').select('name'), sb.from('profile_customers').select('*')]);
-    // Extra customers per login arrive with migrations/017; until then each login has just its one customer.
-    S.linksMissing = !!lk.error; S.links = lk.data || [];
-    // The sections list arrives with migrations/016; until then sections are just the ones products already use.
-    S.secMissing = !!sec.error; S.sections = (sec.data || []).map(r => r.name);
-    for (const r of [c, s, p, o, u]) if (r.error) toast(friendly(r.error));
-    S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; S.orders = o.data || []; S.profiles = u.data || [];
-    // The order-emails table arrives with migrations/002; until it is run, fall back to the addresses on each supplier.
-    S.emailsMissing = !!m.error; S.emails = m.data || [];
-    if (m.error && !['42P01', 'PGRST205'].includes(m.error.code)) toast(friendly(m.error));
+    let c, s, p, o, u, m, sec, lk;
+    [c, s, p, o, u, m, sec, lk, cr, cs] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort'), sb.from('product_sections').select('name'), sb.from('profile_customers').select('*'), ...cuts]);
+    base = [c, s, p, o, u, m, sec, lk];
+    S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; if (seq === ordersSeq) S.orders = o.data || []; S.profiles = u.data || [];
+    S.emails = m.data || []; S.sections = (sec.data || []).map(r => r.name); S.links = lk.data || [];
   } else {
-    const [c, p, o] = await Promise.all([sb.from('customers').select(`id,cid,name${S.custGroupMissing ? '' : ',product_group'}${S.remMissing ? '' : ',sunday_delivery'}`), prods.eq('active', true), orders]);
-    for (const r of [c, p, o]) if (r.error) toast(friendly(r.error));
-    S.customers = c.data || []; S.suppliers = []; S.products = p.data || []; S.orders = o.data || [];
+    let c, p, o;
+    [c, p, o, cr, cs] = await Promise.all([sb.from('customers').select('id,cid,name,product_group,sunday_delivery'), prods.eq('active', true), orders, ...cuts]);
+    base = [c, p, o];
+    S.customers = c.data || []; S.suppliers = []; S.products = p.data || []; if (seq === ordersSeq) S.orders = o.data || [];
   }
-  // Cut-off rules arrive with migrations/026; until then the old rules (DEFAULT_CUTOFFS) apply.
-  if (!isReceiver()) {
-    const [cr, cs] = await Promise.all([sb.from('cutoff_rules').select('*'), sb.from('cutoff_settings').select('*')]);
-    S.cutMissing = !!cr.error; S.cutRules = cr.data || []; S.cutSettings = cs.data || [];
-  }
+  const bad = [...base, cr, cs].find(r => r?.error);
+  if (bad) toast(friendly(bad.error));
+  if (cr && !cr.error) S.cutRules = cr.data; if (cs && !cs.error) S.cutSettings = cs.data;
   S.products.forEach(p => (p.product_packs || []).sort((a, b) => a.sort - b.sort));
 }
-async function reloadOrders() { const { data, error } = await sb.from('orders').select('*').order('number', { ascending: false }); if (!error) S.orders = data; }
+// Only the newest request's answer is kept, so a slow older one can't put back out-of-date orders.
+let ordersSeq = 0;
+async function reloadOrders() { const n = ++ordersSeq, { data, error } = await sb.from('orders').select('*').order('number', { ascending: false }); if (!error && n === ordersSeq) S.orders = data; }
 
 function listenForOrders() {
   if (ordersChannel) sb.removeChannel(ordersChannel);
-  ordersChannel = sb.channel('orders-live').on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, async payload => {
+  // A burst of changes (e.g. many orders marked emailed at once) is reloaded once, a moment after the last one.
+  let timer = null;
+  ordersChannel = sb.channel('orders-live').on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, payload => {
     const before = payload.old, after = payload.new;
-    await reloadOrders();
     if (isAdmin() && after?.status === 'submitted' && before?.status !== 'submitted' && after.source === 'customer')
       toast(`New order ${orderNo(after.number)} from ${custOf(after.customer_id)?.name || 'a customer'}`, true);
-    if (view !== 'entry') render(); else updateNavBadge();
+    clearTimeout(timer);
+    timer = setTimeout(async () => { await reloadOrders(); if (canRedraw()) render(); else updateNavBadge(); }, 300);
   }).subscribe();
 }
 
@@ -207,9 +189,11 @@ function deviceId() {
 let deviceTimer = null;
 async function stillMyDevice() {
   if (!session) return false;
-  const claim = claimDevice; claimDevice = false;
+  const claim = claimDevice;
   const { data, error } = await sb.rpc('check_device', { device: deviceId(), claim });
-  if (error || data !== false) return true; // not set up yet (025 not run) or still ours
+  if (error) return true; // try again at the next check; a claim stays pending until it gets through
+  claimDevice = false;
+  if (data !== false) return true;
   clearInterval(deviceTimer); deviceTimer = null;
   authMode = 'signin'; authMsg = '!You were signed out because this login was used on another device.';
   await sb.auth.signOut({ scope: 'local' }); // local only: the other device stays signed in
@@ -217,9 +201,15 @@ async function stillMyDevice() {
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden && profile) stillMyDevice(); });
 async function enter() {
-  if (!session) { clearInterval(deviceTimer); deviceTimer = null; clearInterval(autoRefresh); autoRefresh = null; profile = null; view = null; smsCfg = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
+  if (!session) {
+    // Nothing from the last person carries over to whoever signs in next on this device.
+    if ($('#dlg').open) $('#dlg').close();
+    Object.assign(S, { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], links: [], sections: [], cutRules: [], cutSettings: [] });
+    draft = null; receipt = null; search = ''; listFilter = 'pending'; groupFilter = 'all'; adminTab = 'emails'; picked.clear(); upPicked.clear();
+    clearInterval(deviceTimer); deviceTimer = null; clearInterval(autoRefresh); autoRefresh = null; profile = null; view = null; smsCfg = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
   if (authMode === 'newpass') return renderAuth();
   if (!(await stillMyDevice())) return;
+  authMsg = '';
   clearInterval(deviceTimer); deviceTimer = setInterval(() => { if (!document.hidden) stillMyDevice(); }, 30000);
   await loadProfile();
   if (!profile || !profile.approved || (!isAdmin() && !isReceiver() && !profile.customer_id)) { $('#top').hidden = true; return renderPending(); }
@@ -309,13 +299,15 @@ function go(v, fresh = true) { if (v === 'admin') v = adminTab; if (ADMIN_TABS.s
 // (new sign-ups, other people's edits) and redraws only if something changed and you aren't mid-edit.
 let refreshing = null, autoRefresh = null;
 $('#nav').addEventListener('click', e => { const b = e.target.closest('button[data-v]'); if (!b) return; go(b.dataset.v); refreshInBackground(); });
+// Redraw after new data only where it can't wipe something being typed or chosen: never on screens with unsaved
+// settings (New order, Emails, SMS, Cut-offs), nor while a dialog is open or a box has the cursor.
+const canRedraw = () => !['entry', 'emails', 'sms', 'cutoffs'].includes(view) && !document.querySelector('dialog[open]') && !['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName);
 function refreshInBackground() {
   if (refreshing) return refreshing;
   const v = view, snap = () => JSON.stringify([S.customers, S.suppliers, S.products, S.orders, S.profiles, S.emails, S.sections, S.links]);
   const before = snap();
   return refreshing = loadAll().then(() => {
-    const busy = document.querySelector('dialog[open]') || ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName);
-    if (view === v && !['entry', 'sms', 'cutoffs'].includes(view) && !busy && snap() !== before) render(); else updateNavBadge();
+    if (view === v && canRedraw() && snap() !== before) render(); else updateNavBadge();
   }).finally(() => { refreshing = null; });
 }
 
@@ -344,7 +336,7 @@ function render() {
 function orderRow(o, opts = {}) {
   const c = custOf(o.customer_id);
   return `<tr class="rowlink" onclick="openOrder('${o.id}')">
-    <td class="mono">${esc(orderNo(o.number))}${!S.groupsMissing && orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conventional</span>' : ''}${o.special_order && isAdmin() ? ' <span class="pill spo">Special Order</span>' : ''}</td>
+    <td class="mono">${esc(orderNo(o.number))}${orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conventional</span>' : ''}${o.special_order && isAdmin() ? ' <span class="pill spo">Special Order</span>' : ''}</td>
     ${opts.customer === false ? '' : `<td>${c ? esc(c.name) : o.customer_id ? 'Unknown customer' : '<span class="muted">No customer</span>'}</td>`}
     <td>${esc(fmtDate(o.required_date))}</td>
     ${opts.sent ? `<td>${esc(fmtWhen(o.submitted_at))}</td>` : ''}
@@ -352,7 +344,7 @@ function orderRow(o, opts = {}) {
     <td class="num lines">${(o.lines || []).filter(l => !l.undelivered).length}</td>
     <td>${opts.pick ? `<div class="stgrid"><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span><span>${o.emailed_at ? `<span class="pill emailed" title="Emailed ${esc(fmtWhen(o.emailed_at))}">Emailed</span>` : ''}</span><span>${receivedPill(o)}</span><span>${o.csv_at ? `<span class="pill emailed" title="CSV created ${esc(fmtWhen(o.csv_at))}">CSV</span>` : ''}</span></div>`
       : `<span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>`}</td>
-    ${opts.customer === false ? `<td class="num acts" onclick="event.stopPropagation()"><button class="ghost" onclick="openOrder('${o.id}')">View</button><button class="ghost" onclick="printOrder('${o.id}', this)">Print<span class="long"> Order</span></button></td>`
+    ${opts.acts ? `<td class="num acts" onclick="event.stopPropagation()"><button class="ghost" onclick="openOrder('${o.id}')">View</button><button class="ghost" onclick="printOrder('${o.id}', this)">Print<span class="long"> Order</span></button></td>`
       : `<td class="num openc"><button class="ghost" onclick="event.stopPropagation();openOrder('${o.id}')">Open</button></td>`}
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
@@ -407,7 +399,7 @@ async function saveReceipt(btn) {
   const items = receipt.lines.map(l => ({ pack_id: l.pack_id, qty: l.qty, undelivered: l.undelivered || !(l.qty > 0), received: l.received && !l.undelivered && l.qty > 0 }));
   const { error } = await sb.rpc('save_receipt', { order_id: receipt.id, items });
   btn.disabled = false;
-  if (error) return toast(/save_receipt/.test(error.message) ? 'One step first: run 011_receiving.sql in Supabase.' : friendly(error));
+  if (error) return toast(friendly(error));
   await reloadOrders(); receipt = null; toast('Saved. Press Mark received when you’re done with this order.', true); go('recv', false);
 }
 // Every line must be ticked Received or Not delivered (and saved) before the order can be marked received.
@@ -416,18 +408,18 @@ function markReceived(id, btn) {
   const o = S.orders.find(x => x.id === id); if (!o) return;
   const left = (o.lines || []).length - tickedCount(o);
   if (left) return toast(`Open the order and tick Received or Not delivered on ${left === 1 ? 'the last line' : `the ${left} remaining lines`}, then Save.`);
-  setReceived(id, true, btn);
+  setReceived(id, btn);
 }
 const receivedPill = o => o.received_at ? ` <span class="pill emailed" title="Received ${esc(fmtWhen(o.received_at))}${o.received_by ? ' by ' + esc(o.received_by) : ''}">Received</span>` : '';
-async function setReceived(id, received, btn) {
+async function setReceived(id, btn) {
   btn.disabled = true;
-  const { error } = await sb.rpc('set_received', { order_id: id, received });
+  const { error } = await sb.rpc('set_received', { order_id: id, received: true });
   btn.disabled = false;
-  if (error) return toast(/set_received/.test(error.message) ? 'One step first: run 010_receiver_role.sql in Supabase.' : friendly(error));
-  let msg = received ? 'Marked as received' : 'Received tick removed';
+  if (error) return toast(friendly(error));
+  let msg = 'Marked as received';
   // Missing items: the customer is emailed straight away. If that can't happen, SMFW sees it on the order and can resend.
   const o = S.orders.find(x => x.id === id);
-  if (received && o?.customer_id && missingOf(o).length) { const r = await notifyCustomer(id); if (r.sent) msg += `. ${custOf(o.customer_id)?.name || 'The customer'} has been emailed about the shortages`; }
+  if (o?.customer_id && missingOf(o).length) { const r = await notifyCustomer(id); if (r.sent) msg += `. ${custOf(o.customer_id)?.name || 'The customer'} has been emailed about the shortages`; }
   await reloadOrders(); render(); toast(msg, true);
 }
 function viewInbox() {
@@ -472,7 +464,7 @@ const isStandalone = () => navigator.standalone === true || matchMedia('(display
 function homeTip() {
   let hidden = false; try { hidden = localStorage.getItem('smfw-hometip') === 'off'; } catch (e) {}
   if (hidden || !isIos() || isStandalone()) return '';
-  return `<div class="hometip" id="hometip"><span>Tip: tap <b>Share</b> <span aria-hidden="true">⬆︎</span> then <b>Add to Home Screen</b> to open SMFW Orders like an app.</span><button class="ghost" aria-label="Hide this tip" onclick="try{localStorage.setItem('smfw-hometip','off')}catch(e){};document.getElementById('hometip').remove()">✕</button></div>`;
+  return `<div class="hometip" id="hometip"><span>Tip: tap <b>Share</b> <span aria-hidden="true">⬆︎</span> then <b>Add to Home Screen</b> to open Coolibah Orders like an app.</span><button class="ghost" aria-label="Hide this tip" onclick="try{localStorage.setItem('smfw-hometip','off')}catch(e){};document.getElementById('hometip').remove()">✕</button></div>`;
 }
 function viewMine() {
   const os = S.orders, many = S.customers.length > 1;
@@ -482,7 +474,7 @@ function viewMine() {
     : me?.name ? `<p class="custname">${esc(me.name)}</p>` : '';
   return `<div class="row spread"><div>${head}<h1>My orders</h1></div><button class="primary" onclick="go('entry')">New order</button></div>
     ${homeTip()}
-    ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th>${many ? '<th>Customer</th>' : ''}<th>Required</th><th class="num lines">Lines</th><th>Status</th><th class="acts"></th></tr></thead><tbody>${os.map(o => orderRow(o, { customer: many })).join('')}</tbody></table></div>`
+    ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th>${many ? '<th>Customer</th>' : ''}<th>Required</th><th class="num lines">Lines</th><th>Status</th><th class="acts"></th></tr></thead><tbody>${os.map(o => orderRow(o, { customer: many, acts: true })).join('')}</tbody></table></div>`
       : `<div class="card empty">You haven’t placed any orders yet. Press <b>New order</b> to start one.</div>`}`;
 }
 function openOrder(id) {
@@ -492,7 +484,10 @@ function openOrder(id) {
   // Keep what a Receiver recorded (ordered_qty, undelivered) when an admin re-saves the order.
   draft.receipt = Object.fromEntries((o.lines || []).filter(l => l.pack_id && (l.ordered_qty != null || l.undelivered || l.received)).map(l => [l.pack_id, { ordered_qty: l.ordered_qty, undelivered: !!l.undelivered, received: !!l.received }]));
   draft.missing = (o.lines || []).filter(l => !packOf(l.pack_id));
-  draft.group = orderGroup(o);
+  // An order's location comes from its products; one with none it can find takes its customer's location
+  // (SMFW's own orders with no customer are Conventional).
+  const c = custOf(o.customer_id);
+  draft.group = !isAdmin() && custGroup(c) !== 'Both' ? custGroup(c) : orderGroups(o).length ? orderGroup(o) : o.customer_id ? custDefault(c) : 'Conventional';
   go('entry', false);
 }
 
@@ -504,13 +499,13 @@ function curCust() {
   return S.customers.some(c => c.id === id) ? id : S.customers.some(c => c.id === profile?.customer_id) ? profile.customer_id : myCusts()[0]?.id || profile?.customer_id;
 }
 function pickCust(id) {
-  try { localStorage.setItem('smfw-cust', id); } catch (e) {}
   if (draft && !draft.id && view === 'entry') {
     const g = custAllows(custOf(id), draft.group) ? draft.group : custDefault(custOf(id));
     if (g !== draft.group && Object.values(draft.qty).some(q => q > 0) && !confirm(`${custOf(id)?.name} orders ${g} products, so the quantities entered so far will be cleared. Continue?`)) return render();
     if (g !== draft.group) draft.qty = {};
     draft.customer_id = id; draft.group = g;
   }
+  try { localStorage.setItem('smfw-cust', id); } catch (e) {}
   render();
 }
 // Logins linked to a customer: their main customer or a linked one.
@@ -598,7 +593,7 @@ function viewEntry() {
     <aside class="card summary" id="summary">${summaryHtml()}</aside></div>`;
 }
 // Special Order: Conventional orders entered by SMFW. Ticked, the upload CSV's H line ends in ,S.
-const spoBox = (d, dis) => isAdmin() && !S.spoMissing && (d.group || 'Organic') === 'Conventional'
+const spoBox = (d, dis) => isAdmin() && (d.group || 'Organic') === 'Conventional'
   ? `<label class="chk spo"><input type="checkbox" id="e-spo" ${dis} ${d.special_order ? 'checked' : ''}>Special Order</label>` : '';
 function setGroup(g) {
   if (draft.group === g) return;
@@ -628,7 +623,7 @@ function summaryHtml() {
     if (d.status === 'complete') btns = `<button onclick="reopenOrder()">Reopen to edit</button><button class="primary" onclick="draft=null;go('orders',false)">Close</button>`;
     else btns = `<button onclick="saveOrder('${d.status === 'submitted' ? 'submitted' : 'draft'}')">${d.status === 'submitted' ? 'Save changes' : 'Save draft'}</button><button class="primary" onclick="saveOrder('complete')">Transmit Order</button>`;
   } else if (d.status === 'draft') btns = `<button onclick="saveOrder('draft')">Save draft</button><button class="primary" onclick="saveOrder('submitted')">Send order</button>`;
-  else btns = `<button class="primary" onclick="draft=null;go('orders',false)">Close</button>`;
+  else btns = `<button class="primary" onclick="draft=null;go('mine',false)">Close</button>`;
   const del = d.id && (admin || d.status === 'draft') ? `<div class="row" style="margin-top:8px"><button class="danger" onclick="deleteOrder(this)">Delete order</button></div>` : '';
   return `<h2>Order summary</h2>
     <p class="muted" style="margin:4px 0 0">${esc(custOf(d.customer_id)?.name || (needsCustomer(d) ? 'No customer chosen' : 'Conventional order'))}${d.required_date ? ' · needed ' + esc(fmtDate(d.required_date)) : ''}</p>
@@ -647,7 +642,7 @@ async function notifyCustomer(id, resend = false) {
 }
 function notifyHtml(d) {
   const o = d.id && S.orders.find(x => x.id === d.id);
-  if (!isAdmin() || !o?.received_at || !missingOf(o).length || !('customer_notified_at' in o)) return '';
+  if (!isAdmin() || !o?.received_at || !missingOf(o).length) return '';
   return o.customer_notified_at
     ? `<p class="notify ok">Customer emailed about the shortages ${esc(fmtWhen(o.customer_notified_at))}${o.customer_notified_to ? ' to ' + esc(o.customer_notified_to) : ''}. <button class="ghost" onclick="emailCustomer(this, true)">Send again</button></p>`
     : `<p class="notify">Customer not emailed about the shortages yet.${o.notify_error ? ' ' + esc(o.notify_error) : ''} ${o.customer_id ? '<button class="ghost" onclick="emailCustomer(this)">Email customer</button>' : ''}</p>`;
@@ -715,7 +710,7 @@ async function saveOrder(status) {
   } else if (needsCustomer(draft) && !draft.customer_id) return toast('Choose a customer first.');
   // Today's date is fixed: an order is dated the day it's saved, and keeps that date once it's sent.
   const row = { customer_id: draft.customer_id || null, order_date: draft.status === 'draft' ? today() : draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
-  if (!S.spoMissing && isAdmin()) row.special_order = draft.group === 'Conventional' && !!draft.special_order;
+  if (isAdmin()) row.special_order = draft.group === 'Conventional' && !!draft.special_order;
   saving = true;
   const q = draft.id ? sb.from('orders').update(row).eq('id', draft.id).select().single() : sb.from('orders').insert({ ...row, source: isAdmin() ? 'admin' : 'customer' }).select().single();
   const { data, error } = await q;
@@ -745,8 +740,8 @@ function viewCustomers() {
   S.orders.forEach(o => nOrders.set(o.customer_id, (nOrders.get(o.customer_id) || 0) + 1));
   if (!isManager()) S.profiles.filter(u => u.role === 'customer').forEach(u => new Set(loginCustIds(u)).forEach(id => nLogins.set(id, (nLogins.get(id) || 0) + 1)));
   return `<div class="row spread pagehead"><div><h1>Customers</h1><p class="sub">The businesses who order from you.${isManager() ? '' : ' Link a login to a customer under <b>Administration › Logins</b>.'}</p></div><div class="row"><button onclick="importCustomers()">Import customers</button><button class="primary" onclick="editCustomer()">Add customer</button></div></div>
-  ${cs.length ? `<div class="tablewrap stickyhead"><table><thead><tr><th class="num">CID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th>${S.custGroupMissing ? '' : '<th>Type</th>'}${isManager() ? '' : '<th class="num">Logins</th>'}<th class="num">Orders</th><th></th></tr></thead><tbody>
-    ${cs.map(c => `<tr><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.sunday_delivery ? ' <span class="pill">Sunday delivery</span>' : ''}${!S.remMissing && c.reminders !== false && custGroup(c) !== 'Conventional' ? ' <span class="pill">Reminders</span>' : ''}${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td>${S.custGroupMissing ? '' : `<td><span class="pill grp-${custGroup(c).toLowerCase()}">${custGroup(c)}</span></td>`}${isManager() ? '' : `<td class="num">${nLogins.get(c.id) || 0}</td>`}<td class="num">${nOrders.get(c.id) || 0}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
+  ${cs.length ? `<div class="tablewrap stickyhead"><table><thead><tr><th class="num">CID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Type</th>${isManager() ? '' : '<th class="num">Logins</th>'}<th class="num">Orders</th><th></th></tr></thead><tbody>
+    ${cs.map(c => `<tr><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.sunday_delivery ? ' <span class="pill">Sunday delivery</span>' : ''}${c.reminders !== false && GROUPS.some(g => custAllows(c, g) && S.cutSettings?.find(x => x.product_group === g)?.reminder_minutes) ? ' <span class="pill">Reminders</span>' : ''}${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td><td><span class="pill grp-${custGroup(c).toLowerCase()}">${custGroup(c)}</span></td>${isManager() ? '' : `<td class="num">${nLogins.get(c.id) || 0}</td>`}<td class="num">${nOrders.get(c.id) || 0}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
   </tbody></table></div>` : `<div class="card empty">No customers yet.</div>`}`;
 }
 function viewSuppliers() {
@@ -767,9 +762,8 @@ function viewProducts() {
   }).join('');
   const n = g => g === 'all' ? S.products.length : S.products.filter(p => groupOf(p) === g).length;
   const filters = `<div class="row" style="margin-bottom:4px">${['all', ...GROUPS].map(g => `<button class="${groupFilter === g ? 'primary' : ''}" onclick="groupFilter='${g}';render()">${g === 'all' ? 'All' : g} (${n(g)})</button>`).join('')}</div>`;
-  const note = S.groupsMissing ? `<div class="banner">To use the Organic and Conventional groups, run <a href="https://raw.githubusercontent.com/muzzascan-creator/smfw-orders/main/supabase/migrations/004_product_groups.sql" target="_blank" rel="noopener">004_product_groups.sql</a> in Supabase’s SQL Editor, then reload. Until then every product counts as Organic.</div>` : '';
   return `<div class="pagehead"><div class="row spread"><div><h1>Products</h1><p class="sub">Grouped by supplier, in the same sections as their order forms.</p></div>${S.suppliers.length ? `<div class="row"><button onclick="editSections()">Sections</button><button class="primary" onclick="editProduct()">Add product</button></div>` : ''}</div>
-  ${S.products.length ? filters : ''}</div>${note}
+  ${S.products.length ? filters : ''}</div>
   ${blocks || `<div class="card empty">${S.products.length ? 'No products in this group yet.' : `No products yet.${S.suppliers.length ? '' : ' Add a supplier first.'}`}</div>`}`;
 }
 function viewUsers() {
@@ -791,7 +785,6 @@ const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const SEND_AS = { to: 'To', cc: 'CC', bcc: 'BCC' };
 const emailsOf = sid => S.emails.filter(e => e.supplier_id === sid).sort((a, b) => a.sort - b.sort);
 function recipientsHtml(s) {
-  if (S.emailsMissing) return (s.emails || []).map(esc).join('<br>');
   const on = emailsOf(s.id).filter(e => e.active);
   return on.length ? on.map(e => `${e.send_as === 'to' ? '' : `<span class="muted">${SEND_AS[e.send_as]}</span> `}${esc(e.email)}`).join('<br>') : '<span class="muted">None yet</span>';
 }
@@ -812,7 +805,6 @@ function emailSummary(sid) {
 const TIMES = Array.from({ length: 48 }, (_, i) => `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
 function viewCutoffs() {
   const head = `<h1>Order cut-offs</h1><p class="sub">For each product location: the days you deliver, and when orders for each day close (Sydney time). Customers can’t send an order after its cut-off. You and your staff still can. Choose <b>Same day</b> to take orders for delivery that day, up to the time set.</p>`;
-  if (S.cutMissing) return head + `<div class="card"><p style="margin-top:0"><b>One step first.</b> In Supabase open <b>SQL Editor</b>, paste in <a href="https://raw.githubusercontent.com/muzzascan-creator/smfw-orders/main/supabase/migrations/026_cutoff_rules.sql" target="_blank" rel="noopener">this script</a> and press Run. Then press Ctrl+F5 here.</p></div>`;
   return head + GROUPS.map(g => {
     const rem = S.cutSettings.find(x => x.product_group === g)?.reminder_minutes;
     const rows = cutRules(g).map(r => {
@@ -824,10 +816,15 @@ function viewCutoffs() {
     }).join('');
     return `<section class="card" style="margin-bottom:16px" id="cut-${g}"><div class="row spread"><h2>${g}</h2><span class="pill grp-${g.toLowerCase()}">${g}</span></div>
       <div class="tablewrap" style="margin-top:12px"><table class="cuttbl"><thead><tr><th>Delivery day</th><th>Deliveries</th><th>Orders close</th><th>At</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <div class="row spread" style="margin-top:12px;align-items:flex-end"><label class="f" style="max-width:420px">Reminder email to customers who haven’t ordered<select name="reminder"><option value="">No reminder emails</option>${[10, 15, 20, 30, 60, 120, 180].map(m => `<option value="${m}" ${rem === m ? 'selected' : ''}>${m < 60 ? m + ' minutes' : m / 60 + ' hour' + (m > 60 ? 's' : '')} before the cut-off</option>`).join('')}</select></label>
+      <div class="row spread" style="margin-top:12px;align-items:flex-end"><label class="f" style="max-width:420px">Reminder email to customers who haven’t ordered<select name="reminder"><option value="">No reminder emails</option>${[...new Set([10, 15, 20, 30, 60, 120, 180, ...(rem ? [rem] : [])])].sort((a, b) => a - b).map(m => `<option value="${m}" ${rem === m ? 'selected' : ''}>${m < 60 || m % 60 ? m + ' minutes' : m / 60 + ' hour' + (m > 60 ? 's' : '')} before the cut-off</option>`).join('')}</select></label>
       <button class="primary" onclick="saveCutoffs('${g}', this)">Save ${g}</button></div>
-      <p class="muted" style="font-size:13px;margin:10px 0 0">Customers see: ${esc(orderHint(g, { sunday_delivery: true }) || 'no restrictions.')}</p></section>`;
+      <p class="muted" style="font-size:13px;margin:10px 0 0">${cutSeeText(g)}</p></section>`;
   }).join('');
+}
+// What customers read on their order form, with and without Sunday delivery when that differs.
+function cutSeeText(g) {
+  const all = orderHint(g, {}) || 'No restrictions.', sun = orderHint(g, { sunday_delivery: true }) || 'No restrictions.';
+  return all === sun ? `Customers see: ${esc(all)}` : `Customers see: ${esc(all)}<br>Sunday-delivery customers see: ${esc(sun)}`;
 }
 // "No deliveries" or "No cut-off" greys out the boxes that don't apply.
 function cutRowState(el) {
@@ -848,29 +845,28 @@ async function saveCutoffs(g, btn) {
   const [cr, cs] = await Promise.all([sb.from('cutoff_rules').select('*'), sb.from('cutoff_settings').select('*')]);
   S.cutRules = cr.data || S.cutRules; S.cutSettings = cs.data || S.cutSettings;
   // No full redraw, so unsaved changes to the other location stay on screen.
-  box.querySelector('p.muted').textContent = 'Customers see: ' + (orderHint(g, { sunday_delivery: true }) || 'no restrictions.');
+  box.querySelector('p.muted').innerHTML = cutSeeText(g);
   toast(`${g} cut-offs saved`, true);
 }
 
 // ---------- SMS settings (SMS Broadcast; new-login texts) ----------
-// Kept in the database's private settings (migrations/024). The password never comes back to the browser.
+// Kept in the database's private settings. The password never comes back to the browser.
 let smsCfg = null;
 async function loadSms() {
   const { data, error } = await sb.rpc('get_sms_settings');
-  smsCfg = error ? { error: /get_sms_settings|function/i.test(error.message) ? 'missing' : error.message } : data || {};
+  smsCfg = error ? { error: friendly(error) } : data || {};
   if (view === 'sms') render();
 }
 function viewSms() {
   const head = `<h1>SMS</h1><p class="sub">Texts are sent through SMS Broadcast, for example when a new login is waiting to be activated.</p>`;
   if (!smsCfg) { loadSms(); return head + '<div class="card empty">Loading…</div>'; }
-  if (smsCfg.error === 'missing') return head + `<div class="card"><p style="margin-top:0"><b>One step first.</b> In Supabase open <b>SQL Editor</b>, paste in <a href="https://raw.githubusercontent.com/muzzascan-creator/smfw-orders/main/supabase/migrations/024_sms_settings_screen.sql" target="_blank" rel="noopener">this script</a> and press Run. Then come back here.</p></div>`;
   if (smsCfg.error) return head + `<div class="card banner">${esc(smsCfg.error)}</div>`;
   const c = smsCfg;
   return head + `<form class="card grid" style="max-width:640px" onsubmit="event.preventDefault();saveSms(this)">
     <label class="f">SMS Broadcast username<input name="username" autocomplete="off" value="${esc(c.username || '')}"></label>
     <label class="f">SMS Broadcast password<input name="password" type="password" autocomplete="new-password" placeholder="${c.password_saved ? 'Saved. Leave blank to keep it.' : 'Not set yet'}"></label>
     <label class="chk" style="margin-top:-6px"><input type="checkbox" onchange="this.form.password.type = this.checked ? 'text' : 'password'">Show password while typing</label>
-    <label class="f">Default sender<input name="sender" maxlength="11" value="${esc(c.sender || '')}"><span class="muted" style="font-size:12px;font-weight:400">Shown as who the text is from: a mobile number, or a name of up to 11 letters or numbers.</span></label>
+    <label class="f">Default sender<input name="sender" maxlength="15" value="${esc(c.sender || '')}"><span class="muted" style="font-size:12px;font-weight:400">Shown as who the text is from: a mobile number, or a name of up to 11 letters or numbers.</span></label>
     <label class="f">Send texts to<input name="mobile" value="${esc(c.mobile || '')}"><span class="muted" style="font-size:12px;font-weight:400">Mobile number. Separate several with commas.</span></label>
     <div class="row spread"><button type="button" id="smstest" onclick="testSms(this)">Send test text</button><button class="primary">Save</button></div>
     <p class="muted" id="smsmsg" style="margin:0;font-size:13px">The test uses the saved settings, so press Save first after a change.</p>
@@ -888,13 +884,13 @@ async function saveSms(f) {
 async function testSms(btn) {
   const msg = $('#smsmsg'); btn.disabled = true; msg.textContent = 'Sending…';
   const { data, error } = await sb.functions.invoke(NOTIFY_FN, { body: { action: 'test-sms' } });
+  let m = ''; if (error) try { m = (await error.context.json()).error; } catch { }
   btn.disabled = false;
   msg.textContent = data?.sent ? `Test text sent to ${data.to.join(', ')}. Check the phone.`
-    : data?.reason || (error ? 'The text service needs updating first (redeploy quick-api), or isn’t reachable right now.' : 'The test text wasn’t sent.');
+    : data?.reason || m || (error ? 'The text service isn’t reachable right now.' : 'The test text wasn’t sent.');
 }
 function viewEmails() {
   const head = `<h1>Order emails</h1><p class="sub">Where each supplier’s completed orders are sent. Add as many addresses as you need, choose To, CC or BCC for each, and untick <b>Send</b> to pause one without deleting it.</p>`;
-  if (S.emailsMissing) return head + `<div class="card"><p style="margin-top:0"><b>One step first.</b> This section needs a new table in your database. In Supabase open <b>SQL Editor</b>, paste in <a href="https://raw.githubusercontent.com/muzzascan-creator/smfw-orders/main/supabase/migrations/002_supplier_emails.sql" target="_blank" rel="noopener">002_supplier_emails.sql</a> and press <b>Run</b>, then reload this page. Your existing supplier addresses are carried across.</p></div>`;
   const ss = S.suppliers.slice().sort(byName);
   if (!ss.length) return head + `<div class="card empty">Add a supplier first, under <b>Suppliers</b>.</div>`;
   return head + ss.map(s => `<section class="card" style="margin-bottom:14px"><div class="row spread"><h2>${esc(s.name)}</h2><span class="muted" style="font-size:13px">${esc(s.cutoff || '')}</span></div>
@@ -922,13 +918,15 @@ async function saveEmails(sid, btn) {
     ok = await run(r.id ? sb.from('supplier_emails').update(body).eq('id', r.id) : sb.from('supplier_emails').insert(body));
   }
   btn.disabled = false;
-  await loadAll(); render();
+  // Only this supplier's card is redrawn, so unsaved changes on the other cards stay put.
+  const { data, error } = await sb.from('supplier_emails').select('*').order('sort');
+  if (error) return toast(friendly(error));
+  S.emails = data || [];
+  $(`#emrows-${sid}`).innerHTML = emailsOf(sid).map(emailRow).join('') || emailRow();
+  $(`#emsum-${sid}`).innerHTML = emailSummary(sid);
   if (ok) toast('Order emails saved', true);
 }
 
-// ---------- emailing orders to suppliers ----------
-// Each ticked order becomes the supplier's whole order form as an A4 PDF, with this order's quantities filled in.
-// The email itself opens in the admin's own email program, addressed from the Emails tab, ready to attach and send.
 // ---------- one-off customer import (CSV or Excel) ----------
 // Every imported customer is set to Conventional. Rows with a blank, non-numeric or duplicated CID are never imported;
 // rows whose name is already used (in the file or in the app) are left unticked.
@@ -949,15 +947,16 @@ function importCheck(raw) {
   const cell = (r, k) => { const v = col[k] < 0 ? '' : String(r[col[k]] ?? '').trim(); return /^[.,\-0\s]*$/.test(v) || (k === 'email' && !v.includes('@')) ? '' : v; };
   const rows = raw.slice(1).filter(r => r.some(v => String(v ?? '').trim())).map((r, i) => ({ line: i + 2, cid: cell(r, 'cid'), name: cell(r, 'name'), contact: cell(r, 'contact'), phone: cell(r, 'phone'), email: cell(r, 'email'), notes: cell(r, 'notes') }));
   const byCid = new Map(S.customers.map(c => [String(c.cid), c])), byName = new Map(S.customers.map(c => [normName(c.name), c]));
-  const seenName = new Map();
+  const seenName = new Map(), cidLines = new Map();
+  for (const r of rows) if (r.cid) cidLines.set(r.cid, [...(cidLines.get(r.cid) || []), r.line]);
   for (const r of rows) {
     r.issues = [];
     if (!r.name) r.issues.push('No name');
     if (r.cid && !/^\d+$/.test(r.cid)) r.issues.push(`CID “${r.cid}” isn’t a number`);
     if (r.cid && byCid.has(r.cid)) r.issues.push(`CID ${r.cid} already used by ${byCid.get(r.cid).name}`);
-    r.blocked = !r.name || !/^\d+$/.test(r.cid) || byCid.has(r.cid) || rows.filter(x => x.cid === r.cid).length > 1;
+    r.blocked = !r.name || !/^\d+$/.test(r.cid) || byCid.has(r.cid) || cidLines.get(r.cid)?.length > 1;
     if (!r.cid) r.issues.push('No CID');
-    if (r.cid && rows.filter(x => x.cid === r.cid).length > 1) r.issues.push(`CID ${r.cid} is in the file more than once (lines ${rows.filter(x => x.cid === r.cid).map(x => x.line).join(', ')})`);
+    if (r.cid && cidLines.get(r.cid).length > 1) r.issues.push(`CID ${r.cid} is in the file more than once (lines ${cidLines.get(r.cid).join(', ')})`);
     if (r.name && byName.has(normName(r.name))) r.issues.push(`Already a customer: ${byName.get(normName(r.name)).name}`);
     if (r.name && seenName.has(normName(r.name))) r.issues.push(`Same name as line ${seenName.get(normName(r.name))}`);
     if (r.name && !seenName.has(normName(r.name))) seenName.set(normName(r.name), r.line);
@@ -983,8 +982,7 @@ function importCustomers() {
       if (!pick.length) { toast('Choose a file and tick at least one customer to import.'); return false; }
       const rows = pick.map(r => {
         const row = { cid: +r.cid, name: r.name, contact: r.contact, phone: r.phone, email: r.email, notes: r.notes };
-        if (!S.custGroupMissing) row.product_group = 'Conventional';
-        if (!S.remMissing) row.reminders = false;
+        row.product_group = 'Conventional'; row.reminders = false;
         return row;
       });
       if (!(await run(sb.from('customers').insert(rows)))) return false;
@@ -1009,7 +1007,6 @@ function loadPdf() {
 }
 const supplierOfLine = l => S.suppliers.find(s => s.id === prodOf(l.product_id)?.supplier_id);
 function recipients(s) {
-  if (S.emailsMissing) return { to: s.emails || [], cc: [], bcc: [] };
   const on = emailsOf(s.id).filter(e => e.active);
   return { to: on.filter(e => e.send_as === 'to').map(e => e.email), cc: on.filter(e => e.send_as === 'cc').map(e => e.email), bcc: on.filter(e => e.send_as === 'bcc').map(e => e.email) };
 }
@@ -1022,10 +1019,12 @@ async function formPdf(o, s) {
   const doc = new window.jspdf.jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const W = 210, M = 10, BOTTOM = 284, GAP = 4;
   const qty = {}; (o.lines || []).forEach(l => { if (l.pack_id) qty[l.pack_id] = l.qty; });
-    // Only the form(s) for the groups this order uses: a Conventional order gets the Conventional form.
+  // Only the form(s) for the groups this order uses: a Conventional order gets the Conventional form.
   // s.id '*' means every product the viewer can see (a customer's printout, where suppliers aren't visible).
   const mine = p => s.id === '*' || p.supplier_id === s.id;
-  const own = S.products.filter(mine);
+  // A product switched off since the order was taken still prints when the order has it.
+  const onOrder = new Set((o.lines || []).map(l => l.product_id));
+  const own = S.products.filter(mine).map(p => p.active === false && onOrder.has(p.id) ? { ...p, active: true } : p);
   const used = new Set((o.lines || []).map(l => prodOf(l.product_id)).filter(p => p && mine(p)).map(groupOf));
   const gs = GROUPS.filter(g => used.has(g)), mixed = gs.length > 1;
   const secs = gs.flatMap(g => sectionsFor(own.filter(p => groupOf(p) === g)).map(x => mixed && !x.name.toLowerCase().startsWith(g.toLowerCase()) ? { ...x, name: `${g} ${x.name}` } : x));
@@ -1080,7 +1079,7 @@ async function formPdf(o, s) {
         doc.setFontSize(6); text(doc.splitTextToSize(p.code || '', CW - 1.5)[0] || '', x0 + 1, by + 3.7);
         doc.setFontSize(7.5); text(nm, x0 + CW + 1.2, by + 3.8);
         sec.packs.forEach((pk, i) => {
-          const x = x0 + CW + NW + i * PW, k = (p.product_packs || []).find(z => z.name === pk), ok = k && k.available, q = ok ? qty[k.id] : null;
+          const x = x0 + CW + NW + i * PW, k = (p.product_packs || []).find(z => z.name === pk), q = k ? qty[k.id] : null, ok = k && (k.available || q);
           if (!ok) { doc.setFillColor(191, 191, 191); doc.rect(x, by, PW, rh, 'FD'); }
           else { doc.rect(x, by, PW, rh); if (q) { doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5); text(+q, x + PW / 2, by + rh / 2 + 1.6, { align: 'center' }); doc.setFont('helvetica', 'normal'); lines++; units += +q; } }
         });
@@ -1096,7 +1095,7 @@ async function formPdf(o, s) {
   block(left, M, bl); if (right.length) block(right, M + bl + GAP, room - bl);
   doc.setPage(lastPage); doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5);
   text(`${lines} line${lines === 1 ? '' : 's'} · ${units} in total · Grey boxes are not available`, M, Math.min(lastY + 3, BOTTOM + 6));
-  return { buf: doc.output('arraybuffer'), lines };
+  return { buf: doc.output('arraybuffer') };
 }
 // Customer printout: their order on the order form (same layout as the supplier's copy), opened ready to print.
 async function printOrder(id, btn) {
@@ -1120,7 +1119,10 @@ function pickedBySupplier() {
   for (const o of os) for (const s of new Set((o.lines || []).map(supplierOfLine).filter(Boolean))) { if (!groups.has(s)) groups.set(s, []); groups.get(s).push(o); }
   return { os, groups: [...groups.entries()].sort((a, b) => byName(a[0], b[0])) };
 }
+// Suppliers already emailed from the open dialog, so "Try again" only sends to the ones that failed.
+const sentSuppliers = new Set();
 function emailPicked() {
+  sentSuppliers.clear();
   const { os, groups } = pickedBySupplier();
   const empty = os.filter(o => !(o.lines || []).some(supplierOfLine));
   const notDone = os.filter(o => o.status !== 'complete');
@@ -1128,7 +1130,7 @@ function emailPicked() {
   const blocks = groups.map(([s, list], i) => {
     const r = recipients(s), none = !r.to.length && !r.cc.length && !r.bcc.length;
     return `<div class="card" style="padding:12px"><div class="row spread"><b>${esc(s.name)}</b><span class="muted" style="font-size:12px">${list.length} form${list.length > 1 ? 's' : ''}</span></div>
-      <p style="margin:6px 0;font-size:13px">${none ? `<span class="err">No addresses are switched on for this supplier. ${isManager() ? 'Ask an Admin to add them under <b>Emails</b>.' : 'Add them under <b>Emails</b> first.'}</span>` : ['to', 'cc', 'bcc'].filter(k => r[k].length).map(k => `<b>${SEND_AS[k]}:</b> <span class="mono">${r[k].map(esc).join(', ')}</span>`).join('<br>')}</p>
+      <p style="margin:6px 0;font-size:13px">${none ? `<span class="err">No addresses are switched on for this supplier. ${isManager() ? 'Ask an Admin to add them under <b>Administration › Emails</b>.' : 'Add them under <b>Administration › Emails</b> first.'}</span>` : ['to', 'cc', 'bcc'].filter(k => r[k].length).map(k => `<b>${SEND_AS[k]}:</b> <span class="mono">${r[k].map(esc).join(', ')}</span>`).join('<br>')}</p>
       <ul class="sumlist" style="margin:6px 0">${list.map(o => `<li><span class="mono">${esc(formFileName(o, s))}</span></li>`).join('')}</ul>
       <div class="row"><span class="est" id="est-${i}">${none ? '' : 'Ready to send'}</span><button type="button" class="ghost" style="margin-left:auto;font-size:12px" ${none ? 'disabled' : ''} onclick="outlookEmail(${i}, this)">Open in Outlook instead</button></div></div>`;
   }).join('');
@@ -1147,13 +1149,7 @@ async function buildGroup(i) {
   for (const o of list) files.push({ name: formFileName(o, s), ...(await formPdf(o, s)) });
   return { s, list, files };
 }
-async function downloadForms(i, btn) {
-  btn.disabled = true;
-  try { const { files } = await buildGroup(i); for (const [n, f] of files.entries()) { if (n) await new Promise(r => setTimeout(r, 400)); download(f.buf, f.name); } toast(`${files.length} form${files.length > 1 ? 's' : ''} downloaded`, true); }
-  catch (e) { toast(e.message); } finally { btn.disabled = false; }
-}
-// The new email's addresses, subject and message, as links for a mail app, Gmail and Outlook on the web.
-// They are plain links (not opened from code) so the browser always lets them open.
+// The email's subject and message to the supplier.
 function mailText(s, list) {
   const nos = list.map(o => orderNo(o.number)).join(', ');
   const dates = [...new Set(list.map(o => o.required_date).filter(Boolean))].map(fmtDate);
@@ -1181,17 +1177,6 @@ async function outlookEmail(i, btn) {
     toast('Email saved. Open it from your Downloads and it opens in Outlook, ready to send.', true);
   } catch (e) { toast(e.message); } finally { btn.disabled = false; }
 }
-function composeLinks(s, list) {
-  const r = recipients(s), { subject, body } = mailText(s, list);
-  const enc = encodeURIComponent, addr = xs => xs.map(x => enc(x).replace(/%40/g, '@')).join(',');
-  const mq = [r.cc.length && 'cc=' + addr(r.cc), r.bcc.length && 'bcc=' + addr(r.bcc), 'subject=' + enc(subject), 'body=' + enc(body)].filter(Boolean).join('&');
-  const qs = o => Object.entries(o).filter(([, v]) => v).map(([k, v]) => k + '=' + enc(v)).join('&');
-  return [
-    ['Email app', `mailto:${addr(r.to)}?${mq}`],
-    ['Gmail', 'https://mail.google.com/mail/?' + qs({ view: 'cm', fs: '1', to: r.to.join(','), cc: r.cc.join(','), bcc: r.bcc.join(','), su: subject, body })],
-    ['Outlook web', 'https://outlook.office.com/mail/deeplink/compose?' + qs({ to: r.to.join(','), cc: r.cc.join(','), bcc: r.bcc.join(','), subject, body })],
-  ];
-}
 // Upload CSV, one file per order:
 //   H,<CID>,<date required as YYYYMMDD>[,S]   (S only when Special Order is ticked)
 //   D,<Ref>,<order qty × outer multiple>   (one line per order line)
@@ -1208,7 +1193,7 @@ function orderCsv(o) {
     if (!ref) { missing.push(`${l.product_name} (${l.pack_name})`); continue; }
     rows.push(['D', ref, (+l.qty || 0) * (Number(l.outer) || Number(k?.outer_multiple) || 1)]);
   }
-  return { text: rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n', missing };
+  return { text: rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n', missing, lines: rows.length - 1 };
 }
 // CSV folder: Chrome and Edge on a PC can save straight into a chosen folder (the C94GSHS folder on the network).
 // The folder is picked once and remembered in this browser; other browsers fall back to Downloads.
@@ -1236,15 +1221,14 @@ async function csvFolder() {
 }
 const csvFolderNote = () => canPickFolder() ? `<span class="muted" style="font-size:12px">CSV folder: <b>${esc(csvDir?.name || 'not chosen')}</b> <button class="link" onclick="chooseCsvFolder()">${csvDir ? 'Change' : 'Choose'}</button></span>` : '';
 async function uploadCsvs() {
-  if (S.refMissing) return toast('One step first: run 008_pack_ref.sql in Supabase so products can have a Ref.');
   const dir = await csvFolder();
   if (canPickFolder() && !dir) return toast(`Choose the ${CSV_FOLDER} folder so the CSV files can be saved there.`);
   const os = S.orders.filter(o => upPicked.has(o.id)).sort((a, b) => a.number - b.number);
   const bad = [], made = [];
   for (const o of os) {
-    const { text, missing } = orderCsv(o);
-    if (!(o.lines || []).length) { bad.push(`${orderNo(o.number)} has no lines`); continue; }
+    const { text, missing, lines } = orderCsv(o);
     if (missing.length) { bad.push(`${orderNo(o.number)}: no Ref for ${missing.join(', ')}`); continue; }
+    if (!lines) { bad.push(`${orderNo(o.number)} has nothing delivered on it`); continue; }
     const name = safeName(`${orderNo(o.number)} ${custOf(o.customer_id)?.name || ''}`) + '.csv';
     if (dir) {
       try { const w = await (await dir.getFileHandle(name, { create: true })).createWritable(); await w.write(text); await w.close(); }
@@ -1257,10 +1241,10 @@ async function uploadCsvs() {
     made.push(o.id);
   }
   made.forEach(id => upPicked.delete(id));
-  // Stamp the orders so they show a CSV tag (needs migrations/009).
+  // Stamp the orders so they show a CSV tag.
   if (made.length) {
     const { error } = await sb.from('orders').update({ csv_at: new Date().toISOString() }).in('id', made);
-    if (error) toast(/csv_at/.test(error.message) ? 'CSV files created. To show the CSV tag, run 009_order_csv.sql in Supabase.' : friendly(error));
+    if (error) toast(friendly(error));
     else await reloadOrders();
   }
   render();
@@ -1295,6 +1279,7 @@ async function sendSupplierEmails(btn) {
       if (claimed.length < fresh0.length) {
         elsewhere.push(...os.filter(o => fresh0.includes(o.id) && !claimed.includes(o.id)));
         if (claimed.length) await sb.from('orders').update({ emailed_at: null }).in('id', claimed);
+        claimed = [];
       }
     }
   }
@@ -1306,27 +1291,32 @@ async function sendSupplierEmails(btn) {
     alert(`Nothing was sent. ${msg}. Please check the orders, then press Email selected again.`);
     return;
   }
-  for (const [i, [s, list]] of groups.entries()) {
-    const st = $(`#est-${i}`), r = recipients(s);
-    if (!r.to.length && !r.cc.length && !r.bcc.length) { list.forEach(o => failed.add(o.id)); continue; }
-    st.className = 'est'; st.textContent = 'Sending…';
-    let res;
-    try {
-      const { files } = await buildGroup(i), { subject, body } = mailText(s, list);
-      const { data, error } = await sb.functions.invoke(NOTIFY_FN, { body: { action: 'supplier', supplier_id: s.id, subject, text: body, files: files.map(f => ({ name: f.name, content: b64(f.buf) })) } });
-      if (error) { let m = ''; try { m = (await error.context.json()).error; } catch { } res = { sent: false, reason: m === 'Order not found.' ? 'The email function in Supabase needs updating first.' : m || 'The email service didn’t answer.' }; }
-      else res = data;
-    } catch (e) { res = { sent: false, reason: e.message }; }
-    if (res?.sent) { st.className = 'est ok'; st.textContent = `Sent to ${[...res.to, ...res.cc].join(', ') || 'BCC only'}`; done.push(s.name); }
-    else { st.className = 'est err'; st.textContent = res?.reason || 'Not sent'; list.forEach(o => failed.add(o.id)); }
+  let ids = [];
+  try {
+    for (const [i, [s, list]] of groups.entries()) {
+      if (sentSuppliers.has(s.id)) continue;
+      const st = $(`#est-${i}`) || {}, r = recipients(s);
+      if (!r.to.length && !r.cc.length && !r.bcc.length) { list.forEach(o => failed.add(o.id)); continue; }
+      st.className = 'est'; st.textContent = 'Sending…';
+      let res;
+      try {
+        const { files } = await buildGroup(i), { subject, body } = mailText(s, list);
+        const { data, error } = await sb.functions.invoke(NOTIFY_FN, { body: { action: 'supplier', supplier_id: s.id, subject, text: body, files: files.map(f => ({ name: f.name, content: b64(f.buf) })) } });
+        if (error) { let m = ''; try { m = (await error.context.json()).error; } catch { } res = { sent: false, reason: m === 'Order not found.' ? 'The email function in Supabase needs updating first.' : m || 'The email service didn’t answer.' }; }
+        else res = data;
+      } catch (e) { res = { sent: false, reason: e.message }; }
+      if (res?.sent) { st.className = 'est ok'; st.textContent = `Sent to ${[...res.to, ...res.cc].join(', ') || 'BCC only'}`; done.push(s.name); sentSuppliers.add(s.id); }
+      else { st.className = 'est err'; st.textContent = res?.reason || 'Not sent'; list.forEach(o => failed.add(o.id)); }
+    }
+    ids = os.filter(o => (o.lines || []).some(supplierOfLine) && !failed.has(o.id)).map(o => o.id);
+    if (ids.length) { const { error } = await sb.from('orders').update({ emailed_at: new Date().toISOString() }).in('id', ids); if (error) toast('Sent, but couldn’t mark the orders as emailed: ' + friendly(error)); }
+  } finally {
+    // Orders claimed above whose email didn't go are always put back to not emailed, even if something broke.
+    const unsent = claimed.filter(id => !ids.includes(id));
+    if (unsent.length) { const { error } = await sb.from('orders').update({ emailed_at: null }).in('id', unsent); if (error) toast('Some orders are marked emailed but weren’t sent: ' + friendly(error)); }
   }
-  const ids = os.filter(o => (o.lines || []).some(supplierOfLine) && !failed.has(o.id)).map(o => o.id);
-  if (ids.length) await sb.from('orders').update({ emailed_at: new Date().toISOString() }).in('id', ids);
-  // Orders claimed above whose email didn't go are put back to not emailed.
-  const unsent = claimed.filter(id => !ids.includes(id));
-  if (unsent.length) await sb.from('orders').update({ emailed_at: null }).in('id', unsent);
   await reloadOrders();
-  if (!failed.size) { $('#dlg').close(); picked.clear(); render(); toast(`${done.length} email${done.length === 1 ? '' : 's'} sent and ${ids.length} order${ids.length === 1 ? '' : 's'} marked as emailed`, true); }
+  if (!failed.size) { $('#dlg').close(); picked.clear(); sentSuppliers.clear(); render(); toast(`${done.length} email${done.length === 1 ? '' : 's'} sent and ${ids.length} order${ids.length === 1 ? '' : 's'} marked as emailed`, true); }
   else { render(); toast(done.length ? `${done.length} sent, but some didn’t go. See the dialog.` : 'Nothing was sent. See the dialog.'); btn.disabled = false; btn.textContent = 'Try again'; }
 }
 async function markEmailed(btn) {
@@ -1334,7 +1324,7 @@ async function markEmailed(btn) {
   btn.disabled = true;
   const { error } = await sb.from('orders').update({ emailed_at: new Date().toISOString() }).in('id', ids);
   btn.disabled = false;
-  if (error) { toast(/emailed_at/.test(error.message) ? 'One step first: run 003_order_emailed.sql in Supabase, then try again.' : friendly(error)); return; }
+  if (error) { toast(friendly(error)); return; }
   $('#dlg').close(); picked.clear(); await reloadOrders(); render(); toast(`${ids.length} order${ids.length > 1 ? 's' : ''} marked as emailed`, true);
 }
 
@@ -1359,13 +1349,12 @@ function editCustomer(id) {
   const c = id ? custOf(id) : {};
   openDialog(id ? 'Edit customer' : 'Add customer',
     `<div class="grid g2">${fld('cid', 'CID (unique number)', c.cid ?? nextCid(), 'number', 'required min="1" step="1"')}${fld('name', 'Customer name', c.name, 'text', 'required')}</div>
-     <div class="grid g2">${fld('contact', 'Contact person', c.contact)}${fld('phone', 'Contact phone', c.phone)}</div><div class="grid g2">${fld('email', 'Email', c.email, 'email')}${S.custGroupMissing ? '' : `<label class="f">Orders products<select name="product_group" id="f-product_group">${[...GROUPS, 'Both'].map(g => `<option value="${g}" ${custGroup(c) === g ? 'selected' : ''}>${g === 'Both' ? 'Both (Organic and Conventional)' : g}</option>`).join('')}</select></label>`}</div>
-     ${S.remMissing ? '' : `<div class="grid g2"><label class="chk"><input type="checkbox" name="reminders" value="1" ${c.reminders !== false ? 'checked' : ''}> Email a reminder before the cut-off if no order is in (see Administration › Cut-offs)</label><label class="chk"><input type="checkbox" name="sunday_delivery" value="1" ${c.sunday_delivery ? 'checked' : ''}> Sunday delivery (orders Friday for Sunday)</label></div>`}
+     <div class="grid g2">${fld('contact', 'Contact person', c.contact)}${fld('phone', 'Contact phone', c.phone)}</div><div class="grid g2">${fld('email', 'Email', c.email, 'email')}<label class="f">Orders products<select name="product_group" id="f-product_group">${[...GROUPS, 'Both'].map(g => `<option value="${g}" ${custGroup(c) === g ? 'selected' : ''}>${g === 'Both' ? 'Both (Organic and Conventional)' : g}</option>`).join('')}</select></label></div>
+     <div class="grid g2"><label class="chk"><input type="checkbox" name="reminders" value="1" ${c.reminders !== false ? 'checked' : ''}> Email a reminder before the cut-off if no order is in (see Administration › Cut-offs)</label><label class="chk"><input type="checkbox" name="sunday_delivery" value="1" ${c.sunday_delivery ? 'checked' : ''}> Sunday delivery (see Administration › Cut-offs)</label></div>
      <label class="f">Notes<textarea name="notes" id="f-notes">${esc(c.notes)}</textarea></label>`,
     f => {
       const row = { cid: Number(f.get('cid')), name: f.get('name').trim(), contact: f.get('contact').trim(), phone: f.get('phone').trim(), email: f.get('email').trim(), notes: f.get('notes').trim() };
-      if (!S.custGroupMissing) row.product_group = f.get('product_group');
-      if (!S.remMissing) { row.sunday_delivery = f.get('sunday_delivery') === '1'; row.reminders = f.get('reminders') === '1'; }
+      row.product_group = f.get('product_group'); row.sunday_delivery = f.get('sunday_delivery') === '1'; row.reminders = f.get('reminders') === '1';
       if (!Number.isInteger(row.cid) || row.cid < 1) { toast('CID must be a whole number above 0.'); return false; }
       const clash = S.customers.find(x => x.id !== id && x.cid === row.cid); if (clash) { toast(`CID ${row.cid} is already used by ${clash.name}. Next free CID is ${nextCid()}.`); return false; }
       return run(id ? sb.from('customers').update(row).eq('id', id) : sb.from('customers').insert(row), 'Customer saved');
@@ -1376,25 +1365,19 @@ function editSupplier(id) {
   const s = id ? S.suppliers.find(x => x.id === id) : {};
   openDialog(id ? 'Edit supplier' : 'Add supplier',
     fld('name', 'Supplier name', s.name, 'text', 'required') +
-    (S.emailsMissing ? `<label class="f">Order email addresses (one per line)<textarea name="emails" id="f-emails">${esc((s.emails || []).join('\n'))}</textarea></label>`
-      : `<p class="muted" style="margin:0;font-size:13px">Order email addresses are set under <b>Emails</b>.</p>`) +
+    `<p class="muted" style="margin:0;font-size:13px">Order email addresses are set under <b>Administration › Emails</b>.</p>` +
     fld('cutoff', 'Order cut-off', s.cutoff, 'text', 'placeholder="e.g. Orders by 9am for same-day processing"') +
     `<label class="f">Notes<textarea name="notes" id="f-notes">${esc(s.notes)}</textarea></label>`,
     f => {
       const row = { name: f.get('name').trim(), cutoff: f.get('cutoff').trim(), notes: f.get('notes').trim() };
-      if (S.emailsMissing) {
-        const emails = f.get('emails').split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
-        const bad = emails.find(e => !EMAIL_RE.test(e)); if (bad) { toast('Check this email address: ' + bad); return false; }
-        row.emails = emails;
-      }
       return run(id ? sb.from('suppliers').update(row).eq('id', id) : sb.from('suppliers').insert(row), 'Supplier saved');
     },
     id && !S.products.some(p => p.supplier_id === id) ? () => run(sb.from('suppliers').delete().eq('id', id), 'Supplier deleted') : null);
 }
 function packRow(k = {}) {
   const key = k.id || 'new-' + Math.random().toString(36).slice(2, 8);
-  return `<div class="packrow${S.refMissing ? '' : ' withref'}" data-row="${esc(key)}"><input name="psid" type="number" min="1" step="1" placeholder="SID" aria-label="SID" value="${esc(k.sid ?? '')}">
-    ${S.refMissing ? '' : `<input name="pref" placeholder="Ref" aria-label="Ref" value="${esc(k.ref ?? '')}">`}
+  return `<div class="packrow withref" data-row="${esc(key)}"><input name="psid" type="number" min="1" step="1" placeholder="SID" aria-label="SID" value="${esc(k.sid ?? '')}">
+    <input name="pref" placeholder="Ref" aria-label="Ref" value="${esc(k.ref ?? '')}">
     <input name="pname" placeholder="Pack type, e.g. BOX of 10 BUNCHES" aria-label="Pack type" value="${esc(k.name ?? '')}">
     <input name="pouter" type="number" min="1" step="1" aria-label="Outer multiple" title="Outer multiple" value="${esc(k.outer_multiple ?? 1)}">
     <select name="pavail" aria-label="Availability"><option value="1" ${k.available === false ? '' : 'selected'}>Available</option><option value="0" ${k.available === false ? 'selected' : ''}>Not available</option></select>
@@ -1410,37 +1393,44 @@ function editSections() {
   const used = n => S.products.filter(p => p.section === n).length;
   const rows = allSections().map(n => `<div class="secrow"><input name="secname" value="${esc(n)}" aria-label="Section name"><input type="hidden" name="secold" value="${esc(n)}"><span class="muted">${used(n)} product${used(n) === 1 ? '' : 's'}</span>${used(n) ? '<span></span>' : `<label class="muted"><input type="checkbox" name="secdel" value="${esc(n)}"> Remove</label>`}</div>`).join('');
   openDialog('Sections',
-    `${S.secMissing ? '<div class="banner">To add new sections, first run <b>016_sections.sql</b> in Supabase’s SQL Editor. Renaming works already.</div>' : ''}
-     <p class="sub" style="margin:0">The headings on the order forms. Change a name to rename it on every product in that section.</p>
+    `<p class="sub" style="margin:0">The headings on the order forms. Change a name to rename it on every product in that section.</p>
      <div class="grid" style="gap:6px">${rows || '<p class="muted">No sections yet.</p>'}</div>
-     ${S.secMissing ? '' : `<label class="f">New section<input name="secnew" id="f-secnew" placeholder="e.g. Microgreens"></label>`}`,
+     <label class="f">New section<input name="secnew" id="f-secnew" placeholder="e.g. Microgreens"></label>`,
     async f => {
       const olds = f.getAll('secold'), news = f.getAll('secname').map(x => x.trim()), dels = new Set(f.getAll('secdel')), add = (f.get('secnew') || '').trim();
       const final = olds.map((o, i) => dels.has(o) ? null : news[i]).filter(Boolean).concat(add ? [add] : []);
       if (news.some((n, i) => !n && !dels.has(olds[i]))) { toast('A section name can’t be empty.'); return false; }
       const dup = final.find((n, i) => final.findIndex(x => x.toLowerCase() === n.toLowerCase()) !== i); if (dup) { toast(`There are two sections called “${dup}”.`); return false; }
+      // Renames go through a temporary name first, so swapping two names doesn't merge their products.
+      const rename = async (from, to) => {
+        if (!(await run(sb.from('product_sections').upsert({ name: to })))) return false;
+        if (!(await run(sb.from('products').update({ section: to }).eq('section', from)))) return false;
+        await sb.from('product_sections').delete().eq('name', from); return true;
+      };
+      const moves = [];
       for (const [i, o] of olds.entries()) {
-        const n = news[i];
-        if (dels.has(o)) { if (!S.secMissing && !(await run(sb.from('product_sections').delete().eq('name', o)))) return false; continue; }
-        if (n === o) continue;
-        if (!(await run(sb.from('products').update({ section: n }).eq('section', o)))) return false;
-        if (!S.secMissing && !(await run(sb.from('product_sections').upsert({ name: n })))) return false;
-        if (!S.secMissing) await sb.from('product_sections').delete().eq('name', o);
+        if (dels.has(o)) { if (!(await run(sb.from('product_sections').delete().eq('name', o)))) return false; continue; }
+        if (news[i] === o) continue;
+        const tmp = `~renaming ${i} ${Date.now()}`;
+        if (!(await rename(o, tmp))) return false;
+        moves.push([tmp, news[i]]);
       }
+      for (const [tmp, n] of moves) if (!(await rename(tmp, n))) return false;
       if (add && !(await run(sb.from('product_sections').upsert({ name: add })))) return false;
       toast('Sections saved', true); return true;
     });
 }
 function editProduct(id) {
-  const p = id ? prodOf(id) : { supplier_id: S.suppliers[0]?.id, product_packs: [] };
+  // A copy, kept up to date as each part saves, so pressing Save again after an error doesn't add things twice.
+  const p = id ? { ...prodOf(id), product_packs: [...(prodOf(id).product_packs || [])] } : { supplier_id: S.suppliers[0]?.id, product_packs: [] };
   const secs = allSections();
   const packs = p.product_packs?.length ? p.product_packs : [{ sid: nextSid() }];
   openDialog(id ? 'Edit product' : 'Add product',
     `<label class="f">Supplier<select name="supplier_id" id="f-supplier_id">${S.suppliers.slice().sort(byName).map(s => `<option value="${s.id}" ${s.id === p.supplier_id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label>
     <div class="grid g2">${fld('code', 'Supplier code', p.code)}${fld('name', 'Product name', p.name, 'text', 'required')}</div>
-    ${S.groupsMissing ? '' : `<label class="f">Product group<select name="product_group" id="f-product_group">${GROUPS.map(g => `<option ${groupOf(p) === g ? 'selected' : ''}>${g}</option>`).join('')}</select></label>`}
+    <label class="f">Product group<select name="product_group" id="f-product_group">${GROUPS.map(g => `<option ${groupOf(p) === g ? 'selected' : ''}>${g}</option>`).join('')}</select></label>
     <label class="f">Section on the form<select name="section" id="f-section"><option value="">No section</option>${secs.map(x => `<option ${x === p.section ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select><span class="muted" style="font-size:12px">Add or rename sections with the <b>Sections</b> button on the Products page.</span></label>
-    <div class="grid" style="gap:6px"><div class="packrow packhead${S.refMissing ? '' : ' withref'}"><span>SID</span>${S.refMissing ? '' : '<span>Ref</span>'}<span>Pack type (match the form’s column heading)</span><span>Outer</span><span>Availability</span><span></span></div>
+    <div class="grid" style="gap:6px"><div class="packrow packhead withref"><span>SID</span><span>Ref</span><span>Pack type (match the form’s column heading)</span><span>Outer</span><span>Availability</span><span></span></div>
       <div class="grid" style="gap:6px" id="packrows">${packs.map(packRow).join('')}</div>
       <div><button type="button" class="ghost" onclick="addPackRow()">+ Add pack type</button></div></div>
     <div class="grid g2">${fld('sort', 'Position on the form', p.sort ?? '', 'number')}
@@ -1461,27 +1451,31 @@ function editProduct(id) {
         const ref = refs[i] || '', REF = ref.toUpperCase();
         if (REF && rows.some(r => (r.ref || '').toUpperCase() === REF)) { toast(`Ref ${ref} is used twice on this product.`); return false; }
         const refClash = REF && others.find(o => o.ref === REF); if (refClash) { toast(`Ref ${ref} is already used by ${refClash.label}.`); return false; }
-        rows.push({ id: pids[i] || undefined, name: names[i], sid, ref: ref || null, outer_multiple: outer, available: avail[i] === '1', sort: rows.length });
+        rows.push({ i, id: pids[i] || undefined, name: names[i], sid, ref: ref || null, outer_multiple: outer, available: avail[i] === '1', sort: rows.length });
       }
       if (!rows.length) { toast('Add at least one pack type.'); return false; }
       const prow = { supplier_id: f.get('supplier_id'), code: f.get('code').trim(), name, section: f.get('section').trim(), sort: f.get('sort') === '' ? 999 : +f.get('sort'), active: f.get('active') === '1' };
-      if (!S.groupsMissing) prow.product_group = f.get('product_group');
+      prow.product_group = f.get('product_group');
       const saved = await run(id ? sb.from('products').update(prow).eq('id', id).select().single() : sb.from('products').insert(prow).select().single());
       if (!saved) return false;
-      const pid = saved.id;
+      const pid = id = saved.id;
       // Remove dropped pack types first, then park SIDs on temporary values so swaps between rows don't collide.
       const keep = rows.filter(r => r.id).map(r => r.id);
       const dropped = (p.product_packs || []).filter(k => !keep.includes(k.id)).map(k => k.id);
       if (dropped.length && !await run(sb.from('product_packs').delete().in('id', dropped))) return false;
+      p.product_packs = p.product_packs.filter(k => keep.includes(k.id));
       for (const r of rows.filter(r => r.id)) {
         const old = (p.product_packs || []).find(k => k.id === r.id);
         if (old && old.sid !== r.sid && !await run(sb.from('product_packs').update({ sid: 2000000000 - Math.floor(Math.random() * 1e6) }).eq('id', r.id))) return false;
-        if (!S.refMissing && old && (old.ref || null) !== r.ref && old.ref && !await run(sb.from('product_packs').update({ ref: null }).eq('id', r.id))) return false;
+        if (old && (old.ref || null) !== r.ref && old.ref && !await run(sb.from('product_packs').update({ ref: null }).eq('id', r.id))) return false;
       }
       for (const r of rows) {
         const body = { product_id: pid, name: r.name, sid: r.sid, outer_multiple: r.outer_multiple, available: r.available, sort: r.sort };
-        if (!S.refMissing) body.ref = r.ref;
-        if (!await run(r.id ? sb.from('product_packs').update(body).eq('id', r.id) : sb.from('product_packs').insert(body))) return false;
+        body.ref = r.ref;
+        const k = await run(r.id ? sb.from('product_packs').update(body).eq('id', r.id).select().single() : sb.from('product_packs').insert(body).select().single());
+        if (!k) return false;
+        p.product_packs = [...p.product_packs.filter(x => x.id !== k.id), k];
+        document.querySelectorAll('#dlg input[name=pid]')[r.i].value = k.id;
       }
       toast('Product saved', true); return true;
     },
@@ -1491,29 +1485,25 @@ function editLogin(uid) {
   const u = S.profiles.find(x => x.id === uid);
   openDialog(u.approved ? 'Edit login' : 'Approve login',
     `<p style="margin:0"><b>${esc(u.full_name || u.email)}</b><br><span class="mono muted">${esc(u.email)}</span>${u.business ? `<br>Business they gave: ${esc(u.business)}` : ''}</p>
-    <label class="f">Role<select name="role" id="f-role" onchange="document.getElementById('custpick').hidden = this.value!=='customer'"><option value="customer" ${!['admin', 'manager', 'receiver'].includes(u.role) ? 'selected' : ''}>Customer: orders for the businesses ticked below</option><option value="receiver" ${u.role === 'receiver' ? 'selected' : ''}>Receiver: checks deliveries and marks orders received</option><option value="manager" ${u.role === 'manager' ? 'selected' : ''}>Manager: orders, customers and products, but not Suppliers, Emails or Logins</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin: full access, like you</option></select></label>
-    ${S.linksMissing
-      ? `<label class="f" id="custpick" ${['admin', 'manager', 'receiver'].includes(u.role) ? 'hidden' : ''}>Customer this login orders for<select name="customer_id" id="f-customer_id"><option value="">Choose a customer…</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === u.customer_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`
-      : `<div class="custpick" id="custpick" ${['admin', 'manager', 'receiver'].includes(u.role) ? 'hidden' : ''}>Customers this login orders for<input class="search" placeholder="Find a customer" oninput="for(const l of document.querySelectorAll('#custlist label'))l.hidden=!l.textContent.toLowerCase().includes(this.value.toLowerCase())"><div class="custlist" id="custlist">${S.customers.slice().sort(byName).map(c => `<label><input type="checkbox" name="customer_ids" value="${c.id}" ${loginCustIds(u).includes(c.id) ? 'checked' : ''}> ${esc(c.name)}</label>`).join('')}</div><span class="muted" style="font-size:12px">Tick more than one and the customer picks which business each order is for.</span></div>`}
+    <label class="f">Role<select name="role" id="f-role" onchange="document.getElementById('custpick').hidden = this.value!=='customer'"><option value="customer" ${!['admin', 'manager', 'receiver'].includes(u.role) ? 'selected' : ''}>Customer: orders for the businesses ticked below</option><option value="receiver" ${u.role === 'receiver' ? 'selected' : ''}>Receiver: checks deliveries and marks orders received</option><option value="manager" ${u.role === 'manager' ? 'selected' : ''}>Manager: orders, customers and products, not Suppliers or Administration</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin: full access, like you</option></select></label>
+    ${`<div class="custpick" id="custpick" ${['admin', 'manager', 'receiver'].includes(u.role) ? 'hidden' : ''}>Customers this login orders for<input class="search" placeholder="Find a customer" oninput="for(const l of document.querySelectorAll('#custlist label'))l.hidden=!l.textContent.toLowerCase().includes(this.value.toLowerCase())"><div class="custlist" id="custlist">${S.customers.slice().sort(byName).map(c => `<label><input type="checkbox" name="customer_ids" value="${c.id}" ${loginCustIds(u).includes(c.id) ? 'checked' : ''}> ${esc(c.name)}</label>`).join('')}</div><span class="muted" style="font-size:12px">Tick more than one and the customer picks which business each order is for.</span></div>`}
     <label class="f">Access<select name="approved" id="f-approved"><option value="1" selected>Allowed to sign in</option><option value="0">Blocked</option></select></label>`,
     async f => {
       const role = f.get('role'), approved = f.get('approved') === '1';
-      const ids = role !== 'customer' ? [] : S.linksMissing ? [f.get('customer_id')].filter(Boolean) : f.getAll('customer_ids');
+      const ids = role !== 'customer' ? [] : f.getAll('customer_ids');
       if (role === 'customer' && approved && !ids.length) { toast('Choose which customer this login orders for.'); return false; }
       // The main customer stays the same while it is still ticked; the rest are linked in profile_customers.
       const customer_id = ids.includes(u.customer_id) ? u.customer_id : ids[0] || null;
       if (!(await run(sb.from('profiles').update({ role, customer_id, approved }).eq('id', uid)))) return false;
-      if (!S.linksMissing) {
-        const gone = loginCustIds(u).filter(id => !ids.includes(id));
-        if (gone.length && !(await run(sb.from('profile_customers').delete().eq('profile_id', uid).in('customer_id', gone)))) return false;
-        if (ids.length && !(await run(sb.from('profile_customers').upsert(ids.map(id => ({ profile_id: uid, customer_id: id })))))) return false;
-      }
+      const gone = loginCustIds(u).filter(id => !ids.includes(id));
+      if (gone.length && !(await run(sb.from('profile_customers').delete().eq('profile_id', uid).in('customer_id', gone)))) return false;
+      if (ids.length && !(await run(sb.from('profile_customers').upsert(ids.map(id => ({ profile_id: uid, customer_id: id })))))) return false;
       toast('Login saved', true); return true;
     },
-    // Deleting removes the sign-in for good (migrations/015). Not offered on your own login.
+    // Deleting removes the sign-in for good. Not offered on your own login.
     uid !== profile.id ? async () => {
       const { error } = await sb.rpc('delete_login', { user_id: uid });
-      if (error) { toast(/delete_login/.test(error.message) && /function|schema cache/i.test(error.message) ? 'One step first: run 015_delete_login.sql in Supabase.' : friendly(error)); return false; }
+      if (error) { toast(friendly(error)); return false; }
       toast('Login deleted', true); return true;
     } : null);
 }

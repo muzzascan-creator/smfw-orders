@@ -1,14 +1,13 @@
 -- 022: Text SMFW when a new login is waiting to be activated (via SMS Broadcast).
--- BEFORE RUNNING, change the three values in quotes just below:
---   your mobile (several can be separated by commas), and your SMS Broadcast username and password.
--- These are kept in a private settings table that only the server can read.
--- Safe to run more than once (it just updates the values).
+-- The mobile, SMS Broadcast username, password and sender are set in the app under Administration › SMS (024);
+-- the values below are only placeholders for a new system. They are kept in a private settings table that only
+-- the server can read. Safe to run more than once: it never overwrites settings already saved.
 insert into public.app_settings (key, value) values
   ('sms_to',       '04XX XXX XXX'),
   ('sms_username', 'YOUR SMS BROADCAST USERNAME'),
   ('sms_password', 'YOUR SMS BROADCAST PASSWORD'),
   ('sms_from',     'Coolibah')
-  on conflict (key) do update set value = excluded.value;
+  on conflict (key) do nothing;
 
 create or replace function public.sms_new_login() returns trigger
 language plpgsql security definer set search_path = public as $$

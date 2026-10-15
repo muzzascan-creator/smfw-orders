@@ -1,25 +1,30 @@
-# SMFW Orders
+# Coolibah Orders
 
-A web app where SMFW's customers sign in and place their own orders, and SMFW staff manage everything from an admin dashboard.
+A web app (csorders.org) where SMFW's customers sign in and place their own orders, and SMFW staff run everything from a dashboard.
 
-- **Customers** create an account, wait for SMFW to link it to their business, then fill in an order form laid out like the supplier forms. They can save drafts and send orders. They only ever see their own orders, and never see supplier names.
-- **Admins** get an Inbox of orders customers have sent, can enter orders for any customer, and manage customers (CID), products (each pack type has its own SID, outer multiple and availability), suppliers and logins.
+- **Customers** create an account, wait for SMFW to link it to their business, then fill in an order form laid out like the supplier forms. They can save drafts and send orders, up to each delivery day's cut-off. They only see their own orders, and never see supplier names. A customer orders Organic, Conventional or Both (one location per order).
+- **Admins** get an Inbox of orders customers have sent, can enter orders for any customer, email suppliers, make upload CSVs, and manage customers (CID), products (each pack type has its own SID, outer multiple and availability) and suppliers. Under **Administration** they manage supplier Emails, Logins, SMS settings and order Cut-offs.
+- **Managers** have the Admin dashboard without Suppliers and Administration.
+- **Receivers** see every order read-only and tick off deliveries; customers are emailed about anything short.
 
-It is a plain web page (`index.html`, `app.js`, `styles.css`) with no build step. Logins and data live in [Supabase](https://supabase.com); the access rules in `supabase/schema.sql` keep each customer's data private.
+It is a plain web page (`index.html`, `app.js`, `styles.css`) with no build step. Logins and data live in [Supabase](https://supabase.com); the access rules in `supabase/schema.sql` and `supabase/migrations/` keep each customer's data private.
 
 ## Setting it up
 
-1. **Create the database.** In Supabase, create a new project. Open **SQL Editor**, paste in all of `supabase/schema.sql` and press **Run**. Then do the same with the `seed.sql` file Claude gave you, which loads the starting suppliers, customers and products. It is kept out of this repo because the repo is public.
+1. **Create the database.** In Supabase, create a new project. Open **SQL Editor**, paste in all of `supabase/schema.sql` and press **Run**. Then run each file in `supabase/migrations/` from `020` onward, in number order. Then run the `seed.sql` file Claude gave you, which loads the starting suppliers, customers and products. It is kept out of this repo because the repo is public.
 2. **Connect the site to it.** In Supabase go to **Project Settings → API**. Copy the **Project URL** and the **anon public** key into `config.js`.
-3. **Publish the site.** In this GitHub repo go to **Settings → Pages**, choose **Deploy from a branch**, pick `main` and `/ (root)`, and save. GitHub shows the site's address after a minute or two.
-4. **Tell Supabase the address.** In Supabase go to **Authentication → URL Configuration** and set **Site URL** to the GitHub Pages address. This makes the links in confirmation and password-reset emails open the site.
-5. **Sign up first.** Open the site and create your own account before anyone else does. The first account becomes the admin automatically.
+3. **Set up the email and text service.** In Supabase go to **Edge Functions**, create a function called `quick-api` with **Verify JWT** turned off, and paste in `supabase/functions/notify-undelivered/index.ts`. Under **Edge Functions → Secrets** add `RESEND_API_KEY` (from resend.com); `FROM_EMAIL` and `REPLY_TO` are optional. SMS Broadcast details are entered in the app under **Administration › SMS**.
+4. **Publish the site.** In this GitHub repo go to **Settings → Pages**, choose **Deploy from a branch**, pick `main` and `/ (root)`, and save.
+5. **Tell Supabase the address.** In Supabase go to **Authentication → URL Configuration** and set **Site URL** to the site's address. This makes the links in confirmation and password-reset emails open the site.
+6. **Sign up first.** Open the site and create your own account before anyone else does. The first account on a new system becomes the Admin automatically.
+
+To check an existing system, run `supabase/checks/check_setup_step1.sql` and then `check_setup_step2.sql` in the SQL Editor.
 
 ## Adding a customer login
 
-The customer opens the site and creates an account. It appears under **Logins** marked *Waiting*. Press **Approve**, choose which customer it orders for, and save. Several logins can share one customer.
+The customer opens the site and creates an account, and SMFW gets a text. It appears under **Administration › Logins** marked *Waiting*. Press **Approve**, choose which customer(s) it orders for, and save. Several logins can share one customer. Each login can be signed in on one device at a time.
 
-To give another staff member full access, approve their login with the role **Admin**.
+To give another staff member access, approve their login with the role **Admin**, **Manager** or **Receiver**.
 
 ## Files
 
@@ -29,5 +34,7 @@ To give another staff member full access, approve their login with the role **Ad
 | `app.js` | Everything the app does |
 | `styles.css` | Look and layout, light and dark |
 | `config.js` | Which Supabase project to use |
-| `supabase/schema.sql` | Tables, logins and access rules |
-| `supabase/migrations/` | Changes to run on an existing database, in number order |
+| `supabase/schema.sql` | Tables, logins and access rules (up to 019) |
+| `supabase/migrations/` | Changes to run on the database, in number order |
+| `supabase/functions/notify-undelivered/` | The `quick-api` function: customer, supplier and reminder emails, and texts |
+| `supabase/checks/` | One-off checks and repairs to run in the SQL Editor |
