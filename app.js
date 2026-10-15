@@ -55,7 +55,10 @@ const orderNo = n => n == null ? '' : 'SO-' + String(n).padStart(4, '0');
 // Admins and Managers share the office dashboard; only Admins see Suppliers, Emails and Logins (migrations/012).
 const isAdmin = () => ['admin', 'manager'].includes(profile?.role) && profile?.approved;
 const isManager = () => profile?.role === 'manager' && profile?.approved;
-const ADMIN_ONLY = ['suppliers', 'emails', 'users'];
+const ADMIN_ONLY = ['suppliers', 'emails', 'users', 'admin'];
+// The Administration tab holds Emails and Logins; it opens on whichever was used last.
+const ADMIN_TABS = [['emails', 'Emails'], ['users', 'Logins']];
+let adminTab = 'emails';
 // Receivers see every order read-only (migrations/010).
 const isReceiver = () => profile?.role === 'receiver' && profile?.approved;
 // Conventional orders are entered by SMFW for its own supply, so they have no customer.
@@ -245,12 +248,12 @@ const homeView = () => isAdmin() ? 'inbox' : isReceiver() ? 'recv' : 'mine';
 function navItems() {
   if (isReceiver()) return [['recv', 'Orders']];
   return isAdmin()
-    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['customers', 'Customers'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['emails', 'Emails'], ['users', 'Logins']].filter(([v]) => !isManager() || !ADMIN_ONLY.includes(v))
+    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['customers', 'Customers'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['admin', 'Administration']].filter(([v]) => !isManager() || !ADMIN_ONLY.includes(v))
     : [['mine', 'My orders'], ['entry', 'New order']];
 }
 function inboxCount() { return S.orders.filter(o => o.status === 'submitted').length; }
 function updateNavBadge() { const b = document.querySelector('#nav [data-v=inbox] .badge'); const n = inboxCount(); if (b) { b.textContent = n; b.hidden = !n; } }
-function go(v, fresh = true) { view = v; if (v === 'entry' && fresh) draft = blankOrder(); render(); window.scrollTo(0, 0); }
+function go(v, fresh = true) { if (v === 'admin') v = adminTab; if (ADMIN_TABS.some(([t]) => t === v)) adminTab = v; view = v; if (v === 'entry' && fresh) draft = blankOrder(); render(); window.scrollTo(0, 0); }
 // A tab press shows the page straight away from what is already loaded, then fetches fresh data in the background
 // (new sign-ups, other people's edits) and redraws only if something changed and you aren't mid-edit.
 let refreshing = null, autoRefresh = null;
@@ -267,13 +270,14 @@ function refreshInBackground() {
 
 function render() {
   const nav = $('#nav');
-  nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" aria-current="${v === view && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
+  nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" aria-current="${(v === view || v === 'admin' && ADMIN_TABS.some(([t]) => t === view)) && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
   const views = { recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers };
   const allowed = isManager() ? Object.keys(views).filter(v => !ADMIN_ONLY.includes(v) && !v.startsWith('recv')) : isAdmin() ? null : isReceiver() ? ['recv', 'recvorder'] : ['mine', 'entry'];
   if (!views[view] || ['recv', 'recvorder'].includes(view) && !isReceiver() || (allowed && !allowed.includes(view))) view = homeView();
   if (view === 'entry' && !draft) draft = blankOrder();
   const keep = view === 'recvorder' ? $('.recvscroll')?.scrollTop : 0; // ticking a line re-draws the screen; stay where you were
-  $('#app').innerHTML = views[view]();
+  const sub = ADMIN_TABS.some(([t]) => t === view) ? `<div class="grpswitch" style="margin-top:20px" role="tablist" aria-label="Administration">${ADMIN_TABS.map(([t, l]) => `<button type="button" role="tab" aria-selected="${t === view}" class="${t === view ? 'on' : ''}" onclick="go('${t}');refreshInBackground()">${l}</button>`).join('')}</div>` : '';
+  $('#app').innerHTML = sub + views[view]();
   if (view === 'entry') wireEntry();
   if (view === 'orders') wireOrderSearch();
   if (view === 'recvorder') { wireRecvOrder(); if (keep) $('.recvscroll').scrollTop = keep; }
