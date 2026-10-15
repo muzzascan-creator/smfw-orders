@@ -7,7 +7,7 @@
 //    who haven't sent an order for that delivery get a reminder. Called every 10 minutes by the Supabase Cron job
 //    (migrations/018, 026).
 // 4. New-login SMS (action "new-login"): when someone signs up and is waiting to be activated, SMFW gets a text,
-//    at most one every 10 minutes. Called by the database the moment the login is made (migrations/022).
+//    straight away, one text per login. Called by the database the moment the login is made (migrations/022).
 //    Action "test-sms" sends a test text.
 // Needs the RESEND_API_KEY secret (resend.com). Optional: FROM_EMAIL, REPLY_TO.
 // Texts go through SMS Broadcast (smsbroadcast.com.au). The username, password, sender and mobile number(s) are set
@@ -176,14 +176,11 @@ async function sendSms(text: string) {
   const ok = r.ok && lines.length > 0 && lines.every(l => l.startsWith('OK'));
   return ok ? { sent: true, to } : { sent: false, reason: `SMS Broadcast refused the message: ${out.slice(0, 200)}` };
 }
-// At most one text every 10 minutes, so a burst of sign-ups can't run up the SMS bill; the text says how many wait.
+// One text for every new login, sent straight away; the text says how many are waiting.
 async function newLoginSms(id: string) {
   const [p] = await dbOk(`profiles?id=eq.${encodeURIComponent(id)}&select=email,full_name,business,approved`);
   if (!p) return reply({ sent: false, reason: 'Login not found.' });
   if (p.approved) return reply({ sent: false, reason: 'Already active.' });
-  const [last] = await dbOk(`app_settings?key=eq.sms_last_new_login&select=value`);
-  if (last && Date.now() - Date.parse(last.value) < 10 * 60000) return reply({ sent: false, reason: 'A new-login text went in the last 10 minutes.' });
-  await dbOk('app_settings', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify({ key: 'sms_last_new_login', value: new Date().toISOString() }) });
   const waiting = ((await dbOk('profiles?approved=eq.false&select=id')) as any[]).length;
   const who = [p.full_name, p.business].filter(Boolean).join(', ');
   return reply(await sendSms(`Coolibah Orders: new login to activate. ${who ? who + ' ' : ''}(${p.email}).${waiting > 1 ? ` ${waiting} logins are waiting.` : ''} Approve under Administration › Logins.`));
