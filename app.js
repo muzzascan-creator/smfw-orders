@@ -30,25 +30,39 @@ const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getT
 // Latest allowed date required: a year ahead. Also stops the date box accepting a 5- or 6-digit year.
 const latestReq = () => { const d = new Date(); d.setFullYear(d.getFullYear() + 1); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
 const tomorrow = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
-// Organic order times (Sydney): Tue, Wed, Thu and Fri deliveries close at 7:30am the day before; Mon (and Sun, for
-// customers ticked Sunday delivery) close at 7:30am on the Friday. Same rule as the database (migrations/018).
+// Order cut-offs, per product location (Sydney time). Set under Administration › Cut-offs (migrations/026); the database
+// holds customers to the same rules. Until 026 is run, these are the rules used before it.
 function sydNow() {
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).map(x => [x.type, x.value]));
   return { date: `${p.year}-${p.month}-${p.day}`, minutes: +p.hour * 60 + +p.minute };
 }
 const shiftDate = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
-function organicCutoff(d, sunday) {
-  const back = { 2: 1, 3: 1, 4: 1, 5: 1, 1: 3, 0: sunday ? 2 : null }[new Date(d + 'T12:00:00Z').getUTCDay()];
-  return back == null ? null : shiftDate(d, -back);
-}
-// Why a customer can't send an Organic order for date d right now, or '' when they can.
-function organicProblem(d, cust) {
-  const sun = !!cust?.sunday_delivery, cut = organicCutoff(d, sun), now = sydNow();
-  if (!cut) return `Organic deliveries are Monday to Friday${sun ? ' and Sunday' : ''}. Please choose one of those days.`;
-  if (now.date > cut || (now.date === cut && now.minutes >= 450)) return `Orders for ${fmtDate(d)} delivery closed at 7:30am on ${fmtDate(cut)}. Please choose a later delivery day, or call us on 0417 375 591.`;
+const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']; // dow 1 = Monday ... 7 = Sunday
+const DEFAULT_CUTOFFS = [
+  ...[[1, 'all', 3], [2, 'all', 1], [3, 'all', 1], [4, 'all', 1], [5, 'all', 1], [6, 'none', null], [7, 'sunday', 2]]
+    .map(([dow, delivers, days_before]) => ({ product_group: 'Organic', dow, delivers, days_before, cutoff_time: days_before == null ? null : '07:30:00' })),
+  ...DAYS.map((_, i) => ({ product_group: 'Conventional', dow: i + 1, delivers: 'all', days_before: null, cutoff_time: null }))];
+const cutRules = g => (S.cutRules?.length ? S.cutRules : DEFAULT_CUTOFFS).filter(r => r.product_group === g).sort((a, b) => a.dow - b.dow);
+const isoDow = d => new Date(d + 'T12:00:00Z').getUTCDay() || 7;
+const toMins = t => +String(t || '0:0').split(':')[0] * 60 + +String(t || '0:0').split(':')[1];
+const fmtTime = t => { const m = toMins(t), h = Math.floor(m / 60); return `${h % 12 || 12}:${String(m % 60).padStart(2, '0')}${h < 12 ? 'am' : 'pm'}`; };
+const andList = xs => xs.length < 2 ? xs.join('') : xs.slice(0, -1).join(', ') + ' and ' + xs.at(-1);
+// Why a customer can't send an order of location g for date d right now, or '' when they can.
+function orderProblem(g, d, cust) {
+  const r = cutRules(g).find(x => x.dow === isoDow(d)); if (!r) return '';
+  if (r.delivers === 'none' || (r.delivers === 'sunday' && !cust?.sunday_delivery)) return `We don’t deliver ${g} orders on ${DAYS[r.dow - 1]}s. Please choose another day, or call us on 0417 375 591.`;
+  if (r.days_before == null) return '';
+  const cut = shiftDate(d, -r.days_before), now = sydNow();
+  if (now.date > cut || (now.date === cut && now.minutes >= toMins(r.cutoff_time))) return `Orders for ${fmtDate(d)} delivery closed at ${fmtTime(r.cutoff_time)} on ${fmtDate(cut)}. Please choose a later delivery day, or call us on 0417 375 591.`;
   return '';
 }
-const organicHint = cust => `Organic orders close at 7:30am: Monday for Tuesday, Tuesday for Wednesday, Wednesday for Thursday, Thursday for Friday, and Friday for ${cust?.sunday_delivery ? 'Sunday and ' : ''}Monday delivery.`;
+// The rules in words, for the customer's order form.
+function orderHint(g, cust) {
+  const rs = cutRules(g).filter(r => r.delivers === 'all' || (r.delivers === 'sunday' && cust?.sunday_delivery));
+  const closes = rs.filter(r => r.days_before != null).map(r => `${fmtTime(r.cutoff_time)} ${r.days_before ? DAYS[(r.dow - 1 - r.days_before + 7) % 7] : 'the same day'} for ${DAYS[r.dow - 1]}`);
+  const off = DAYS.filter((_, i) => !rs.some(r => r.dow === i + 1));
+  return [closes.length && `${g} orders close ${andList(closes)} delivery.`, off.length && `No ${g} deliveries on ${andList(off)}.`].filter(Boolean).join(' ');
+}
 const fmtDate = d => { if (!d) return ''; const [y, m, dd] = d.split('-'); return new Date(+y, m - 1, +dd).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); };
 const fmtWhen = t => t ? new Date(t).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
 const byName = (a, b) => (a.name || '').localeCompare(b.name || '');
@@ -57,9 +71,9 @@ const orderNo = n => n == null ? '' : 'SO-' + String(n).padStart(4, '0');
 // Admins and Managers share the office dashboard; only Admins see Suppliers, Emails and Logins (migrations/012).
 const isAdmin = () => ['admin', 'manager'].includes(profile?.role) && profile?.approved;
 const isManager = () => profile?.role === 'manager' && profile?.approved;
-const ADMIN_ONLY = ['suppliers', 'emails', 'users', 'sms', 'admin'];
+const ADMIN_ONLY = ['suppliers', 'emails', 'users', 'sms', 'cutoffs', 'admin'];
 // The Administration tab holds Emails and Logins; it opens on whichever was used last.
-const ADMIN_TABS = [['emails', 'Emails'], ['users', 'Logins'], ['sms', 'SMS']];
+const ADMIN_TABS = [['emails', 'Emails'], ['users', 'Logins'], ['sms', 'SMS'], ['cutoffs', 'Cut-offs']];
 // The top bar's height, so sticky bits (the Administration switch) sit just under it.
 new ResizeObserver(() => document.documentElement.style.setProperty('--hdr', $('#top').offsetHeight + 'px')).observe(document.getElementById('top'));
 let adminTab = 'emails';
@@ -137,6 +151,11 @@ async function loadAll() {
     const [c, p, o] = await Promise.all([sb.from('customers').select(`id,cid,name${S.custGroupMissing ? '' : ',product_group'}${S.remMissing ? '' : ',sunday_delivery'}`), prods.eq('active', true), orders]);
     for (const r of [c, p, o]) if (r.error) toast(friendly(r.error));
     S.customers = c.data || []; S.suppliers = []; S.products = p.data || []; S.orders = o.data || [];
+  }
+  // Cut-off rules arrive with migrations/026; until then the old rules (DEFAULT_CUTOFFS) apply.
+  if (!isReceiver()) {
+    const [cr, cs] = await Promise.all([sb.from('cutoff_rules').select('*'), sb.from('cutoff_settings').select('*')]);
+    S.cutMissing = !!cr.error; S.cutRules = cr.data || []; S.cutSettings = cs.data || [];
   }
   S.products.forEach(p => (p.product_packs || []).sort((a, b) => a.sort - b.sort));
 }
@@ -291,7 +310,7 @@ function refreshInBackground() {
   const before = snap();
   return refreshing = loadAll().then(() => {
     const busy = document.querySelector('dialog[open]') || ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName);
-    if (view === v && view !== 'entry' && view !== 'sms' && !busy && snap() !== before) render(); else updateNavBadge();
+    if (view === v && !['entry', 'sms', 'cutoffs'].includes(view) && !busy && snap() !== before) render(); else updateNavBadge();
   }).finally(() => { refreshing = null; });
 }
 
@@ -301,7 +320,7 @@ addEventListener('resize', () => setPageHeadHeight());
 function render() {
   const nav = $('#nav');
   nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" aria-current="${(v === view || v === 'admin' && ADMIN_TABS.some(([t]) => t === view)) && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
-  const views = { recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers, sms: viewSms };
+  const views = { recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers, sms: viewSms, cutoffs: viewCutoffs };
   const allowed = isManager() ? Object.keys(views).filter(v => !ADMIN_ONLY.includes(v) && !v.startsWith('recv')) : isAdmin() ? null : isReceiver() ? ['recv', 'recvorder'] : ['mine', 'entry'];
   if (!views[view] || ['recv', 'recvorder'].includes(view) && !isReceiver() || (allowed && !allowed.includes(view))) view = homeView();
   if (view === 'entry' && !draft) draft = blankOrder();
@@ -311,6 +330,7 @@ function render() {
   if (view === 'entry') wireEntry();
   if (view === 'orders') wireOrderSearch();
   setPageHeadHeight();
+  if (view === 'cutoffs') document.querySelectorAll('.cuttbl [name=delivers]').forEach(cutRowState);
   if (view === 'recvorder') { wireRecvOrder(); if (keep) $('.recvscroll').scrollTop = keep; }
   if (view === 'recv') { const i = $('#osearch'); if (i) i.oninput = () => { search = i.value; render(); const j = $('#osearch'); j.focus(); j.setSelectionRange(j.value.length, j.value.length); }; }
 }
@@ -564,7 +584,7 @@ function viewEntry() {
       <div class="card grid g2">
         ${custField}${locField}
         <label class="f">Today’s date<input type="date" id="e-date" disabled title="Set automatically" value="${esc(d.status === 'draft' ? today() : d.order_date)}"></label>
-        <div class="f"><label for="e-req">Day / date required</label><div class="reqrow"><input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${tomorrow()}"` : ''} max="${latestReq()}" value="${esc(d.required_date)}">${spoBox(d, dis)}</div>${!admin && (d.group || 'Organic') === 'Organic' && d.status === 'draft' ? `<span class="muted" style="font-size:12px;font-weight:400">${organicHint(custOf(d.customer_id))}</span>` : ''}</div>
+        <div class="f"><label for="e-req">Day / date required</label><div class="reqrow"><input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${tomorrow()}"` : ''} max="${latestReq()}" value="${esc(d.required_date)}">${spoBox(d, dis)}</div>${!admin && d.status === 'draft' && orderHint(d.group || 'Organic', custOf(d.customer_id)) ? `<span class="muted" style="font-size:12px;font-weight:400">${orderHint(d.group || 'Organic', custOf(d.customer_id))}</span>` : ''}</div>
         <label class="f" style="grid-column:1/-1">Special requirements<textarea id="e-special" ${dis}>${esc(d.special)}</textarea></label>
       </div>
       <div class="row" style="margin-top:16px"><input class="search" id="e-find" placeholder="Find a product by name or code"></div>
@@ -685,7 +705,7 @@ async function saveOrder(status) {
     if (!draft.required_date) return toast('Add the day/date required first.');
     // Only checked when the order is placed, so older orders can still be processed after their date.
     if (draft.status === 'draft' && draft.required_date < tomorrow()) return toast(`The date required must be tomorrow (${fmtDate(tomorrow())}) or later.`);
-    if (!isAdmin() && draft.status === 'draft' && (draft.group || 'Organic') === 'Organic') { const why = organicProblem(draft.required_date, custOf(draft.customer_id)); if (why) return toast(why); }
+    if (!isAdmin() && draft.status === 'draft' && draft.required_date) { const why = orderProblem(draft.group || 'Organic', draft.required_date, custOf(draft.customer_id)); if (why) return toast(why); }
   } else if (needsCustomer(draft) && !draft.customer_id) return toast('Choose a customer first.');
   // Today's date is fixed: an order is dated the day it's saved, and keeps that date once it's sent.
   const row = { customer_id: draft.customer_id || null, order_date: draft.status === 'draft' ? today() : draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
@@ -782,6 +802,50 @@ function emailSummary(sid) {
   if (!on.length) return 'No addresses switched on, so this supplier’s orders have nowhere to go yet.';
   return Object.keys(SEND_AS).map(k => { const l = on.filter(e => e.send_as === k); return l.length ? `<b>${SEND_AS[k]}:</b> ${l.map(e => esc(e.email)).join(', ')}` : ''; }).filter(Boolean).join(' · ');
 }
+// ---------- order cut-off rules (Administration › Cut-offs, migrations/026) ----------
+const TIMES = Array.from({ length: 48 }, (_, i) => `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
+function viewCutoffs() {
+  const head = `<h1>Order cut-offs</h1><p class="sub">For each product location: the days you deliver, and when orders for each day close (Sydney time). Customers can’t send an order after its cut-off. You and your staff still can.</p>`;
+  if (S.cutMissing) return head + `<div class="card"><p style="margin-top:0"><b>One step first.</b> In Supabase open <b>SQL Editor</b>, paste in <a href="https://raw.githubusercontent.com/muzzascan-creator/smfw-orders/main/supabase/migrations/026_cutoff_rules.sql" target="_blank" rel="noopener">this script</a> and press Run. Then press Ctrl+F5 here.</p></div>`;
+  return head + GROUPS.map(g => {
+    const rem = S.cutSettings.find(x => x.product_group === g)?.reminder_minutes;
+    const rows = cutRules(g).map(r => {
+      const t = r.cutoff_time ? r.cutoff_time.slice(0, 5) : '07:30', times = TIMES.includes(t) ? TIMES : [...TIMES, t].sort();
+      return `<tr data-dow="${r.dow}"><td><b>${DAYS[r.dow - 1]}</b></td>
+        <td><select name="delivers" onchange="cutRowState(this)"><option value="all" ${r.delivers === 'all' ? 'selected' : ''}>All customers</option><option value="sunday" ${r.delivers === 'sunday' ? 'selected' : ''}>Sunday-delivery customers only</option><option value="none" ${r.delivers === 'none' ? 'selected' : ''}>No deliveries</option></select></td>
+        <td><select name="days" onchange="cutRowState(this)"><option value="" ${r.days_before == null ? 'selected' : ''}>No cut-off</option>${[1, 2, 3, 4, 5, 6].map(n => `<option value="${n}" ${r.days_before === n ? 'selected' : ''}>${n} day${n > 1 ? 's' : ''} before (${DAYS[(r.dow - 1 - n + 7) % 7]})</option>`).join('')}</select></td>
+        <td><select name="time">${times.map(x => `<option value="${x}" ${x === t ? 'selected' : ''}>${fmtTime(x)}</option>`).join('')}</select></td></tr>`;
+    }).join('');
+    return `<section class="card" style="margin-bottom:16px" id="cut-${g}"><div class="row spread"><h2>${g}</h2><span class="pill grp-${g.toLowerCase()}">${g}</span></div>
+      <div class="tablewrap" style="margin-top:12px"><table class="cuttbl"><thead><tr><th>Delivery day</th><th>Deliveries</th><th>Orders close</th><th>At</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="row spread" style="margin-top:12px;align-items:flex-end"><label class="f" style="max-width:420px">Reminder email to customers who haven’t ordered<select name="reminder"><option value="">No reminder emails</option>${[10, 15, 20, 30, 60, 120, 180].map(m => `<option value="${m}" ${rem === m ? 'selected' : ''}>${m < 60 ? m + ' minutes' : m / 60 + ' hour' + (m > 60 ? 's' : '')} before the cut-off</option>`).join('')}</select></label>
+      <button class="primary" onclick="saveCutoffs('${g}', this)">Save ${g}</button></div>
+      <p class="muted" style="font-size:13px;margin:10px 0 0">Customers see: ${esc(orderHint(g, { sunday_delivery: true }) || 'no restrictions.')}</p></section>`;
+  }).join('');
+}
+// "No deliveries" or "No cut-off" greys out the boxes that don't apply.
+function cutRowState(el) {
+  const tr = el.closest('tr'), none = tr.querySelector('[name=delivers]').value === 'none', nocut = !tr.querySelector('[name=days]').value;
+  tr.querySelector('[name=days]').disabled = none; tr.querySelector('[name=time]').disabled = none || nocut;
+}
+async function saveCutoffs(g, btn) {
+  const box = document.getElementById('cut-' + g);
+  const rows = [...box.querySelectorAll('tr[data-dow]')].map(tr => {
+    const delivers = tr.querySelector('[name=delivers]').value, days = tr.querySelector('[name=days]').value, on = delivers !== 'none' && days !== '';
+    return { product_group: g, dow: +tr.dataset.dow, delivers, days_before: on ? +days : null, cutoff_time: on ? tr.querySelector('[name=time]').value : null };
+  });
+  const rem = box.querySelector('[name=reminder]').value;
+  btn.disabled = true;
+  const [a, b] = await Promise.all([sb.from('cutoff_rules').upsert(rows), sb.from('cutoff_settings').upsert({ product_group: g, reminder_minutes: rem ? +rem : null })]);
+  btn.disabled = false;
+  if (a.error || b.error) return toast('Couldn’t save: ' + friendly(a.error || b.error));
+  const [cr, cs] = await Promise.all([sb.from('cutoff_rules').select('*'), sb.from('cutoff_settings').select('*')]);
+  S.cutRules = cr.data || S.cutRules; S.cutSettings = cs.data || S.cutSettings;
+  // No full redraw, so unsaved changes to the other location stay on screen.
+  box.querySelector('p.muted').textContent = 'Customers see: ' + (orderHint(g, { sunday_delivery: true }) || 'no restrictions.');
+  toast(`${g} cut-offs saved`, true);
+}
+
 // ---------- SMS settings (SMS Broadcast; new-login texts) ----------
 // Kept in the database's private settings (migrations/024). The password never comes back to the browser.
 let smsCfg = null;
@@ -1290,7 +1354,7 @@ function editCustomer(id) {
   openDialog(id ? 'Edit customer' : 'Add customer',
     `<div class="grid g2">${fld('cid', 'CID (unique number)', c.cid ?? nextCid(), 'number', 'required min="1" step="1"')}${fld('name', 'Customer name', c.name, 'text', 'required')}</div>
      <div class="grid g2">${fld('contact', 'Contact person', c.contact)}${fld('phone', 'Contact phone', c.phone)}</div><div class="grid g2">${fld('email', 'Email', c.email, 'email')}${S.custGroupMissing ? '' : `<label class="f">Orders products<select name="product_group" id="f-product_group">${[...GROUPS, 'Both'].map(g => `<option value="${g}" ${custGroup(c) === g ? 'selected' : ''}>${g === 'Both' ? 'Both (Organic and Conventional)' : g}</option>`).join('')}</select></label>`}</div>
-     ${S.remMissing ? '' : `<div class="grid g2"><label class="chk"><input type="checkbox" name="reminders" value="1" ${c.reminders !== false ? 'checked' : ''}> Email a reminder at 7:20am if no Organic order is in</label><label class="chk"><input type="checkbox" name="sunday_delivery" value="1" ${c.sunday_delivery ? 'checked' : ''}> Sunday delivery (orders Friday for Sunday)</label></div>`}
+     ${S.remMissing ? '' : `<div class="grid g2"><label class="chk"><input type="checkbox" name="reminders" value="1" ${c.reminders !== false ? 'checked' : ''}> Email a reminder before the cut-off if no order is in (see Administration › Cut-offs)</label><label class="chk"><input type="checkbox" name="sunday_delivery" value="1" ${c.sunday_delivery ? 'checked' : ''}> Sunday delivery (orders Friday for Sunday)</label></div>`}
      <label class="f">Notes<textarea name="notes" id="f-notes">${esc(c.notes)}</textarea></label>`,
     f => {
       const row = { cid: Number(f.get('cid')), name: f.get('name').trim(), contact: f.get('contact').trim(), phone: f.get('phone').trim(), email: f.get('email').trim(), notes: f.get('notes').trim() };

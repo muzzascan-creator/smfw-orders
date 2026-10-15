@@ -3,8 +3,9 @@
 //    The Receiver app calls this straight after Mark received; Admins and Managers can resend from the order.
 // 2. Supplier emails (action "supplier"): the order form PDFs the Admin app builds, sent to the supplier's
 //    active addresses under Emails. Admins and Managers only.
-// 3. Order reminders (action "reminders"): at 7:20am on each Organic order day, Organic customers who haven't
-//    sent an order for the next delivery get a reminder. Called by the Supabase Cron job in migrations/018.
+// 3. Order reminders (action "reminders"): shortly before each order cut-off (Administration › Cut-offs), customers
+//    who haven't sent an order for that delivery get a reminder. Called every 10 minutes by the Supabase Cron job
+//    (migrations/018, 026).
 // 4. New-login SMS (action "new-login"): when someone signs up and is waiting to be activated, SMFW gets a text.
 //    Called by the database the moment the login is made (migrations/022). Action "test-sms" sends a test text.
 // Needs the RESEND_API_KEY secret (resend.com). Optional: FROM_EMAIL, REPLY_TO.
@@ -75,12 +76,14 @@ async function sendToSupplier({ supplier_id, subject, text, files }: { supplier_
 }
 
 // ---------- order reminders ----------
-// Organic order days (Sydney): Mon -> Tue delivery, Tue -> Wed, Wed -> Thu, Thu -> Fri, Fri -> Sun (Sunday-delivery customers only) and Mon.
-// Days are counted from Sunday = 0. Orders close at 7:30am; the reminder goes at 7:20am.
-const ORDER_DAYS: Record<number, { ahead: number; sundayOnly?: boolean }[]> = {
-  1: [{ ahead: 1 }], 2: [{ ahead: 1 }], 3: [{ ahead: 1 }], 4: [{ ahead: 1 }],
-  5: [{ ahead: 2, sundayOnly: true }, { ahead: 3 }],
-};
+// The cut-off rules per product location live in cutoff_rules / cutoff_settings (Administration › Cut-offs, migrations/026).
+// The job runs every 10 minutes; each cut-off gets one reminder, sent in the window set there (e.g. 10 minutes before).
+// Until 026 is run, the old Organic rules apply: deliveries close 7:30am, the day before (Friday for Sunday and Monday).
+const OLD_RULES = [[1, 'all', 3], [2, 'all', 1], [3, 'all', 1], [4, 'all', 1], [5, 'all', 1], [7, 'sunday', 2]]
+  .map(([dow, delivers, days_before]) => ({ product_group: 'Organic', dow, delivers, days_before, cutoff_time: '07:30:00' }));
+const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const toMins = (t: string) => +t.split(':')[0] * 60 + +t.split(':')[1];
+const fmtTime = (t: string) => { const m = toMins(t), h = Math.floor(m / 60); return `${h % 12 || 12}:${String(m % 60).padStart(2, '0')}${h < 12 ? 'am' : 'pm'}`; };
 export function sydneyNow(now = new Date()) {
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
     .formatToParts(now).map(x => [x.type, x.value]));
@@ -88,47 +91,57 @@ export function sydneyNow(now = new Date()) {
   return { date, dow: new Date(date + 'T12:00:00Z').getUTCDay(), minutes: +p.hour * 60 + +p.minute };
 }
 const addDays = (d: string, n: number) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
-export function reminderEmail(cust: any, delivery: string, hasDraft: boolean) {
+export function reminderEmail(cust: any, delivery: string, hasDraft: boolean, group = 'Organic', time = '07:30') {
+  const at = fmtTime(time);
   const day = fmtDate(delivery);
-  const subject = `Reminder: order by 7:30am today for ${day} delivery`;
+  const subject = `Reminder: order by ${at} today for ${day} delivery`;
   const lead = hasDraft ? `you have an order saved as a draft for ${esc(day)} delivery, but it hasn’t been sent yet` : `we haven’t received your order for ${esc(day)} delivery yet`;
   const html = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1d241f">
 <p>Dear Customer,</p>
-<p>Just a reminder that ${lead}. Organic orders for that delivery close at <b>7:30am today</b>.</p>
+<p>Just a reminder that ${lead}. ${group} orders for that delivery close at <b>${at} today</b>.</p>
 <p><a href="https://csorders.org" style="display:inline-block;background:#2f6b3a;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:bold">${hasDraft ? 'Open and send your order' : 'Place your order'}</a></p>
 <p>If you don’t need a delivery that day, please ignore this email.</p>
 <p>Regards,<br>Coolibah Salads Sydney<br>0417 375 591 · sales@cssydney.com.au</p></div>`;
-  const text = `Dear Customer,\n\nJust a reminder that ${hasDraft ? `you have an order saved as a draft for ${day} delivery, but it hasn't been sent yet` : `we haven't received your order for ${day} delivery yet`}. Organic orders for that delivery close at 7:30am today.\n\n${hasDraft ? 'Open and send your order' : 'Place your order'} at https://csorders.org\n\nIf you don't need a delivery that day, please ignore this email.\n\nRegards,\nCoolibah Salads Sydney\n0417 375 591 · sales@cssydney.com.au\n`;
+  const text = `Dear Customer,\n\nJust a reminder that ${hasDraft ? `you have an order saved as a draft for ${day} delivery, but it hasn't been sent yet` : `we haven't received your order for ${day} delivery yet`}. ${group} orders for that delivery close at ${at} today.\n\n${hasDraft ? 'Open and send your order' : 'Place your order'} at https://csorders.org\n\nIf you don't need a delivery that day, please ignore this email.\n\nRegards,\nCoolibah Salads Sydney\n0417 375 591 · sales@cssydney.com.au\n`;
   return { subject, html, text };
 }
-// dry: list who would be reminded without sending. force: run outside the 7:20am window (Admin testing).
+// dry: list who would be reminded without sending. force: include every cut-off still to come today (Admin testing).
 async function sendReminders({ dry = false, force = false, now }: { dry?: boolean; force?: boolean; now?: string }) {
   const t = sydneyNow(now ? new Date(now) : new Date());
-  if (!force && (t.minutes < 7 * 60 + 10 || t.minutes >= 7 * 60 + 30)) return reply({ skipped: 'Not 7:20am in Sydney.' });
-  const due = ORDER_DAYS[t.dow] || [];
-  if (!due.length) return reply({ skipped: 'Not an Organic order day.' });
-  const custs: any[] = await (await db(`customers?product_group=in.(Organic,Both)&reminders=eq.true&select=id,name,contact,email,sunday_delivery`)).json();
+  const rr = await db('cutoff_rules?select=*'), sr = await db('cutoff_settings?select=*');
+  const rules: any[] = rr.ok ? await rr.json() : OLD_RULES, settings: any[] = sr.ok ? await sr.json() : [{ product_group: 'Organic', reminder_minutes: 10 }];
+  // The cut-offs falling today whose reminder window is now: the delivery is days_before days ahead and on the rule's day.
+  const due = rules.filter(r => {
+    const mins = settings.find(x => x.product_group === r.product_group)?.reminder_minutes;
+    if (!mins || r.delivers === 'none' || r.days_before == null || !r.cutoff_time) return false;
+    const dow = new Date(addDays(t.date, r.days_before) + 'T12:00:00Z').getUTCDay() || 7, cut = toMins(r.cutoff_time);
+    return dow === r.dow && (force ? t.minutes < cut : t.minutes >= cut - mins && t.minutes < cut);
+  });
+  if (!due.length) return reply({ skipped: 'No order cut-off is coming up.' });
+  const custs: any[] = await (await db(`customers?reminders=eq.true&select=id,name,contact,email,sunday_delivery,product_group`)).json();
   const out: any[] = [];
   for (const d of due) {
-    const delivery = addDays(t.date, d.ahead);
+    const delivery = addDays(t.date, d.days_before);
     const orders: any[] = await (await db(`orders?required_date=eq.${delivery}&customer_id=not.is.null&select=customer_id,status`)).json();
     const sent = new Set(orders.filter(o => o.status !== 'draft').map(o => o.customer_id)), drafts = new Set(orders.filter(o => o.status === 'draft').map(o => o.customer_id));
     const done = new Set(((await (await db(`reminder_log?delivery_date=eq.${delivery}&select=customer_id`)).json()) as any[]).map(r => r.customer_id));
     for (const c of custs) {
-      if (d.sundayOnly && !c.sunday_delivery) continue;
+      if (![d.product_group, 'Both'].includes(c.product_group || 'Organic')) continue;
+      if (d.delivers === 'sunday' && !c.sunday_delivery) continue;
       if (sent.has(c.id) || done.has(c.id)) continue;
       const to = String(c.email || '').split(/[,;\s]+/).filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
-      const row: any = { customer: c.name, delivery, to: to.join(', '), draft: drafts.has(c.id) };
+      const row: any = { customer: c.name, group: d.product_group, delivery, to: to.join(', '), draft: drafts.has(c.id) };
       if (!to.length) { row.error = 'No email address'; out.push(row); continue; }
       if (dry) { out.push(row); continue; }
       let error = null;
       if (!RESEND_KEY) error = 'RESEND_API_KEY is missing';
       else {
-        const { subject, html, text } = reminderEmail(c, delivery, drafts.has(c.id));
+        const { subject, html, text } = reminderEmail(c, delivery, drafts.has(c.id), d.product_group, d.cutoff_time);
         const r = await fetch(RESEND_URL, { method: 'POST', headers: { Authorization: `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from: FROM, to, reply_to: REPLY_TO, subject, html, text }) });
         if (!r.ok) error = (await r.text()).slice(0, 200);
       }
       await db('reminder_log', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates' }, body: JSON.stringify({ customer_id: c.id, delivery_date: delivery, sent_to: to.join(', '), error }) });
+      done.add(c.id);
       out.push({ ...row, sent: !error, error });
     }
   }
@@ -163,7 +176,7 @@ async function newLoginSms(id: string) {
 export async function handler(req: Request) {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   try {
-    // The scheduled 7:20am job proves itself with the private key stored in app_settings (migrations/018).
+    // The scheduled reminder job proves itself with the private key stored in app_settings (migrations/018).
     const cronKey = req.headers.get('x-cron-key');
     if (cronKey) {
       const [k] = await (await db(`app_settings?key=eq.cron_key&select=value`)).json();
