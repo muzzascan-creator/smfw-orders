@@ -56,6 +56,11 @@ function orderProblem(g, d, cust) {
   if (now.date > cut || (now.date === cut && now.minutes >= toMins(r.cutoff_time))) return `Orders for ${fmtDate(d)} delivery closed at ${fmtTime(r.cutoff_time)} on ${fmtDate(cut)}. Please choose a later delivery day, or call us on 0417 375 591.`;
   return '';
 }
+// Orders are for tomorrow or later, or for today when today's delivery for that location closes the same day.
+function earliestReq(g, cust) {
+  const t = sydNow().date, r = cutRules(g).find(x => x.dow === isoDow(t));
+  return r && r.days_before === 0 && (r.delivers === 'all' || (r.delivers === 'sunday' && cust?.sunday_delivery)) ? t : tomorrow();
+}
 // The rules in words, for the customer's order form.
 function orderHint(g, cust) {
   const rs = cutRules(g).filter(r => r.delivers === 'all' || (r.delivers === 'sunday' && cust?.sunday_delivery));
@@ -584,7 +589,7 @@ function viewEntry() {
       <div class="card grid g2">
         ${custField}${locField}
         <label class="f">Today’s date<input type="date" id="e-date" disabled title="Set automatically" value="${esc(d.status === 'draft' ? today() : d.order_date)}"></label>
-        <div class="f"><label for="e-req">Day / date required</label><div class="reqrow"><input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${tomorrow()}"` : ''} max="${latestReq()}" value="${esc(d.required_date)}">${spoBox(d, dis)}</div>${!admin && d.status === 'draft' && orderHint(d.group || 'Organic', custOf(d.customer_id)) ? `<span class="muted" style="font-size:12px;font-weight:400">${orderHint(d.group || 'Organic', custOf(d.customer_id))}</span>` : ''}</div>
+        <div class="f"><label for="e-req">Day / date required</label><div class="reqrow"><input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${earliestReq(d.group || 'Organic', custOf(d.customer_id))}"` : ''} max="${latestReq()}" value="${esc(d.required_date)}">${spoBox(d, dis)}</div>${!admin && d.status === 'draft' && orderHint(d.group || 'Organic', custOf(d.customer_id)) ? `<span class="muted" style="font-size:12px;font-weight:400">${orderHint(d.group || 'Organic', custOf(d.customer_id))}</span>` : ''}</div>
         <label class="f" style="grid-column:1/-1">Special requirements<textarea id="e-special" ${dis}>${esc(d.special)}</textarea></label>
       </div>
       <div class="row" style="margin-top:16px"><input class="search" id="e-find" placeholder="Find a product by name or code"></div>
@@ -704,7 +709,8 @@ async function saveOrder(status) {
     if (!lines.length) return toast('Enter at least one quantity first.');
     if (!draft.required_date) return toast('Add the day/date required first.');
     // Only checked when the order is placed, so older orders can still be processed after their date.
-    if (draft.status === 'draft' && draft.required_date < tomorrow()) return toast(`The date required must be tomorrow (${fmtDate(tomorrow())}) or later.`);
+    const first = earliestReq(draft.group || 'Organic', custOf(draft.customer_id));
+    if (draft.status === 'draft' && draft.required_date < first) return toast(`The date required must be ${first === sydNow().date ? 'today' : 'tomorrow'} (${fmtDate(first)}) or later.`);
     if (!isAdmin() && draft.status === 'draft' && draft.required_date) { const why = orderProblem(draft.group || 'Organic', draft.required_date, custOf(draft.customer_id)); if (why) return toast(why); }
   } else if (needsCustomer(draft) && !draft.customer_id) return toast('Choose a customer first.');
   // Today's date is fixed: an order is dated the day it's saved, and keeps that date once it's sent.
@@ -805,7 +811,7 @@ function emailSummary(sid) {
 // ---------- order cut-off rules (Administration › Cut-offs, migrations/026) ----------
 const TIMES = Array.from({ length: 48 }, (_, i) => `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
 function viewCutoffs() {
-  const head = `<h1>Order cut-offs</h1><p class="sub">For each product location: the days you deliver, and when orders for each day close (Sydney time). Customers can’t send an order after its cut-off. You and your staff still can.</p>`;
+  const head = `<h1>Order cut-offs</h1><p class="sub">For each product location: the days you deliver, and when orders for each day close (Sydney time). Customers can’t send an order after its cut-off. You and your staff still can. Choose <b>Same day</b> to take orders for delivery that day, up to the time set.</p>`;
   if (S.cutMissing) return head + `<div class="card"><p style="margin-top:0"><b>One step first.</b> In Supabase open <b>SQL Editor</b>, paste in <a href="https://raw.githubusercontent.com/muzzascan-creator/smfw-orders/main/supabase/migrations/026_cutoff_rules.sql" target="_blank" rel="noopener">this script</a> and press Run. Then press Ctrl+F5 here.</p></div>`;
   return head + GROUPS.map(g => {
     const rem = S.cutSettings.find(x => x.product_group === g)?.reminder_minutes;
@@ -813,7 +819,7 @@ function viewCutoffs() {
       const t = r.cutoff_time ? r.cutoff_time.slice(0, 5) : '07:30', times = TIMES.includes(t) ? TIMES : [...TIMES, t].sort();
       return `<tr data-dow="${r.dow}"><td><b>${DAYS[r.dow - 1]}</b></td>
         <td><select name="delivers" onchange="cutRowState(this)"><option value="all" ${r.delivers === 'all' ? 'selected' : ''}>All customers</option><option value="sunday" ${r.delivers === 'sunday' ? 'selected' : ''}>Sunday-delivery customers only</option><option value="none" ${r.delivers === 'none' ? 'selected' : ''}>No deliveries</option></select></td>
-        <td><select name="days" onchange="cutRowState(this)"><option value="" ${r.days_before == null ? 'selected' : ''}>No cut-off</option>${[1, 2, 3, 4, 5, 6].map(n => `<option value="${n}" ${r.days_before === n ? 'selected' : ''}>${n} day${n > 1 ? 's' : ''} before (${DAYS[(r.dow - 1 - n + 7) % 7]})</option>`).join('')}</select></td>
+        <td><select name="days" onchange="cutRowState(this)"><option value="" ${r.days_before == null ? 'selected' : ''}>No cut-off</option>${[0, 1, 2, 3, 4, 5, 6].map(n => `<option value="${n}" ${r.days_before === n ? 'selected' : ''}>${n ? `${n} day${n > 1 ? 's' : ''} before (${DAYS[(r.dow - 1 - n + 7) % 7]})` : `Same day (${DAYS[r.dow - 1]})`}</option>`).join('')}</select></td>
         <td><select name="time">${times.map(x => `<option value="${x}" ${x === t ? 'selected' : ''}>${fmtTime(x)}</option>`).join('')}</select></td></tr>`;
     }).join('');
     return `<section class="card" style="margin-bottom:16px" id="cut-${g}"><div class="row spread"><h2>${g}</h2><span class="pill grp-${g.toLowerCase()}">${g}</span></div>
