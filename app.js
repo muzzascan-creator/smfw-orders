@@ -1178,6 +1178,33 @@ async function uploadCsvs() {
 async function sendSupplierEmails(btn) {
   btn.disabled = true;
   const { os, groups } = pickedBySupplier(), failed = new Set(), done = [];
+  // Another device (or another person) may have emailed or changed these orders since this screen loaded.
+  // Check the latest copy first, then claim the not-yet-emailed ones so two devices can't both send them.
+  const { data: fresh, error: ferr } = await sb.from('orders').select('id,number,updated_at,emailed_at').in('id', os.map(o => o.id));
+  if (ferr) { btn.disabled = false; return toast(friendly(ferr)); }
+  const now = new Map(fresh.map(o => [o.id, o]));
+  const elsewhere = os.filter(o => !o.emailed_at && now.get(o.id)?.emailed_at), changed = os.filter(o => now.get(o.id)?.updated_at !== o.updated_at && !elsewhere.includes(o));
+  let claimed = [];
+  if (!elsewhere.length && !changed.length) {
+    const fresh0 = os.filter(o => !o.emailed_at).map(o => o.id);
+    if (fresh0.length) {
+      const { data: got, error: cerr } = await sb.from('orders').update({ emailed_at: new Date().toISOString() }).in('id', fresh0).is('emailed_at', null).select('id');
+      if (cerr) { btn.disabled = false; return toast(friendly(cerr)); }
+      claimed = got.map(o => o.id);
+      if (claimed.length < fresh0.length) {
+        elsewhere.push(...os.filter(o => fresh0.includes(o.id) && !claimed.includes(o.id)));
+        if (claimed.length) await sb.from('orders').update({ emailed_at: null }).in('id', claimed);
+      }
+    }
+  }
+  if (elsewhere.length || changed.length) {
+    elsewhere.forEach(o => picked.delete(o.id));
+    await reloadOrders(); $('#dlg').close(); render();
+    const msg = [elsewhere.length && `${elsewhere.map(o => orderNo(o.number)).join(', ')} ${elsewhere.length > 1 ? 'were' : 'was'} already emailed from another device and ${elsewhere.length > 1 ? 'have' : 'has'} been taken off the list`,
+      changed.length && `${changed.map(o => orderNo(o.number)).join(', ')} changed on another device`].filter(Boolean).join('. ');
+    alert(`Nothing was sent. ${msg}. Please check the orders, then press Email selected again.`);
+    return;
+  }
   for (const [i, [s, list]] of groups.entries()) {
     const st = $(`#est-${i}`), r = recipients(s);
     if (!r.to.length && !r.cc.length && !r.bcc.length) { list.forEach(o => failed.add(o.id)); continue; }
@@ -1194,6 +1221,9 @@ async function sendSupplierEmails(btn) {
   }
   const ids = os.filter(o => (o.lines || []).some(supplierOfLine) && !failed.has(o.id)).map(o => o.id);
   if (ids.length) await sb.from('orders').update({ emailed_at: new Date().toISOString() }).in('id', ids);
+  // Orders claimed above whose email didn't go are put back to not emailed.
+  const unsent = claimed.filter(id => !ids.includes(id));
+  if (unsent.length) await sb.from('orders').update({ emailed_at: null }).in('id', unsent);
   await reloadOrders();
   if (!failed.size) { $('#dlg').close(); picked.clear(); render(); toast(`${done.length} email${done.length === 1 ? '' : 's'} sent and ${ids.length} order${ids.length === 1 ? '' : 's'} marked as emailed`, true); }
   else { render(); toast(done.length ? `${done.length} sent, but some didn’t go. See the dialog.` : 'Nothing was sent. See the dialog.'); btn.disabled = false; btn.textContent = 'Try again'; }
