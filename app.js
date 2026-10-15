@@ -55,9 +55,9 @@ const orderNo = n => n == null ? '' : 'SO-' + String(n).padStart(4, '0');
 // Admins and Managers share the office dashboard; only Admins see Suppliers, Emails and Logins (migrations/012).
 const isAdmin = () => ['admin', 'manager'].includes(profile?.role) && profile?.approved;
 const isManager = () => profile?.role === 'manager' && profile?.approved;
-const ADMIN_ONLY = ['suppliers', 'emails', 'users', 'admin'];
+const ADMIN_ONLY = ['suppliers', 'emails', 'users', 'sms', 'admin'];
 // The Administration tab holds Emails and Logins; it opens on whichever was used last.
-const ADMIN_TABS = [['emails', 'Emails'], ['users', 'Logins']];
+const ADMIN_TABS = [['emails', 'Emails'], ['users', 'Logins'], ['sms', 'SMS']];
 // The top bar's height, so sticky bits (the Administration switch) sit just under it.
 new ResizeObserver(() => document.documentElement.style.setProperty('--hdr', $('#top').offsetHeight + 'px')).observe(document.getElementById('top'));
 let adminTab = 'emails';
@@ -171,7 +171,7 @@ async function start() {
   await enter();
 }
 async function enter() {
-  if (!session) { clearInterval(autoRefresh); autoRefresh = null; profile = null; view = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
+  if (!session) { clearInterval(autoRefresh); autoRefresh = null; profile = null; view = null; smsCfg = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
   if (authMode === 'newpass') return renderAuth();
   await loadProfile();
   if (!profile || !profile.approved || (!isAdmin() && !isReceiver() && !profile.customer_id)) { $('#top').hidden = true; return renderPending(); }
@@ -266,14 +266,14 @@ function refreshInBackground() {
   const before = snap();
   return refreshing = loadAll().then(() => {
     const busy = document.querySelector('dialog[open]') || ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName);
-    if (view === v && view !== 'entry' && !busy && snap() !== before) render(); else updateNavBadge();
+    if (view === v && view !== 'entry' && view !== 'sms' && !busy && snap() !== before) render(); else updateNavBadge();
   }).finally(() => { refreshing = null; });
 }
 
 function render() {
   const nav = $('#nav');
   nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" aria-current="${(v === view || v === 'admin' && ADMIN_TABS.some(([t]) => t === view)) && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
-  const views = { recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers };
+  const views = { recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers, sms: viewSms };
   const allowed = isManager() ? Object.keys(views).filter(v => !ADMIN_ONLY.includes(v) && !v.startsWith('recv')) : isAdmin() ? null : isReceiver() ? ['recv', 'recvorder'] : ['mine', 'entry'];
   if (!views[view] || ['recv', 'recvorder'].includes(view) && !isReceiver() || (allowed && !allowed.includes(view))) view = homeView();
   if (view === 'entry' && !draft) draft = blankOrder();
@@ -751,6 +751,46 @@ function emailSummary(sid) {
   const on = emailsOf(sid).filter(e => e.active);
   if (!on.length) return 'No addresses switched on, so this supplier’s orders have nowhere to go yet.';
   return Object.keys(SEND_AS).map(k => { const l = on.filter(e => e.send_as === k); return l.length ? `<b>${SEND_AS[k]}:</b> ${l.map(e => esc(e.email)).join(', ')}` : ''; }).filter(Boolean).join(' · ');
+}
+// ---------- SMS settings (SMS Broadcast; new-login texts) ----------
+// Kept in the database's private settings (migrations/024). The password never comes back to the browser.
+let smsCfg = null;
+async function loadSms() {
+  const { data, error } = await sb.rpc('get_sms_settings');
+  smsCfg = error ? { error: /get_sms_settings|function/i.test(error.message) ? 'missing' : error.message } : data || {};
+  if (view === 'sms') render();
+}
+function viewSms() {
+  const head = `<h1>SMS</h1><p class="sub">Texts are sent through SMS Broadcast, for example when a new login is waiting to be activated.</p>`;
+  if (!smsCfg) { loadSms(); return head + '<div class="card empty">Loading…</div>'; }
+  if (smsCfg.error === 'missing') return head + `<div class="card"><p style="margin-top:0"><b>One step first.</b> In Supabase open <b>SQL Editor</b>, paste in <a href="https://raw.githubusercontent.com/muzzascan-creator/smfw-orders/main/supabase/migrations/024_sms_settings_screen.sql" target="_blank" rel="noopener">this script</a> and press Run. Then come back here.</p></div>`;
+  if (smsCfg.error) return head + `<div class="card banner">${esc(smsCfg.error)}</div>`;
+  const c = smsCfg;
+  return head + `<form class="card grid" style="max-width:640px" onsubmit="event.preventDefault();saveSms(this)">
+    <label class="f">SMS Broadcast username<input name="username" autocomplete="off" value="${esc(c.username || '')}"></label>
+    <label class="f">SMS Broadcast password<input name="password" type="password" autocomplete="new-password" placeholder="${c.password_saved ? 'Saved. Leave blank to keep it.' : 'Not set yet'}"></label>
+    <label class="chk" style="margin-top:-6px"><input type="checkbox" onchange="this.form.password.type = this.checked ? 'text' : 'password'">Show password while typing</label>
+    <label class="f">Default sender<input name="sender" maxlength="11" value="${esc(c.sender || '')}"><span class="muted" style="font-size:12px;font-weight:400">Shown as who the text is from: a mobile number, or a name of up to 11 letters or numbers.</span></label>
+    <label class="f">Send texts to<input name="mobile" value="${esc(c.mobile || '')}"><span class="muted" style="font-size:12px;font-weight:400">Mobile number. Separate several with commas.</span></label>
+    <div class="row spread"><button type="button" id="smstest" onclick="testSms(this)">Send test text</button><button class="primary">Save</button></div>
+    <p class="muted" id="smsmsg" style="margin:0;font-size:13px">The test uses the saved settings, so press Save first after a change.</p>
+  </form>`;
+}
+async function saveSms(f) {
+  const v = n => f.elements[n].value.trim();
+  if (!v('username') || !v('mobile')) return toast('Please fill in the username and the mobile number.');
+  const btn = f.querySelector('button.primary'); btn.disabled = true;
+  const { error } = await sb.rpc('save_sms_settings', { username: v('username'), password: f.elements.password.value, sender: v('sender'), mobile: v('mobile') });
+  btn.disabled = false;
+  if (error) return toast('Couldn’t save: ' + error.message);
+  toast('SMS settings saved', true); smsCfg = null; render();
+}
+async function testSms(btn) {
+  const msg = $('#smsmsg'); btn.disabled = true; msg.textContent = 'Sending…';
+  const { data, error } = await sb.functions.invoke(NOTIFY_FN, { body: { action: 'test-sms' } });
+  btn.disabled = false;
+  msg.textContent = data?.sent ? `Test text sent to ${data.to.join(', ')}. Check the phone.`
+    : data?.reason || (error ? 'The text service needs updating first (redeploy quick-api), or isn’t reachable right now.' : 'The test text wasn’t sent.');
 }
 function viewEmails() {
   const head = `<h1>Order emails</h1><p class="sub">Where each supplier’s completed orders are sent. Add as many addresses as you need, choose To, CC or BCC for each, and untick <b>Send</b> to pause one without deleting it.</p>`;

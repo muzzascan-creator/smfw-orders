@@ -11,6 +11,7 @@
 // Texts go through SMS Broadcast (smsbroadcast.com.au) and need the SMSBROADCAST_USERNAME and
 // SMSBROADCAST_PASSWORD secrets, or the sms_username / sms_password settings in app_settings (migrations/022);
 // SMSBROADCAST_FROM / sms_from (sender name, up to 11 letters/digits) is optional.
+// Admins change these settings, and send a test text, under Administration > SMS in the app (migrations/024).
 // The mobile number(s) are the sms_to setting in app_settings.
 const URL_ = Deno.env.get('SUPABASE_URL')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -184,6 +185,10 @@ export async function handler(req: Request) {
     if (body.action === 'reminders') {
       if (!['manager', 'admin'].includes(me.role)) return reply({ error: 'Not allowed.' }, 403);
       return await sendReminders({ dry: body.dry !== false, force: !!body.force, now: body.now });
+    }
+    if (body.action === 'test-sms') {
+      if (me.role !== 'admin') return reply({ error: 'Not allowed.' }, 403);
+      return reply(await sendSms('Coolibah Orders: test text. New-login alerts will arrive like this.'));
     }
     if (body.action === 'supplier') {
       if (!['manager', 'admin'].includes(me.role)) return reply({ error: 'Not allowed.' }, 403);
