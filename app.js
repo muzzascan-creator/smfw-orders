@@ -2,6 +2,8 @@
 // Data and logins live in Supabase; access rules in supabase/schema.sql decide what each person can see.
 
 const cfg = window.SMFW_CONFIG || {};
+// Arriving from an email link (confirm account / reset password) counts as signing in on this device.
+let claimDevice = /access_token|type=recovery/.test(location.hash) || new URLSearchParams(location.search).has('code');
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
 
 const S = { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], emailsMissing: false, groupsMissing: false };
@@ -170,9 +172,31 @@ async function start() {
   });
   await enter();
 }
+// ---------- one device per login (migrations/025) ----------
+// Each browser keeps its own id. Signing in claims the login for this browser; any other browser
+// still signed in with it finds out on its next check and signs itself out.
+function deviceId() {
+  let id = null; try { id = localStorage.getItem('smfw-device'); } catch (e) {}
+  if (!id) { id = crypto.randomUUID(); try { localStorage.setItem('smfw-device', id); } catch (e) {} }
+  return id;
+}
+let deviceTimer = null;
+async function stillMyDevice() {
+  if (!session) return false;
+  const claim = claimDevice; claimDevice = false;
+  const { data, error } = await sb.rpc('check_device', { device: deviceId(), claim });
+  if (error || data !== false) return true; // not set up yet (025 not run) or still ours
+  clearInterval(deviceTimer); deviceTimer = null;
+  authMode = 'signin'; authMsg = 'You were signed out because this login was used on another device.';
+  await sb.auth.signOut({ scope: 'local' }); // local only: the other device stays signed in
+  return false;
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && profile) stillMyDevice(); });
 async function enter() {
-  if (!session) { clearInterval(autoRefresh); autoRefresh = null; profile = null; view = null; smsCfg = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
+  if (!session) { clearInterval(deviceTimer); deviceTimer = null; clearInterval(autoRefresh); autoRefresh = null; profile = null; view = null; smsCfg = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
   if (authMode === 'newpass') return renderAuth();
+  if (!(await stillMyDevice())) return;
+  clearInterval(deviceTimer); deviceTimer = setInterval(() => { if (!document.hidden) stillMyDevice(); }, 30000);
   await loadProfile();
   if (!profile || !profile.approved || (!isAdmin() && !isReceiver() && !profile.customer_id)) { $('#top').hidden = true; return renderPending(); }
   $('#top').hidden = false;
@@ -220,6 +244,7 @@ function renderAuth() {
     const btn = e.target.querySelector('button[type=submit]'); btn.disabled = true;
     const email = $('#a-email')?.value.trim(), password = $('#a-pass')?.value;
     let error;
+    claimDevice = true;
     if (authMode === 'signin') ({ error } = await sb.auth.signInWithPassword({ email, password }));
     else if (authMode === 'signup') {
       const r = await sb.auth.signUp({ email, password, options: { data: { full_name: $('#a-name').value.trim(), business: $('#a-biz').value.trim() }, emailRedirectTo: location.origin + location.pathname } });
@@ -646,6 +671,7 @@ function wireEntry() {
 }
 let saving = false;
 async function saveOrder(status) {
+  if (!(await stillMyDevice())) return;
   if (saving) return;
   const lines = draftLines();
   if (draft.required_date && (!/^\d{4}-\d{2}-\d{2}$/.test(draft.required_date) || draft.required_date > latestReq())) return toast(`The date required must be within the next 12 months (by ${fmtDate(latestReq())}).`);
@@ -1177,6 +1203,7 @@ async function uploadCsvs() {
 // then marks as emailed every order whose suppliers were all sent to.
 async function sendSupplierEmails(btn) {
   btn.disabled = true;
+  if (!(await stillMyDevice())) return;
   const { os, groups } = pickedBySupplier(), failed = new Set(), done = [];
   // Another device (or another person) may have emailed or changed these orders since this screen loaded.
   // Check the latest copy first, then claim the not-yet-emailed ones so two devices can't both send them.
