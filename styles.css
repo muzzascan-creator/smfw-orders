@@ -254,3 +254,9 @@ label.chk.spo input{margin:0;width:18px;height:18px}
   .tablewrap.stickyhead thead th:first-child{border-top-left-radius:10px}
   .tablewrap.stickyhead thead th:last-child{border-top-right-radius:10px}
 }
+/* Products: each supplier's name stays in view above its frozen column headings. */
+.supblock h2{margin:12px 0 0;height:44px;line-height:44px}
+@media (min-width:900px){
+  .supblock h2{position:sticky;top:calc(var(--hdr,0px) + var(--ph,0px));z-index:3;background:var(--bg)}
+  .supblock .tablewrap.stickyhead thead th{top:calc(var(--hdr,0px) + var(--ph,0px) + 44px)}
+}

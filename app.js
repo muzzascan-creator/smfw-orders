@@ -725,25 +725,25 @@ function viewCustomers() {
 }
 function viewSuppliers() {
   const ss = S.suppliers.slice().sort(byName);
-  return `<div class="row spread"><div><h1>Suppliers</h1><p class="sub">Who you buy from. Customers never see this list.</p></div><button class="primary" onclick="editSupplier()">Add supplier</button></div>
-  ${ss.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Order emails</th><th>Cut-off</th><th class="num">Products</th><th></th></tr></thead><tbody>
+  return `<div class="row spread pagehead"><div><h1>Suppliers</h1><p class="sub">Who you buy from. Customers never see this list.</p></div><button class="primary" onclick="editSupplier()">Add supplier</button></div>
+  ${ss.length ? `<div class="tablewrap stickyhead"><table><thead><tr><th>Name</th><th>Order emails</th><th>Cut-off</th><th class="num">Products</th><th></th></tr></thead><tbody>
     ${ss.map(s => `<tr><td><b>${esc(s.name)}</b>${s.notes ? `<div class="muted" style="font-size:12px">${esc(s.notes)}</div>` : ''}</td><td class="mono">${recipientsHtml(s)}</td><td>${esc(s.cutoff)}</td><td class="num">${S.products.filter(p => p.supplier_id === s.id).length}</td><td class="num"><button class="ghost" onclick="editSupplier('${s.id}')">Edit</button></td></tr>`).join('')}
   </tbody></table></div>` : `<div class="card empty">No suppliers yet.</div>`}`;
 }
 function viewProducts() {
   const blocks = S.suppliers.slice().sort(byName).map(s => {
     const ps = S.products.filter(p => p.supplier_id === s.id && (groupFilter === 'all' || groupOf(p) === groupFilter)).sort(bySort); if (!ps.length) return '';
-    return `<h2 style="margin:20px 0 8px">${esc(s.name)}</h2><div class="tablewrap"><table><thead><tr><th>Code</th><th>Product</th><th>Group</th><th>Section</th><th>Pack types · SID · outer</th><th></th></tr></thead><tbody>
+    return `<section class="supblock"><h2>${esc(s.name)}</h2><div class="tablewrap stickyhead"><table><thead><tr><th>Code</th><th>Product</th><th>Group</th><th>Section</th><th>Pack types · SID · outer</th><th></th></tr></thead><tbody>
     ${ps.map(p => `<tr${p.active === false ? ' class="muted"' : ''}><td class="mono">${esc(p.code)}</td><td>${esc(p.name)}${p.active === false ? ' <span class="pill">Hidden</span>' : ''}</td><td><span class="pill grp-${groupOf(p).toLowerCase()}">${groupOf(p)}</span></td><td>${esc(p.section)}</td>
       <td class="packs">${(p.product_packs || []).map(k => `<div><span class="mono muted">SID ${esc(k.sid)}</span>${k.ref ? ` <span class="mono muted">· Ref ${esc(k.ref)}</span>` : ''} ${esc(k.name)} <span class="mono muted">· outer ${outerOf(k)}</span>${k.available ? '' : ' <span class="pill">Not available</span>'}</div>`).join('')}</td>
       <td class="num"><button class="ghost" onclick="editProduct('${p.id}')">Edit</button></td></tr>`).join('')}
-    </tbody></table></div>`;
+    </tbody></table></div></section>`;
   }).join('');
   const n = g => g === 'all' ? S.products.length : S.products.filter(p => groupOf(p) === g).length;
   const filters = `<div class="row" style="margin-bottom:4px">${['all', ...GROUPS].map(g => `<button class="${groupFilter === g ? 'primary' : ''}" onclick="groupFilter='${g}';render()">${g === 'all' ? 'All' : g} (${n(g)})</button>`).join('')}</div>`;
   const note = S.groupsMissing ? `<div class="banner">To use the Organic and Conventional groups, run <a href="https://raw.githubusercontent.com/muzzascan-creator/smfw-orders/main/supabase/migrations/004_product_groups.sql" target="_blank" rel="noopener">004_product_groups.sql</a> in Supabase’s SQL Editor, then reload. Until then every product counts as Organic.</div>` : '';
-  return `<div class="row spread"><div><h1>Products</h1><p class="sub">Grouped by supplier, in the same sections as their order forms.</p></div>${S.suppliers.length ? `<div class="row"><button onclick="editSections()">Sections</button><button class="primary" onclick="editProduct()">Add product</button></div>` : ''}</div>
-  ${note}${S.products.length ? filters : ''}
+  return `<div class="pagehead"><div class="row spread"><div><h1>Products</h1><p class="sub">Grouped by supplier, in the same sections as their order forms.</p></div>${S.suppliers.length ? `<div class="row"><button onclick="editSections()">Sections</button><button class="primary" onclick="editProduct()">Add product</button></div>` : ''}</div>
+  ${S.products.length ? filters : ''}</div>${note}
   ${blocks || `<div class="card empty">${S.products.length ? 'No products in this group yet.' : `No products yet.${S.suppliers.length ? '' : ' Add a supplier first.'}`}</div>`}`;
 }
 function viewUsers() {
