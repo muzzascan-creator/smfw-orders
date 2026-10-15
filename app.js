@@ -9,6 +9,9 @@ const GROUPS = ['Organic', 'Conventional'];
 const groupOf = p => p.product_group || 'Organic';
 // Each customer orders one group (migrations/013); customers saved before that are Organic.
 const custGroup = c => c?.product_group || 'Organic';
+// A 'Both' customer orders from either location, one location per order.
+const custAllows = (c, g) => custGroup(c) === 'Both' || custGroup(c) === g;
+const custDefault = c => custGroup(c) === 'Both' ? 'Organic' : custGroup(c);
 // An order's group comes from its products: Organic unless every line is Conventional.
 const orderGroups = o => [...new Set((o.lines || []).map(l => prodOf(l.product_id)).filter(Boolean).map(groupOf))];
 const orderGroup = o => { const g = orderGroups(o); return g.length === 1 ? g[0] : 'Organic'; };
@@ -443,7 +446,7 @@ function curCust() {
 function pickCust(id) {
   try { localStorage.setItem('smfw-cust', id); } catch (e) {}
   if (draft && !draft.id && view === 'entry') {
-    const g = custGroup(custOf(id));
+    const g = custAllows(custOf(id), draft.group) ? draft.group : custDefault(custOf(id));
     if (g !== draft.group && Object.values(draft.qty).some(q => q > 0) && !confirm(`${custOf(id)?.name} orders ${g} products, so the quantities entered so far will be cleared. Continue?`)) return render();
     if (g !== draft.group) draft.qty = {};
     draft.customer_id = id; draft.group = g;
@@ -454,7 +457,7 @@ function pickCust(id) {
 const loginCustIds = u => [...new Set([u.customer_id, ...(S.links || []).filter(l => l.profile_id === u.id).map(l => l.customer_id)].filter(Boolean))];
 
 // ---------- order entry ----------
-function blankOrder() { return { id: null, number: null, customer_id: isAdmin() ? '' : curCust(), order_date: today(), required_date: '', special: '', special_order: false, status: 'draft', source: isAdmin() ? 'admin' : 'customer', qty: {}, missing: [], group: isAdmin() ? 'Organic' : custGroup(custOf(curCust())) }; }
+function blankOrder() { return { id: null, number: null, customer_id: isAdmin() ? '' : curCust(), order_date: today(), required_date: '', special: '', special_order: false, status: 'draft', source: isAdmin() ? 'admin' : 'customer', qty: {}, missing: [], group: isAdmin() ? 'Organic' : custDefault(custOf(curCust())) }; }
 const outerOf = k => Number(k.outer_multiple) || 1;
 function sectionsFor(products) {
   const secs = [], idx = {};
@@ -503,16 +506,18 @@ function viewEntry() {
       return `<section class="supplier-block"><div class="supplier-head"><h2>${esc(s.name)}</h2><span>${esc(s.cutoff || '')}</span></div><div class="sections">${g === 'Conventional' ? flatHtml(S.products.filter(p => p.supplier_id === s.id && groupOf(p) === g), dis) : gridHtml(secs, dis)}</div></section>`;
     }).join('') || `<div class="card empty" style="margin-top:16px">No ${g} products are set up yet. Add them under <b>Products</b>.</div>`;
   } else {
-    // Customers order their own group only (set on the customer); Conventional uses the same flat list as the admin app.
-    const g = custGroup(custOf(d.customer_id)), mine = S.products.filter(p => groupOf(p) === g), secs = sectionsFor(mine);
+    // Customers order their own group only (set on the customer), or pick one if set to Both; Conventional uses the same flat list as the admin app.
+    const g = custGroup(custOf(d.customer_id)) === 'Both' ? (d.group || 'Organic') : custGroup(custOf(d.customer_id)), mine = S.products.filter(p => groupOf(p) === g), secs = sectionsFor(mine);
     blocks = secs.length ? `<section class="supplier-block"><div class="supplier-head"><h2>${g}</h2><span>${g === 'Conventional' ? 'Fill in the quantities you need.' : 'Fill in the boxes you need. Grey boxes aren’t available.'}</span></div><div class="sections">${g === 'Conventional' ? flatHtml(mine, dis) : gridHtml(secs, dis)}</div></section>` : '';
   }
   const custField = admin
-    ? `<label class="f">Customer<select id="e-cust" ${dis}><option value="">${needsCustomer(d) ? 'Choose a customer…' : 'No customer (SMFW, CID 1183)'}</option>${S.customers.filter(c => custGroup(c) === (d.group || 'Organic') || c.id === d.customer_id).sort(byName).map(c => `<option value="${c.id}" ${c.id === d.customer_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+    ? `<label class="f">Customer<select id="e-cust" ${dis}><option value="">${needsCustomer(d) ? 'Choose a customer…' : 'No customer (SMFW, CID 1183)'}</option>${S.customers.filter(c => custAllows(c, d.group || 'Organic') || c.id === d.customer_id).sort(byName).map(c => `<option value="${c.id}" ${c.id === d.customer_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
        <label class="f">Contact phone<input id="e-phone" disabled value="${esc(custOf(d.customer_id)?.phone || '')}"></label>`
     : S.customers.length > 1 && !d.id
       ? `<label class="f">Ordering for<select id="e-mycust" onchange="pickCust(this.value)">${myCusts().map(c => `<option value="${c.id}" ${c.id === d.customer_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`
       : `<label class="f">Customer<input disabled value="${esc(custOf(d.customer_id)?.name || '')}"></label>`;
+  const locField = !admin && custGroup(custOf(d.customer_id)) === 'Both'
+    ? `<label class="f">Product location<select id="e-loc" ${dis || (d.id && draftLines().length ? 'disabled' : '')} onchange="setGroup(this.value)">${GROUPS.map(g => `<option value="${g}" ${(d.group || 'Organic') === g ? 'selected' : ''}>${g}</option>`).join('')}</select></label>` : '';
   const note = d.status === 'complete' ? (admin ? 'This order is complete. Reopen it to make changes.' : 'SMFW has processed this order.')
     : d.status === 'submitted' ? (admin ? `Sent by the customer ${esc(fmtWhen(d.submitted_at))}. Check it, make any changes, then mark it complete.` : 'You’ve sent this order to SMFW. Contact SMFW if anything needs to change.')
     : 'Fill in the quantities needed. Empty boxes are ignored.';
@@ -522,7 +527,7 @@ function viewEntry() {
     <div class="entry"><div>
       ${admin ? `<div class="grpswitch" role="radiogroup" aria-label="Order type">${GROUPS.map(g => `<button type="button" role="radio" aria-checked="${(d.group || 'Organic') === g}" class="${(d.group || 'Organic') === g ? 'on' : ''}" ${dis} onclick="setGroup('${g}')">${g} order</button>`).join('')}</div>` : ''}
       <div class="card grid g2">
-        ${custField}
+        ${custField}${locField}
         <label class="f">Today’s date<input type="date" id="e-date" disabled title="Set automatically" value="${esc(d.status === 'draft' ? today() : d.order_date)}"></label>
         <div class="f"><label for="e-req">Day / date required</label><div class="reqrow"><input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${tomorrow()}"` : ''} max="${latestReq()}" value="${esc(d.required_date)}">${spoBox(d, dis)}</div>${!admin && (d.group || 'Organic') === 'Organic' && d.status === 'draft' ? `<span class="muted" style="font-size:12px;font-weight:400">${organicHint(custOf(d.customer_id))}</span>` : ''}</div>
         <label class="f" style="grid-column:1/-1">Special requirements<textarea id="e-special" ${dis}>${esc(d.special)}</textarea></label>
@@ -539,10 +544,10 @@ function setGroup(g) {
   if (draft.group === g) return;
   // Quantities belong to one group's form; switching drops the other group's lines after a check.
   const other = Object.entries(draft.qty).filter(([k, q]) => +q > 0 && groupOf(packOf(k)?.p || {}) !== g);
-  if (other.length && !confirm(`Switch to a ${g} order? The ${other.length} ${draft.group} line${other.length > 1 ? 's' : ''} already entered will be cleared.`)) return;
+  if (other.length && !confirm(`Switch to a ${g} order? The ${other.length} ${draft.group} line${other.length > 1 ? 's' : ''} already entered will be cleared.`)) return render();
   other.forEach(([k]) => delete draft.qty[k]);
-  // Customers are set up for one group, so a customer from the other group is cleared.
-  if (draft.customer_id && custGroup(custOf(draft.customer_id)) !== g) draft.customer_id = '';
+  // A customer set up for the other group only is cleared; a Both customer stays.
+  if (isAdmin() && draft.customer_id && !custAllows(custOf(draft.customer_id), g)) draft.customer_id = '';
   draft.group = g; render();
 }
 function draftLines() {
@@ -678,7 +683,7 @@ function viewCustomers() {
   if (!isManager()) S.profiles.filter(u => u.role === 'customer').forEach(u => new Set(loginCustIds(u)).forEach(id => nLogins.set(id, (nLogins.get(id) || 0) + 1)));
   return `<div class="row spread"><div><h1>Customers</h1><p class="sub">The businesses who order from you.${isManager() ? '' : ' Link a login to a customer under <b>Logins</b>.'}</p></div><div class="row"><button onclick="importCustomers()">Import customers</button><button class="primary" onclick="editCustomer()">Add customer</button></div></div>
   ${cs.length ? `<div class="tablewrap"><table><thead><tr><th class="num">CID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th>${S.custGroupMissing ? '' : '<th>Type</th>'}${isManager() ? '' : '<th class="num">Logins</th>'}<th class="num">Orders</th><th></th></tr></thead><tbody>
-    ${cs.map(c => `<tr><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.sunday_delivery ? ' <span class="pill">Sunday delivery</span>' : ''}${!S.remMissing && c.reminders !== false && custGroup(c) === 'Organic' ? ' <span class="pill">Reminders</span>' : ''}${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td>${S.custGroupMissing ? '' : `<td><span class="pill grp-${custGroup(c).toLowerCase()}">${custGroup(c)}</span></td>`}${isManager() ? '' : `<td class="num">${nLogins.get(c.id) || 0}</td>`}<td class="num">${nOrders.get(c.id) || 0}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
+    ${cs.map(c => `<tr><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.sunday_delivery ? ' <span class="pill">Sunday delivery</span>' : ''}${!S.remMissing && c.reminders !== false && custGroup(c) !== 'Conventional' ? ' <span class="pill">Reminders</span>' : ''}${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td>${S.custGroupMissing ? '' : `<td><span class="pill grp-${custGroup(c).toLowerCase()}">${custGroup(c)}</span></td>`}${isManager() ? '' : `<td class="num">${nLogins.get(c.id) || 0}</td>`}<td class="num">${nOrders.get(c.id) || 0}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
   </tbody></table></div>` : `<div class="card empty">No customers yet.</div>`}`;
 }
 function viewSuppliers() {
@@ -952,7 +957,7 @@ async function printOrder(id, btn) {
   const w = window.open('', '_blank'); // opened straight from the click so the browser allows it
   btn.disabled = true;
   try {
-    const { buf } = await formPdf(o, { id: '*', name: custGroup(custOf(o.customer_id)) });
+    const { buf } = await formPdf(o, { id: '*', name: custGroup(custOf(o.customer_id)) === 'Both' ? orderGroup(o) : custGroup(custOf(o.customer_id)) });
     const url = URL.createObjectURL(new Blob([buf], { type: 'application/pdf' }));
     if (w) w.location.href = url; else download(buf, safeName(`${orderNo(o.number)} order`) + '.pdf');
     setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -1176,7 +1181,7 @@ function editCustomer(id) {
   const c = id ? custOf(id) : {};
   openDialog(id ? 'Edit customer' : 'Add customer',
     `<div class="grid g2">${fld('cid', 'CID (unique number)', c.cid ?? nextCid(), 'number', 'required min="1" step="1"')}${fld('name', 'Customer name', c.name, 'text', 'required')}</div>
-     <div class="grid g2">${fld('contact', 'Contact person', c.contact)}${fld('phone', 'Contact phone', c.phone)}</div><div class="grid g2">${fld('email', 'Email', c.email, 'email')}${S.custGroupMissing ? '' : `<label class="f">Orders products<select name="product_group" id="f-product_group">${GROUPS.map(g => `<option value="${g}" ${custGroup(c) === g ? 'selected' : ''}>${g}</option>`).join('')}</select></label>`}</div>
+     <div class="grid g2">${fld('contact', 'Contact person', c.contact)}${fld('phone', 'Contact phone', c.phone)}</div><div class="grid g2">${fld('email', 'Email', c.email, 'email')}${S.custGroupMissing ? '' : `<label class="f">Orders products<select name="product_group" id="f-product_group">${[...GROUPS, 'Both'].map(g => `<option value="${g}" ${custGroup(c) === g ? 'selected' : ''}>${g === 'Both' ? 'Both (Organic and Conventional)' : g}</option>`).join('')}</select></label>`}</div>
      ${S.remMissing ? '' : `<div class="grid g2"><label class="chk"><input type="checkbox" name="reminders" value="1" ${c.reminders !== false ? 'checked' : ''}> Email a reminder at 7:20am if no Organic order is in</label><label class="chk"><input type="checkbox" name="sunday_delivery" value="1" ${c.sunday_delivery ? 'checked' : ''}> Sunday delivery (orders Friday for Sunday)</label></div>`}
      <label class="f">Notes<textarea name="notes" id="f-notes">${esc(c.notes)}</textarea></label>`,
     f => {

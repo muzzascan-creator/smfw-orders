@@ -106,7 +106,7 @@ async function sendReminders({ dry = false, force = false, now }: { dry?: boolea
   if (!force && (t.minutes < 7 * 60 + 10 || t.minutes >= 7 * 60 + 30)) return reply({ skipped: 'Not 7:20am in Sydney.' });
   const due = ORDER_DAYS[t.dow] || [];
   if (!due.length) return reply({ skipped: 'Not an Organic order day.' });
-  const custs: any[] = await (await db(`customers?product_group=eq.Organic&reminders=eq.true&select=id,name,contact,email,sunday_delivery`)).json();
+  const custs: any[] = await (await db(`customers?product_group=in.(Organic,Both)&reminders=eq.true&select=id,name,contact,email,sunday_delivery`)).json();
   const out: any[] = [];
   for (const d of due) {
     const delivery = addDays(t.date, d.ahead);
