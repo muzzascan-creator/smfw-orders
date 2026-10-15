@@ -58,6 +58,8 @@ const isManager = () => profile?.role === 'manager' && profile?.approved;
 const ADMIN_ONLY = ['suppliers', 'emails', 'users', 'admin'];
 // The Administration tab holds Emails and Logins; it opens on whichever was used last.
 const ADMIN_TABS = [['emails', 'Emails'], ['users', 'Logins']];
+// The top bar's height, so sticky bits (the Administration switch) sit just under it.
+new ResizeObserver(() => document.documentElement.style.setProperty('--hdr', $('#top').offsetHeight + 'px')).observe(document.getElementById('top'));
 let adminTab = 'emails';
 // Receivers see every order read-only (migrations/010).
 const isReceiver = () => profile?.role === 'receiver' && profile?.approved;
@@ -276,7 +278,7 @@ function render() {
   if (!views[view] || ['recv', 'recvorder'].includes(view) && !isReceiver() || (allowed && !allowed.includes(view))) view = homeView();
   if (view === 'entry' && !draft) draft = blankOrder();
   const keep = view === 'recvorder' ? $('.recvscroll')?.scrollTop : 0; // ticking a line re-draws the screen; stay where you were
-  const sub = ADMIN_TABS.some(([t]) => t === view) ? `<div class="grpswitch" style="margin-top:20px" role="tablist" aria-label="Administration">${ADMIN_TABS.map(([t, l]) => `<button type="button" role="tab" aria-selected="${t === view}" class="${t === view ? 'on' : ''}" onclick="go('${t}');refreshInBackground()">${l}</button>`).join('')}</div>` : '';
+  const sub = ADMIN_TABS.some(([t]) => t === view) ? `<div class="adminbar"><div class="grpswitch" role="tablist" aria-label="Administration">${ADMIN_TABS.map(([t, l]) => `<button type="button" role="tab" aria-selected="${t === view}" class="${t === view ? 'on' : ''}" onclick="go('${t}');refreshInBackground()">${l}</button>`).join('')}</div></div>` : '';
   $('#app').innerHTML = sub + views[view]();
   if (view === 'entry') wireEntry();
   if (view === 'orders') wireOrderSearch();
