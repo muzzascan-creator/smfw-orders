@@ -244,3 +244,5 @@ label.chk.spo input{margin:0;width:18px;height:18px}
 /* Administration's Emails / Logins switch stays in view under the top bar while the page scrolls. */
 .adminbar{position:sticky;top:var(--hdr,0px);z-index:4;background:var(--bg);padding:20px 0 4px;margin-bottom:4px}
 .adminbar .grpswitch{margin:0}
+/* A page's title row that stays in view under the top bar while the list scrolls (Customers). */
+.pagehead{position:sticky;top:var(--hdr,0px);z-index:4;background:var(--bg);padding:8px 0 10px;margin-top:-8px}
