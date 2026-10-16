@@ -613,7 +613,8 @@ function favPicker(d) {
   const fs = favsFor(d.customer_id);
   if (d.status !== 'draft' || !fs.length) return '';
   const both = custGroup(custOf(d.customer_id)) === 'Both';
-  return `<div class="favpick"><label class="f">Start from a favourite<select onchange="useFav(this.value)"><option value="">Choose a favourite…</option>${fs.map(f => `<option value="${f.id}">★ ${esc(f.name)}${both ? ` (${f.product_group})` : ''}</option>`).join('')}</select></label>
+  // A login that orders for several businesses sees only the favourites of the one chosen under Ordering for.
+  return `<div class="favpick"><label class="f">Start from a favourite${S.customers.length > 1 ? ` for ${esc(custOf(d.customer_id)?.name || '')}` : ''}<select onchange="useFav(this.value)"><option value="">Choose a favourite…</option>${fs.map(f => `<option value="${f.id}">★ ${esc(f.name)}${both ? ` (${f.product_group})` : ''}</option>`).join('')}</select></label>
     <button class="link" onclick="manageFavs()">Manage favourites</button></div>`;
 }
 // Fill the order form from saved lines. Anything no longer available is left out, and the customer is told.
