@@ -119,7 +119,7 @@ async function run(promise, okMsg) { const { data, error } = await promise; if (
 
 // ---------- data ----------
 async function loadAll() {
-  const prods = sb.from('products').select('id,supplier_id,code,name,section,sort,active,product_group,product_packs(id,name,sid,ref,outer_multiple,available,sort)');
+  const prods = sb.from('products').select('id,supplier_id,code,name,section,sort,active,product_group,product_packs(*)');
   const seq = ++ordersSeq, orders = sb.from('orders').select('*').order('number', { ascending: false });
   // Cut-off rules: receivers don't need them. If they can't be fetched, the last ones fetched stay in use.
   const cuts = isReceiver() ? [] : [sb.from('cutoff_rules').select('*'), sb.from('cutoff_settings').select('*')];
@@ -128,11 +128,11 @@ async function loadAll() {
     const [c, s, p, o] = base = await Promise.all([sb.from('customers').select('id,cid,name,phone'), sb.from('suppliers').select('*'), prods, orders]);
     S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; if (seq === ordersSeq) S.orders = o.data || [];
   } else if (isAdmin()) {
-    let c, s, p, o, u, m, sec, lk;
-    [c, s, p, o, u, m, sec, lk, cr, cs] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort'), sb.from('product_sections').select('name'), sb.from('profile_customers').select('*'), ...cuts]);
+    let c, s, p, o, u, m, sec, lk, bc;
+    [c, s, p, o, u, m, sec, lk, bc, cr, cs] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort'), sb.from('product_sections').select('name'), sb.from('profile_customers').select('*'), sb.from('batch_codes').select('*').order('entered_at', { ascending: false }), ...cuts]);
     base = [c, s, p, o, u, m, sec, lk];
     S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; if (seq === ordersSeq) S.orders = o.data || []; S.profiles = u.data || [];
-    S.emails = m.data || []; S.sections = (sec.data || []).map(r => r.name); S.links = lk.data || [];
+    S.emails = m.data || []; S.sections = (sec.data || []).map(r => r.name); S.links = lk.data || []; S.batches = bc.data || []; // batch codes: empty until 030 is run
   } else {
     let c, p, o;
     [c, p, o, cr, cs] = await Promise.all([sb.from('customers').select('id,cid,name,product_group,sunday_delivery'), prods.eq('active', true), orders, ...cuts]);
@@ -207,7 +207,7 @@ async function enter() {
   if (!session) {
     // Nothing from the last person carries over to whoever signs in next on this device.
     if ($('#dlg').open) $('#dlg').close();
-    Object.assign(S, { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], links: [], sections: [], cutRules: [], cutSettings: [], favs: [] });
+    Object.assign(S, { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], links: [], sections: [], cutRules: [], cutSettings: [], favs: [], batches: [] });
     draft = null; receipt = null; search = ''; custSearch = ''; listFilter = 'pending'; groupFilter = 'all'; adminTab = 'emails'; picked.clear(); upPicked.clear();
     clearInterval(deviceTimer); deviceTimer = null; clearInterval(autoRefresh); autoRefresh = null; profile = null; view = null; smsCfg = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
   if (authMode === 'newpass') return renderAuth();
@@ -300,7 +300,7 @@ const homeView = () => isAdmin() ? 'inbox' : isReceiver() ? 'recv' : 'mine';
 function navItems() {
   if (isReceiver()) return [['recv', 'Orders']];
   return isAdmin()
-    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['customers', 'Customers'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['admin', 'Administration']].filter(([v]) => !isManager() || !ADMIN_ONLY.includes(v))
+    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['customers', 'Customers'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['batch', 'Batch Code'], ['admin', 'Administration']].filter(([v]) => !isManager() || !ADMIN_ONLY.includes(v))
     : [['mine', 'My orders'], ['entry', 'New order']];
 }
 function inboxCount() { return S.orders.filter(o => o.status === 'submitted').length; }
@@ -330,7 +330,7 @@ function render() {
   // A customer looking at an order they can't change uses Close to leave it; the tabs wait until then.
   const locked = !isAdmin() && !isReceiver() && view === 'entry' && !!draft?.id && !canEditDraft();
   nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" ${locked ? 'disabled title="Press Close to leave this order"' : ''} aria-current="${(v === view || v === 'admin' && ADMIN_TABS.some(([t]) => t === view)) && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
-  const views = { recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers, sms: viewSms, cutoffs: viewCutoffs };
+  const views = { recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, batch: viewBatch, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers, sms: viewSms, cutoffs: viewCutoffs };
   const allowed = isManager() ? Object.keys(views).filter(v => !ADMIN_ONLY.includes(v) && !v.startsWith('recv')) : isAdmin() ? null : isReceiver() ? ['recv', 'recvorder'] : ['mine', 'entry'];
   if (!views[view] || ['recv', 'recvorder'].includes(view) && !isReceiver() || (allowed && !allowed.includes(view))) view = homeView();
   if (view === 'entry' && !draft) draft = blankOrder();
@@ -383,9 +383,12 @@ function viewRecv() {
 let receipt = null;
 function openReceipt(id) {
   const o = S.orders.find(x => x.id === id); if (!o) return;
-  receipt = { id, lines: (o.lines || []).map(l => ({ ...l, ordered: l.ordered_qty ?? l.qty, qty: l.qty, undelivered: !!l.undelivered, received: !!l.received && !l.undelivered })) };
+  receipt = { id, lines: (o.lines || []).map(l => ({ ...l, ordered: l.ordered_qty ?? l.qty, qty: l.qty, undelivered: !!l.undelivered, received: !!l.received && !l.undelivered, batch: l.batch_code || '' })) };
   go('recvorder', false);
 }
+// Conventional orders for No customer need a batch code on each Batch Code product that arrived.
+const needsBatch = o => !!o && !o.customer_id && (o.lines || []).length > 0 && orderGroup(o) === 'Conventional';
+const batchLine = (o, l) => needsBatch(o) && !!packOf(l.pack_id)?.k?.batch_code;
 function viewRecvOrder() {
   const o = S.orders.find(x => x.id === receipt?.id); if (!o) { view = 'recv'; return viewRecv(); }
   const c = custOf(o.customer_id), sup = l => S.suppliers.find(s => s.id === prodOf(l.product_id)?.supplier_id)?.name || 'Other';
@@ -394,7 +397,7 @@ function viewRecvOrder() {
   return `<div class="row spread recvhead"><div><h1>Order ${esc(orderNo(o.number))}</h1><div class="recvcust">${c ? esc(c.name) : '<span class="muted">No customer</span>'}</div><p class="sub">${o.required_date ? 'Needed ' + esc(fmtDate(o.required_date)) + '. ' : ''}Tick Received for each line that arrived, changing the quantity if a different amount came, or tick Not delivered.</p></div>
       <div class="row"><button onclick="receipt=null;go('recv',false)">Back</button><button class="primary" onclick="saveReceipt(this)">Save</button></div></div>
     <div class="recvscroll">${Object.entries(bySup).map(([sn, ls]) => `<h2 class="recvsup">${esc(sn)}</h2><div class="recvtbl"><table><thead><tr><th>Product</th><th>Pack</th><th class="num">Ordered</th><th class="rqh">Qty received</th><th class="pick">Received</th><th class="pick">Not delivered</th></tr></thead><tbody>
-      ${ls.map(([l, i]) => `<tr${l.undelivered ? ' class="nd"' : ''}><td class="rprod">${esc(l.product_name)}</td><td>${esc(l.pack_name)}</td><td class="num rord">${esc(l.ordered)}</td>
+      ${ls.map(([l, i]) => `<tr${l.undelivered ? ' class="nd"' : ''}><td class="rprod">${esc(l.product_name)}${batchLine(o, l) ? `<label class="rbatch${l.received && !l.undelivered && !l.batch.trim() ? ' need' : ''}"><span>Batch code</span><input data-bc="${i}" value="${esc(l.batch)}" ${l.received && !l.undelivered ? '' : 'disabled'} placeholder="${l.received && !l.undelivered ? 'Required' : 'Tick Received first'}" autocomplete="off" aria-label="${esc(l.product_name)} batch code"></label>` : ''}</td><td>${esc(l.pack_name)}</td><td class="num rord">${esc(l.ordered)}</td>
         <td class="rqc"><input class="rq" inputmode="numeric" data-i="${i}" value="${esc(l.qty)}" ${l.undelivered ? 'disabled' : ''} aria-label="${esc(l.product_name)} received"></td>
         <td class="pick"><input type="checkbox" data-rc="${i}" ${l.received ? 'checked' : ''} aria-label="${esc(l.product_name)} received"></td>
         <td class="pick"><input type="checkbox" data-nd="${i}" ${l.undelivered ? 'checked' : ''} aria-label="${esc(l.product_name)} not delivered"></td></tr>`).join('')}
@@ -406,12 +409,16 @@ addEventListener('resize', sizeRecvScroll);
 function wireRecvOrder() {
   sizeRecvScroll();
   document.querySelectorAll('input.rq').forEach(inp => inp.oninput = () => { const v = inp.value.replace(/[^\d]/g, ''); if (v !== inp.value) inp.value = v; receipt.lines[inp.dataset.i].qty = v === '' ? 0 : +v; });
+  document.querySelectorAll('input[data-bc]').forEach(inp => inp.oninput = () => { receipt.lines[inp.dataset.bc].batch = inp.value; inp.parentElement.classList.toggle('need', !inp.value.trim()); });
   document.querySelectorAll('input[data-nd]').forEach(cb => cb.onchange = () => { const l = receipt.lines[cb.dataset.nd]; l.undelivered = cb.checked; if (cb.checked) l.received = false; render(); });
   document.querySelectorAll('input[data-rc]').forEach(cb => cb.onchange = () => { const l = receipt.lines[cb.dataset.rc]; l.received = cb.checked; if (cb.checked) l.undelivered = false; render(); });
 }
 async function saveReceipt(btn) {
+  const o = S.orders.find(x => x.id === receipt.id);
+  const gap = receipt.lines.findIndex(l => batchLine(o, l) && l.received && !l.undelivered && !l.batch.trim());
+  if (gap >= 0) { const inp = $(`input[data-bc="${gap}"]`); inp?.focus(); inp?.scrollIntoView({ block: 'center' }); return toast(`Enter the batch code for ${receipt.lines[gap].product_name} before saving.`); }
   btn.disabled = true;
-  const items = receipt.lines.map(l => ({ pack_id: l.pack_id, qty: l.qty, undelivered: l.undelivered || !(l.qty > 0), received: l.received && !l.undelivered && l.qty > 0 }));
+  const items = receipt.lines.map(l => ({ pack_id: l.pack_id, qty: l.qty, undelivered: l.undelivered || !(l.qty > 0), received: l.received && !l.undelivered && l.qty > 0, batch: l.batch.trim() }));
   const { error } = await sb.rpc('save_receipt', { order_id: receipt.id, items });
   btn.disabled = false;
   if (error) return toast(friendly(error));
@@ -890,7 +897,7 @@ function viewProducts() {
     const ps = S.products.filter(p => p.supplier_id === s.id && (groupFilter === 'all' || groupOf(p) === groupFilter)).sort(bySort); if (!ps.length) return '';
     return `<section class="supblock"><h2>${esc(s.name)}</h2><div class="tablewrap stickyhead"><table><thead><tr><th>Code</th><th>Product</th><th>Group</th><th>Section</th><th>Pack types · SID · outer</th><th></th></tr></thead><tbody>
     ${ps.map(p => `<tr${p.active === false ? ' class="muted"' : ''}><td class="mono">${esc(p.code)}</td><td>${esc(p.name)}${p.active === false ? ' <span class="pill">Hidden</span>' : ''}</td><td><span class="pill grp-${groupOf(p).toLowerCase()}">${groupOf(p)}</span></td><td>${esc(p.section)}</td>
-      <td class="packs">${(p.product_packs || []).map(k => `<div><span class="mono muted">SID ${esc(k.sid)}</span>${k.ref ? ` <span class="mono muted">· Ref ${esc(k.ref)}</span>` : ''} ${esc(k.name)} <span class="mono muted">· outer ${outerOf(k)}</span>${k.available ? '' : ' <span class="pill">Not available</span>'}</div>`).join('')}</td>
+      <td class="packs">${(p.product_packs || []).map(k => `<div><span class="mono muted">SID ${esc(k.sid)}</span>${k.ref ? ` <span class="mono muted">· Ref ${esc(k.ref)}</span>` : ''} ${esc(k.name)} <span class="mono muted">· outer ${outerOf(k)}</span>${k.batch_code ? ' <span class="pill">Batch Code</span>' : ''}${k.available ? '' : ' <span class="pill">Not available</span>'}</div>`).join('')}</td>
       <td class="num"><button class="ghost" onclick="editProduct('${p.id}')">Edit</button></td></tr>`).join('')}
     </tbody></table></div></section>`;
   }).join('');
@@ -937,6 +944,17 @@ function emailSummary(sid) {
 }
 // ---------- order cut-off rules (Administration › Cut-offs, migrations/026) ----------
 const TIMES = Array.from({ length: 48 }, (_, i) => `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
+// Batch codes recorded by Receivers on Conventional, No customer orders, newest first.
+function viewBatch() {
+  const bs = (S.batches || []).slice().sort((a, b) => (b.entered_at || '').localeCompare(a.entered_at || ''));
+  const ord = id => S.orders.find(o => o.id === id);
+  return `<h1>Batch Code</h1><p class="sub">Batch codes entered when Conventional orders for No customer are received, newest first. Products that need one are ticked Batch Code in Products.</p>
+    ${bs.length ? `<div class="tablewrap"><table class="batchlist"><thead><tr><th>Entered</th><th>Batch code</th><th>Product</th><th>Pack</th><th class="num">Qty</th><th>Order</th><th>Required</th><th>Entered by</th></tr></thead><tbody>${bs.map(b => {
+      const o = ord(b.order_id);
+      return `<tr><td>${esc(fmtWhen(b.entered_at))}</td><td class="mono"><b>${esc(b.code)}</b></td><td>${esc(b.product_name)}</td><td>${esc(b.pack_name)}</td><td class="num">${esc(b.qty ?? '')}</td>
+        <td class="mono">${o ? esc(orderNo(o.number)) : ''}</td><td>${o?.required_date ? esc(fmtDate(o.required_date)) : ''}</td><td>${esc(b.entered_by || '')}</td></tr>`;
+    }).join('')}</tbody></table></div>` : `<div class="card empty">No batch codes yet. They appear here once a Receiver saves a Conventional, No customer order with Batch Code products ticked Received.</div>`}`;
+}
 function viewCutoffs() {
   const head = `<h1>Order cut-offs</h1><p class="sub">For each product location: the days you deliver, and when orders for each day close (Sydney time). Customers can’t send an order after its cut-off. You and your staff still can. Choose <b>Same day</b> to take orders for delivery that day, up to the time set.</p>`;
   return head + GROUPS.map(g => {
@@ -1512,6 +1530,7 @@ function packRow(k = {}) {
   const key = k.id || 'new-' + Math.random().toString(36).slice(2, 8);
   return `<div class="packrow withref" data-row="${esc(key)}"><input name="psid" type="number" min="1" step="1" placeholder="SID" aria-label="SID" value="${esc(k.sid ?? '')}">
     <input name="pref" placeholder="Ref" aria-label="Ref" value="${esc(k.ref ?? '')}">
+    <label class="pbatch" title="Receivers must enter a batch code for this on Conventional, No customer orders"><input type="checkbox" ${k.batch_code ? 'checked' : ''} onchange="this.nextElementSibling.value=this.checked?'1':'0'"><input type="hidden" name="pbatch" value="${k.batch_code ? '1' : '0'}">Batch Code</label>
     <input name="pname" placeholder="Pack type, e.g. BOX of 10 BUNCHES" aria-label="Pack type" value="${esc(k.name ?? '')}">
     <input name="pouter" type="number" min="1" step="1" aria-label="Outer multiple" title="Outer multiple" value="${esc(k.outer_multiple ?? 1)}">
     <select name="pavail" aria-label="Availability"><option value="1" ${k.available === false ? '' : 'selected'}>Available</option><option value="0" ${k.available === false ? 'selected' : ''}>Not available</option></select>
@@ -1571,7 +1590,7 @@ function editProduct(id) {
     <label class="f">Show on order forms<select name="active" id="f-active"><option value="1" ${p.active !== false ? 'selected' : ''}>Yes</option><option value="0" ${p.active === false ? 'selected' : ''}>No, hide it</option></select></label></div>`,
     async f => {
       const name = f.get('name').trim(); if (!name) { toast('Enter a product name.'); return false; }
-      const names = f.getAll('pname').map(x => x.trim()), sids = f.getAll('psid'), refs = f.getAll('pref').map(x => x.trim()), outs = f.getAll('pouter'), avail = f.getAll('pavail'), pids = f.getAll('pid');
+      const names = f.getAll('pname').map(x => x.trim()), sids = f.getAll('psid'), refs = f.getAll('pref').map(x => x.trim()), outs = f.getAll('pouter'), avail = f.getAll('pavail'), batches = f.getAll('pbatch'), pids = f.getAll('pid');
       const rows = []; const others = S.products.filter(x => x.id !== id).flatMap(x => (x.product_packs || []).map(k => ({ sid: k.sid, ref: (k.ref || '').trim().toUpperCase(), label: `${x.name} (${k.name})` })));
       for (let i = 0; i < names.length; i++) {
         if (!names[i]) continue;
@@ -1585,7 +1604,7 @@ function editProduct(id) {
         const ref = refs[i] || '', REF = ref.toUpperCase();
         if (REF && rows.some(r => (r.ref || '').toUpperCase() === REF)) { toast(`Ref ${ref} is used twice on this product.`); return false; }
         const refClash = REF && others.find(o => o.ref === REF); if (refClash) { toast(`Ref ${ref} is already used by ${refClash.label}.`); return false; }
-        rows.push({ i, id: pids[i] || undefined, name: names[i], sid, ref: ref || null, outer_multiple: outer, available: avail[i] === '1', sort: rows.length });
+        rows.push({ i, id: pids[i] || undefined, name: names[i], sid, ref: ref || null, outer_multiple: outer, available: avail[i] === '1', batch: batches[i] === '1', sort: rows.length });
       }
       if (!rows.length) { toast('Add at least one pack type.'); return false; }
       const prow = { supplier_id: f.get('supplier_id'), code: f.get('code').trim(), name, section: f.get('section').trim(), sort: f.get('sort') === '' ? 999 : +f.get('sort'), active: f.get('active') === '1' };
@@ -1606,6 +1625,7 @@ function editProduct(id) {
       for (const r of rows) {
         const body = { product_id: pid, name: r.name, sid: r.sid, outer_multiple: r.outer_multiple, available: r.available, sort: r.sort };
         body.ref = r.ref;
+        if (r.batch || (p.product_packs || []).find(k => k.id === r.id)?.batch_code) body.batch_code = r.batch; // only sent when used, so saving works before 030 is run
         const k = await run(r.id ? sb.from('product_packs').update(body).eq('id', r.id).select().single() : sb.from('product_packs').insert(body).select().single());
         if (!k) return false;
         p.product_packs = [...p.product_packs.filter(x => x.id !== k.id), k];
