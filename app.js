@@ -1534,7 +1534,7 @@ function packRow(k = {}) {
   const key = k.id || 'new-' + Math.random().toString(36).slice(2, 8);
   return `<div class="packrow withref" data-row="${esc(key)}"><input name="psid" type="number" min="1" step="1" placeholder="SID" aria-label="SID" value="${esc(k.sid ?? '')}">
     <input name="pref" placeholder="Ref" aria-label="Ref" value="${esc(k.ref ?? '')}">
-    <label class="pbatch" title="Receivers must enter a batch code for this on Conventional, No customer orders"><input type="checkbox" ${k.batch_code ? 'checked' : ''} onchange="this.nextElementSibling.value=this.checked?'1':'0'"><input type="hidden" name="pbatch" value="${k.batch_code ? '1' : '0'}">Batch Code</label>
+    <label class="pbatch" title="Receivers must enter a batch code for this on Conventional, No customer orders"><input type="checkbox" ${k.batch_code ? 'checked' : ''} onchange="this.nextElementSibling.value=this.checked?'1':'0'"><input type="hidden" name="pbatch" value="${k.batch_code ? '1' : '0'}">Batch</label>
     <input name="pname" placeholder="Pack type, e.g. BOX of 10 BUNCHES" aria-label="Pack type" value="${esc(k.name ?? '')}">
     <input name="pouter" type="number" min="1" step="1" aria-label="Outer multiple" title="Outer multiple" value="${esc(k.outer_multiple ?? 1)}">
     <select name="pavail" aria-label="Availability"><option value="1" ${k.available === false ? '' : 'selected'}>Available</option><option value="0" ${k.available === false ? 'selected' : ''}>Not available</option></select>
