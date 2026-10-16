@@ -580,6 +580,11 @@ function orderedHtml(d) {
     ${ls.map(l => { const p = prodOf(l.product_id); return `<tr${l.undelivered ? ' class="nd"' : ''}><td><b>${esc(l.product_name || p?.name || '')}</b>${p?.code || l.code ? ` <span class="muted mono" style="font-size:12px">${esc(p?.code || l.code)}</span>` : ''}</td><td>${esc(l.pack_name || '')}</td><td class="num">${qtyOf(l)}</td></tr>`; }).join('')}
     </tbody></table></div></section>`;
 }
+// Cancel leaves the order screen without saving. A new order is dropped; a saved draft keeps its last saved version.
+function cancelOrder() {
+  if (draftLines().length && !confirm(draft.id ? 'Leave without saving? Your last saved draft is kept.' : 'Cancel this order? Nothing will be saved.')) return;
+  draft = null; go('mine', false);
+}
 function canEditDraft() {
   if (isAdmin()) return draft.status !== 'complete';
   return draft.status === 'draft';
@@ -659,7 +664,7 @@ function summaryHtml() {
     // Already transmitted: Close goes back to Orders untouched; once reopened, Close gives way to Save / Transmit Order.
     if (d.status === 'complete') btns = `<button onclick="reopenOrder()">Reopen to edit</button><button class="primary" onclick="draft=null;go('orders',false)">Close</button>`;
     else btns = `<button onclick="saveOrder('${d.status === 'submitted' ? 'submitted' : 'draft'}')">${d.status === 'submitted' ? 'Save changes' : 'Save draft'}</button><button class="primary" onclick="saveOrder('complete')">Transmit Order</button>`;
-  } else if (d.status === 'draft') btns = `<button onclick="saveOrder('draft')">Save draft</button><button class="primary" onclick="saveOrder('submitted')">Send order</button>`;
+  } else if (d.status === 'draft') btns = `<button onclick="cancelOrder()">Cancel</button><button onclick="saveOrder('draft')">Save draft</button><button class="primary" onclick="saveOrder('submitted')">Send order</button>`;
   else btns = `<button class="primary" onclick="draft=null;go('mine',false)">Close</button>`;
   const del = d.id && (admin || d.status === 'draft') ? `<div class="row" style="margin-top:8px"><button class="danger" onclick="deleteOrder(this)">Delete order</button></div>` : '';
   return `<h2>Order summary</h2>
