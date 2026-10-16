@@ -2,7 +2,7 @@
 
 A web app (csorders.org) where SMFW's customers sign in and place their own orders, and SMFW staff run everything from a dashboard.
 
-- **Customers** create an account, wait for SMFW to link it to their business, then fill in an order form laid out like the supplier forms. They can save drafts and send orders, up to each delivery day's cut-off. They only see their own orders, and never see supplier names. A customer orders Organic, Conventional or Both (one location per order).
+- **Customers** create an account, wait for SMFW to link it to their business, then fill in an order form laid out like the supplier forms. They can save drafts and send orders, up to each delivery day's cut-off. They only see their own orders, and never see supplier names. A customer orders Organic, Conventional or Both (one location per order). They can save an order as a favourite and start a new order from it later.
 - **Admins** get an Inbox of orders customers have sent, can enter orders for any customer, email suppliers, make upload CSVs, and manage customers (CID), products (each pack type has its own SID, outer multiple and availability) and suppliers. Under **Administration** they manage supplier Emails, Logins, SMS settings and order Cut-offs.
 - **Managers** have the Admin dashboard without Suppliers and Administration.
 - **Receivers** see every order read-only and tick off deliveries; customers are emailed about anything short.
