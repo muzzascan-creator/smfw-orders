@@ -90,6 +90,8 @@ const prodOf = id => prodIdx().get(id);
 const packIdx = (() => { let list, m; return () => { if (list !== S.products) { list = S.products; m = new Map(list.flatMap(p => (p.product_packs || []).map(k => [k.id, { p, k }]))); } return m; }; })();
 const packOf = id => packIdx().get(id) || null;
 const STATUS = { draft: 'Draft', submitted: 'Sent', complete: 'Complete' };
+// Customers see a transmitted (complete) order as Accepted.
+const statusText = st => st === 'complete' && profile && !isAdmin() && !isReceiver() ? 'Accepted' : STATUS[st] || st;
 
 // Messages are errors unless marked ok: errors show red in the middle of the screen and stay a little longer.
 function toast(msg, ok) {
@@ -342,8 +344,8 @@ function orderRow(o, opts = {}) {
     ${opts.sent ? `<td>${esc(fmtWhen(o.submitted_at))}</td>` : ''}
     ${opts.source ? `<td>${o.source === 'customer' ? 'Customer' : 'SMFW'}</td>` : ''}
     <td class="num lines">${(o.lines || []).filter(l => !l.undelivered).length}</td>
-    <td class="c-st">${opts.pick ? `<div class="stgrid"><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span><span>${o.emailed_at ? `<span class="pill emailed" title="Emailed ${esc(fmtWhen(o.emailed_at))}">Emailed</span>` : ''}</span><span>${receivedPill(o)}</span><span>${o.csv_at ? `<span class="pill emailed" title="CSV created ${esc(fmtWhen(o.csv_at))}">CSV</span>` : ''}</span></div>`
-      : `<span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>`}</td>
+    <td class="c-st">${opts.pick ? `<div class="stgrid"><span class="pill ${esc(o.status)}">${esc(statusText(o.status))}</span><span>${o.emailed_at ? `<span class="pill emailed" title="Emailed ${esc(fmtWhen(o.emailed_at))}">Emailed</span>` : ''}</span><span>${receivedPill(o)}</span><span>${o.csv_at ? `<span class="pill emailed" title="CSV created ${esc(fmtWhen(o.csv_at))}">CSV</span>` : ''}</span></div>`
+      : `<span class="pill ${esc(o.status)}">${esc(statusText(o.status))}</span>`}</td>
     ${opts.acts ? `<td class="num acts c-acts" onclick="event.stopPropagation()"><button class="ghost" onclick="openOrder('${o.id}')">View</button><button class="ghost" onclick="printOrder('${o.id}', this)">Print<span class="long"> Order</span></button></td>`
       : `<td class="num openc"><button class="ghost" onclick="event.stopPropagation();openOrder('${o.id}')">Open</button></td>`}
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
@@ -587,12 +589,12 @@ function viewEntry() {
       : `<label class="f">Customer<input disabled value="${esc(custOf(d.customer_id)?.name || '')}"></label>`;
   const locField = !admin && custGroup(custOf(d.customer_id)) === 'Both'
     ? `<label class="f">Product location<select id="e-loc" ${dis || (d.id && draftLines().length ? 'disabled' : '')} onchange="setGroup(this.value)">${GROUPS.map(g => `<option value="${g}" ${(d.group || 'Organic') === g ? 'selected' : ''}>${g}</option>`).join('')}</select></label>` : '';
-  const note = d.status === 'complete' ? (admin ? 'This order is complete. Reopen it to make changes.' : 'SMFW has processed this order.')
+  const note = d.status === 'complete' ? (admin ? 'This order is complete. Reopen it to make changes.' : 'SMFW has accepted this order.')
     : d.status === 'submitted' ? (admin ? `Sent by the customer ${esc(fmtWhen(d.submitted_at))}. Check it, make any changes, then mark it complete.` : 'You’ve sent this order to SMFW. Contact SMFW if anything needs to change.')
     : 'Fill in the quantities needed. Empty boxes are ignored.';
   const missing = d.missing?.length ? `<div class="banner">${d.missing.length} line${d.missing.length > 1 ? 's refer' : ' refers'} to a pack type that no longer exists: ${d.missing.map(l => esc(`${l.product_name} (${l.pack_name}) × ${l.qty}`)).join(', ')}. Saving will drop ${d.missing.length > 1 ? 'them' : 'it'}.</div>` : '';
   return `<div class="row spread"><div><h1>${d.id ? 'Order ' + esc(orderNo(d.number)) : 'New order'}</h1><p class="sub">${note}</p></div>
-      <span class="pill ${d.status}">${STATUS[d.status]}</span></div>${missing}
+      <span class="pill ${d.status}">${esc(statusText(d.status))}</span></div>${missing}
     <div class="entry"><div>
       ${admin ? `<div class="grpswitch" role="radiogroup" aria-label="Order type">${GROUPS.map(g => `<button type="button" role="radio" aria-checked="${(d.group || 'Organic') === g}" class="${(d.group || 'Organic') === g ? 'on' : ''}" ${dis} onclick="setGroup('${g}')">${g} order</button>`).join('')}</div>` : ''}
       <div class="card grid g2">
