@@ -205,7 +205,7 @@ async function enter() {
     // Nothing from the last person carries over to whoever signs in next on this device.
     if ($('#dlg').open) $('#dlg').close();
     Object.assign(S, { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], links: [], sections: [], cutRules: [], cutSettings: [] });
-    draft = null; receipt = null; search = ''; listFilter = 'pending'; groupFilter = 'all'; adminTab = 'emails'; picked.clear(); upPicked.clear();
+    draft = null; receipt = null; search = ''; custSearch = ''; listFilter = 'pending'; groupFilter = 'all'; adminTab = 'emails'; picked.clear(); upPicked.clear();
     clearInterval(deviceTimer); deviceTimer = null; clearInterval(autoRefresh); autoRefresh = null; profile = null; view = null; smsCfg = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
   if (authMode === 'newpass') return renderAuth();
   if (!(await stillMyDevice())) return;
@@ -733,15 +733,25 @@ async function deleteOrder(btn) {
 }
 
 // ---------- admin: reference lists ----------
+// Customers search: rows are shown or hidden in place, so typing never redraws the page or loses the cursor.
+let custSearch = '';
+const custFindText = c => [c.cid, c.name, c.contact, c.phone, String(c.phone || '').replace(/\s/g, ''), c.email].filter(Boolean).join(' ').toLowerCase();
+const custMatch = c => !custSearch.trim() || custSearch.toLowerCase().trim().split(/\s+/).every(w => custFindText(c).includes(w));
+function filterCustomers() {
+  const ws = custSearch.toLowerCase().trim().split(/\s+/).filter(Boolean); let n = 0;
+  document.querySelectorAll('tr[data-find]').forEach(r => { r.hidden = !ws.every(w => r.dataset.find.includes(w)); if (!r.hidden) n++; });
+  const cc = $('#cscount'); if (cc) cc.textContent = ws.length ? `${n} of ${S.customers.length}` : '';
+}
 function viewCustomers() {
   const cs = S.customers.slice().sort(byName);
   // Count orders and logins per customer once, rather than scanning every order for every row.
   const nOrders = new Map(), nLogins = new Map();
   S.orders.forEach(o => nOrders.set(o.customer_id, (nOrders.get(o.customer_id) || 0) + 1));
   if (!isManager()) S.profiles.filter(u => u.role === 'customer').forEach(u => new Set(loginCustIds(u)).forEach(id => nLogins.set(id, (nLogins.get(id) || 0) + 1)));
-  return `<div class="row spread pagehead"><div><h1>Customers</h1><p class="sub">The businesses who order from you.${isManager() ? '' : ' Link a login to a customer under <b>Administration › Logins</b>.'}</p></div><div class="row"><button onclick="importCustomers()">Import customers</button><button class="primary" onclick="editCustomer()">Add customer</button></div></div>
+  return `<div class="pagehead"><div class="row spread"><div><h1>Customers</h1><p class="sub">The businesses who order from you.${isManager() ? '' : ' Link a login to a customer under <b>Administration › Logins</b>.'}</p></div><div class="row"><button onclick="importCustomers()">Import customers</button><button class="primary" onclick="editCustomer()">Add customer</button></div></div>
+  ${cs.length ? `<div class="row"><input class="search" id="csearch" placeholder="Search customers" title="Name, CID, contact, phone or email" value="${esc(custSearch)}" oninput="custSearch=this.value;filterCustomers()"><span class="muted" id="cscount">${custSearch.trim() ? `${cs.filter(custMatch).length} of ${cs.length}` : ''}</span></div>` : ''}</div>
   ${cs.length ? `<div class="tablewrap stickyhead"><table><thead><tr><th class="num">CID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Type</th>${isManager() ? '' : '<th class="num">Logins</th>'}<th class="num">Orders</th><th></th></tr></thead><tbody>
-    ${cs.map(c => `<tr><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.sunday_delivery ? ' <span class="pill">Sunday delivery</span>' : ''}${c.reminders !== false && GROUPS.some(g => custAllows(c, g) && S.cutSettings?.find(x => x.product_group === g)?.reminder_minutes) ? ' <span class="pill">Reminders</span>' : ''}${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td><td><span class="pill grp-${custGroup(c).toLowerCase()}">${custGroup(c)}</span></td>${isManager() ? '' : `<td class="num">${nLogins.get(c.id) || 0}</td>`}<td class="num">${nOrders.get(c.id) || 0}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
+    ${cs.map(c => `<tr data-find="${esc(custFindText(c))}" ${custMatch(c) ? '' : 'hidden'}><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.sunday_delivery ? ' <span class="pill">Sunday delivery</span>' : ''}${c.reminders !== false && GROUPS.some(g => custAllows(c, g) && S.cutSettings?.find(x => x.product_group === g)?.reminder_minutes) ? ' <span class="pill">Reminders</span>' : ''}${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td><td><span class="pill grp-${custGroup(c).toLowerCase()}">${custGroup(c)}</span></td>${isManager() ? '' : `<td class="num">${nLogins.get(c.id) || 0}</td>`}<td class="num">${nOrders.get(c.id) || 0}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
   </tbody></table></div>` : `<div class="card empty">No customers yet.</div>`}`;
 }
 function viewSuppliers() {
