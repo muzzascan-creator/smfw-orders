@@ -138,6 +138,7 @@ async function loadAll() {
     [c, p, o, cr, cs] = await Promise.all([sb.from('customers').select('id,cid,name,product_group,sunday_delivery'), prods.eq('active', true), orders, ...cuts]);
     base = [c, p, o];
     S.customers = c.data || []; S.suppliers = []; S.products = p.data || []; if (seq === ordersSeq) S.orders = o.data || [];
+    await loadFavs();
   }
   const bad = [...base, cr, cs].find(r => r?.error);
   if (bad) toast(friendly(bad.error));
@@ -206,7 +207,7 @@ async function enter() {
   if (!session) {
     // Nothing from the last person carries over to whoever signs in next on this device.
     if ($('#dlg').open) $('#dlg').close();
-    Object.assign(S, { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], links: [], sections: [], cutRules: [], cutSettings: [] });
+    Object.assign(S, { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], links: [], sections: [], cutRules: [], cutSettings: [], favs: [] });
     draft = null; receipt = null; search = ''; custSearch = ''; listFilter = 'pending'; groupFilter = 'all'; adminTab = 'emails'; picked.clear(); upPicked.clear();
     clearInterval(deviceTimer); deviceTimer = null; clearInterval(autoRefresh); autoRefresh = null; profile = null; view = null; smsCfg = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
   if (authMode === 'newpass') return renderAuth();
@@ -593,6 +594,75 @@ function cancelOrder() {
   if (draftLines().length && !confirm(draft.id ? 'Leave without saving? Your last saved draft is kept.' : 'Cancel this order? Nothing will be saved.')) return;
   draft = null; go('mine', false);
 }
+// ---------- favourite orders (migrations/029) ----------
+// A customer saves an order's products and quantities under a name and starts a new order from it later.
+// Favourites belong to the business, so every login for it sees them. The delivery date is never saved.
+async function loadFavs() {
+  const { data, error } = await sb.from('favourites').select('*').order('name');
+  if (!error) S.favs = data || [];
+}
+const favsFor = cid => (S.favs || []).filter(f => f.customer_id === cid && custAllows(custOf(cid), f.product_group));
+const draftGroup = d => custGroup(custOf(d.customer_id)) === 'Both' ? (d.group || 'Organic') : custGroup(custOf(d.customer_id));
+// The lines to keep: what was ordered on a sent order (before any delivery changes), or what is entered on a draft.
+function favLines(d) {
+  const o = d.id && d.status !== 'draft' ? S.orders.find(x => x.id === d.id) : null;
+  const ls = o ? (o.lines || []).map(l => ({ pack_id: l.pack_id, qty: +(l.ordered_qty ?? l.qty), product_name: l.product_name, pack_name: l.pack_name })) : draftLines();
+  return ls.filter(l => l.pack_id && l.qty > 0).map(l => ({ pack_id: l.pack_id, qty: l.qty, name: `${l.product_name} (${l.pack_name})` }));
+}
+function favPicker(d) {
+  const fs = favsFor(d.customer_id);
+  if (d.status !== 'draft' || !fs.length) return '';
+  const both = custGroup(custOf(d.customer_id)) === 'Both';
+  return `<div class="favpick"><label class="f">Start from a favourite<select onchange="useFav(this.value)"><option value="">Choose a favourite…</option>${fs.map(f => `<option value="${f.id}">★ ${esc(f.name)}${both ? ` (${f.product_group})` : ''}</option>`).join('')}</select></label>
+    <button class="link" onclick="manageFavs()">Manage favourites</button></div>`;
+}
+// Fill the order form from saved lines. Anything no longer available is left out, and the customer is told.
+function fillDraft(g, lines, label) {
+  const qty = {}, skipped = [];
+  for (const l of lines) {
+    const x = packOf(l.pack_id);
+    if (!x || x.p.active === false || !x.k.available || groupOf(x.p) !== g) skipped.push(l.name || 'a product no longer listed');
+    else qty[x.k.id] = +l.qty;
+  }
+  draft.group = g; draft.qty = qty; render();
+  toast(skipped.length ? `${label} loaded. Not available at the moment, so left out: ${skipped.join(', ')}.` : `${label} loaded. Check the quantities, then choose the delivery date.`, !skipped.length);
+}
+function useFav(id) {
+  const f = (S.favs || []).find(x => x.id === id); if (!f) return;
+  if (draftLines().length && !confirm(`Replace the quantities you’ve entered with your favourite “${f.name}”?`)) return render();
+  fillDraft(f.product_group, f.lines || [], `“${f.name}”`);
+}
+async function saveFav() {
+  const d = draft, lines = favLines(d);
+  if (!lines.length) return toast('Enter some quantities first.');
+  const fs = favsFor(d.customer_id);
+  const day = d.required_date ? new Date(d.required_date + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'long' }) + ' order' : 'My usual order';
+  const name = (prompt('Name this favourite, for example “Monday order”:', day) || '').trim().slice(0, 60);
+  if (!name) return;
+  const same = fs.find(f => f.name.toLowerCase() === name.toLowerCase());
+  if (same && !confirm(`You already have a favourite called “${same.name}”. Replace it with this order?`)) return;
+  const row = { customer_id: d.customer_id, name: same?.name || name, product_group: draftGroup(d), lines, updated_at: new Date().toISOString() };
+  const { error } = await sb.from('favourites').upsert(row, { onConflict: 'customer_id,name' });
+  if (error) return toast(friendly(error));
+  await loadFavs(); $('#summary').innerHTML = summaryHtml();
+  toast(`Saved as your favourite “${row.name}”`, true);
+}
+// Start a new order with the same products and quantities as the one being viewed.
+function repeatOrder() {
+  const d = draft, lines = favLines(d), g = draftGroup(d);
+  draft = blankOrder(); draft.customer_id = d.customer_id; view = 'entry';
+  fillDraft(g, lines, `Order ${orderNo(d.number)}`); window.scrollTo(0, 0);
+}
+function manageFavs() {
+  const fs = favsFor(draft.customer_id);
+  openDialog('Your favourites', `<p class="sub" style="margin:0">Tick any you no longer need, then press Save to delete them.</p>
+    <div class="grid" style="gap:6px">${fs.map(f => `<label class="chk"><input type="checkbox" name="del" value="${f.id}"> ★ ${esc(f.name)} <span class="muted">· ${(f.lines || []).length} line${(f.lines || []).length === 1 ? '' : 's'}</span></label>`).join('')}</div>`,
+    async f => {
+      const ids = f.getAll('del'); if (!ids.length) return true;
+      if (!(await run(sb.from('favourites').delete().in('id', ids)))) return false;
+      await loadFavs(); $('#summary').innerHTML = summaryHtml(); toast(`${ids.length} favourite${ids.length > 1 ? 's' : ''} deleted`, true); return true;
+    });
+}
 function canEditDraft() {
   if (isAdmin()) return draft.status !== 'complete';
   return draft.status === 'draft';
@@ -675,10 +745,11 @@ function summaryHtml() {
   } else if (d.status === 'draft') btns = `<button onclick="cancelOrder()">Cancel</button><button onclick="saveOrder('draft')">Save draft</button><button class="primary" onclick="saveOrder('submitted')">Send order</button>`;
   else btns = `<button class="primary" onclick="draft=null;go('mine',false)">Close</button>`;
   const del = d.id && (admin || d.status === 'draft') ? `<div class="row" style="margin-top:8px"><button class="danger" onclick="deleteOrder(this)">Delete order</button></div>` : '';
-  return `<h2>Order summary</h2>
+  const favRow = admin ? '' : `<div class="row favrow">${lines.length ? `<button onclick="saveFav()">☆ Save as favourite</button>` : ''}${d.status !== 'draft' && lines.length ? `<button onclick="repeatOrder()">↻ Repeat this order</button>` : ''}</div>`;
+  return `<h2>Order summary</h2>${admin ? '' : favPicker(d)}
     <p class="muted" style="margin:4px 0 0">${esc(custOf(d.customer_id)?.name || (needsCustomer(d) ? 'No customer chosen' : 'Conventional order'))}${d.required_date ? ' · needed ' + esc(fmtDate(d.required_date)) : ''}</p>
     ${lines.length ? body + `<p style="margin:12px 0 0"><b>${got.length}</b> line${got.length === 1 ? '' : 's'} · <b>${total}</b> in total${nd ? ` · <span class="ndtxt">${nd} not delivered</span>` : ''}</p>` : '<p class="muted">No quantities entered yet.</p>'}
-    ${notifyHtml(d)}<div class="row" style="margin-top:16px">${btns}</div>${del}`;
+    ${notifyHtml(d)}<div class="row" style="margin-top:16px">${btns}</div>${favRow}${del}`;
 }
 // ---------- customer emails about missing items (supabase/functions/notify-undelivered) ----------
 // Lines the customer is told about: not delivered at all, or delivered short.
