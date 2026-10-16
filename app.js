@@ -460,16 +460,31 @@ function wireOrderSearch() {
   });
 }
 const pickText = () => picked.size || upPicked.size ? [upPicked.size && `${upPicked.size} for upload`, picked.size && `${picked.size} to email`].filter(Boolean).join(' · ') : 'Tick orders on the right to create an upload CSV or email them to the supplier.';
-// On an iPhone or iPad in Safari, suggest adding the site to the home screen so it opens like an app.
+// On a phone or tablet (iPhone, iPad or Android), suggest adding the site to the home screen so it opens like an app.
 const isIos = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isAndroid = () => /Android/i.test(navigator.userAgent);
 const isStandalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+// Chrome on Android can install the app with one tap; it offers this through beforeinstallprompt.
+let installPrompt = null;
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; if (view === 'mine' && canRedraw()) render(); });
+addEventListener('appinstalled', () => { installPrompt = null; $('#hometip')?.remove(); });
+async function installApp() {
+  if (!installPrompt) return;
+  installPrompt.prompt(); const { outcome } = await installPrompt.userChoice; installPrompt = null;
+  if (outcome === 'accepted') $('#hometip')?.remove(); else render();
+}
 function homeTip() {
   let hidden = false; try { hidden = localStorage.getItem('smfw-hometip') === 'off'; } catch (e) {}
-  if (hidden || !isIos() || isStandalone()) return '';
+  if (hidden || isStandalone() || !(isIos() || isAndroid())) return '';
+  const steps = isIos()
+    ? `<ol><li>Tap <b>Share</b> <span class="ht-share" aria-hidden="true">⬆︎</span> in Safari</li><li>Tap <b>Add to Home Screen</b></li></ol>`
+    : installPrompt
+      ? `<button class="ht-install" onclick="installApp()">Add to Home Screen</button>`
+      : `<ol><li>Tap the menu <span class="ht-share" aria-hidden="true">⋮</span> at the top right of Chrome</li><li>Tap <b>Add to Home screen</b> or <b>Install app</b></li></ol>`;
   const hide = `try{localStorage.setItem('smfw-hometip','off')}catch(e){};document.getElementById('hometip').remove()`;
   return `<div class="hometip" id="hometip" role="note"><div class="ht-icon" aria-hidden="true">📱</div><div class="ht-body">
     <b class="ht-title">Put Coolibah Orders on your Home Screen</b>
-    <ol><li>Tap <b>Share</b> <span class="ht-share" aria-hidden="true">⬆︎</span> in Safari</li><li>Tap <b>Add to Home Screen</b></li></ol>
+    ${steps}
     <span class="ht-sub">It then opens like an app, straight to your orders.</span></div>
     <button class="ht-x" aria-label="Hide this tip" onclick="${hide}">✕</button></div>`;
 }

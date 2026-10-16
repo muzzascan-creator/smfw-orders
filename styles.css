@@ -120,6 +120,7 @@ body{padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inse
 .hometip ol{margin:0 0 6px;padding-left:22px}
 .hometip li{margin:2px 0}
 .hometip .ht-share{display:inline-block;background:var(--accent-fg);color:var(--accent);border-radius:5px;padding:0 6px;font-weight:700}
+.hometip .ht-install{display:block;margin:4px 0 8px;background:var(--accent-fg);color:var(--accent);border:0;border-radius:8px;padding:10px 16px;font-weight:700;font-size:16px}
 .hometip .ht-sub{font-size:14px;opacity:.9}
 .hometip .ht-x{background:none;border:0;color:inherit;font-size:20px;padding:2px 8px;cursor:pointer;opacity:.85}
 @media (max-width:600px){
