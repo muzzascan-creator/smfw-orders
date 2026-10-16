@@ -22,7 +22,7 @@ To check an existing system, run `supabase/checks/check_setup_step1.sql` and the
 
 ## Adding a customer login
 
-The customer opens the site and creates an account, and SMFW gets a text. It appears under **Administration › Logins** marked *Waiting*. Press **Approve**, choose which customer(s) it orders for, and save. Several logins can share one customer. Each login can be signed in on one device at a time.
+The customer opens the site and creates an account, giving their mobile number, and SMFW gets a text. It appears under **Administration › Logins** marked *Waiting*. Press **Approve**, choose which customer(s) it orders for, and save. The customer gets a text saying their login is active. Several logins can share one customer. Each login can be signed in on one device at a time.
 
 To give another staff member access, approve their login with the role **Admin**, **Manager** or **Receiver**.
 

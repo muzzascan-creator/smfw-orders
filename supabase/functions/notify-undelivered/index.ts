@@ -8,7 +8,7 @@
 //    (migrations/018, 026).
 // 4. New-login SMS (action "new-login"): when someone signs up and is waiting to be activated, SMFW gets a text,
 //    straight away, one text per login. Called by the database the moment the login is made (migrations/022).
-//    Action "test-sms" sends a test text.
+//    Action "test-sms" sends a test text. Action "welcome-sms" texts a customer that their login is now active.
 // Needs the RESEND_API_KEY secret (resend.com). Optional: FROM_EMAIL, REPLY_TO.
 // Texts go through SMS Broadcast (smsbroadcast.com.au). The username, password, sender and mobile number(s) are set
 // under Administration › SMS in the app (app_settings sms_*, migrations/022 and 024). The SMSBROADCAST_USERNAME /
@@ -160,13 +160,14 @@ async function sendReminders({ dry = false, force = false, now }: { dry?: boolea
 
 // SMS Broadcast wants digits only: 0412 345 678 → 0412345678, +61 412 345 678 → 61412345678.
 export const smsNumber = (n: string) => n.replace(/\D/g, '');
-async function sendSms(text: string) {
+// to: send to these numbers instead of the SMFW number(s) saved under Administration › SMS.
+async function sendSms(text: string, toList?: string[]) {
   const set: Record<string, string> = Object.fromEntries(((await dbOk(`app_settings?key=like.sms_*&select=key,value`)) as any[]).map(r => [r.key, r.value || '']));
   // The settings saved under Administration › SMS win; the secrets only fill gaps.
   const user = set.sms_username || SMS_USER, pass = set.sms_password || SMS_PASS;
   const from = (set.sms_from || SMS_FROM).replace(/[^A-Za-z0-9]/g, '').slice(0, 11);
-  const to = String(set.sms_to || '').split(/[,;]+/).map(n => n.trim()).filter(n => /\d{8,}/.test(n.replace(/\D/g, ''))).map(smsNumber);
-  if (!to.length) return { sent: false, reason: 'No mobile number set (sms_to in app_settings).' };
+  const to = (toList ?? String(set.sms_to || '').split(/[,;]+/)).map(n => n.trim()).filter(n => /\d{8,}/.test(n.replace(/\D/g, ''))).map(smsNumber);
+  if (!to.length) return { sent: false, reason: toList ? 'This login has no valid mobile number.' : 'No mobile number set (sms_to in app_settings).' };
   if (!user || !pass || /^YOUR /.test(user)) return { sent: false, reason: 'Texts aren’t set up yet (no SMS Broadcast username / password).' };
   const form = new URLSearchParams({ username: user, password: pass, to: to.join(','), from, message: text.slice(0, 300), ref: 'csorders', maxsplit: '2' });
   const r = await fetch(SMS_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form });
@@ -178,12 +179,20 @@ async function sendSms(text: string) {
 }
 // One text for every new login, sent straight away; the text says how many are waiting.
 async function newLoginSms(id: string) {
-  const [p] = await dbOk(`profiles?id=eq.${encodeURIComponent(id)}&select=email,full_name,business,approved`);
+  const [p] = await dbOk(`profiles?id=eq.${encodeURIComponent(id)}&select=email,full_name,business,mobile,approved`);
   if (!p) return reply({ sent: false, reason: 'Login not found.' });
   if (p.approved) return reply({ sent: false, reason: 'Already active.' });
   const waiting = ((await dbOk('profiles?approved=eq.false&select=id')) as any[]).length;
   const who = [p.full_name, p.business].filter(Boolean).join(', ');
-  return reply(await sendSms(`Coolibah Orders: new login to activate. ${who ? who + ' ' : ''}(${p.email}).${waiting > 1 ? ` ${waiting} logins are waiting.` : ''} Approve under Administration › Logins.`));
+  return reply(await sendSms(`Coolibah Orders: new login to activate. ${who ? who + ' ' : ''}(${[p.email, p.mobile].filter(Boolean).join(', ')}).${waiting > 1 ? ` ${waiting} logins are waiting.` : ''} Approve under Administration › Logins.`));
+}
+// Congratulate a customer when SMFW approves their login.
+async function welcomeSms(id: string) {
+  const [p] = await dbOk(`profiles?id=eq.${encodeURIComponent(id)}&select=full_name,mobile,approved`);
+  if (!p) return { sent: false, reason: 'Login not found.' };
+  if (!p.approved) return { sent: false, reason: 'This login isn’t active yet.' };
+  const first = String(p.full_name || '').trim().split(/\s+/)[0];
+  return await sendSms(`Congratulations${first ? ' ' + first : ''}! Your Coolibah Orders login is now active. Sign in at csorders.org to start ordering. Coolibah Salads Sydney`, [String(p.mobile || '')]);
 }
 
 export async function handler(req: Request) {
@@ -217,6 +226,10 @@ export async function handler(req: Request) {
     if (body.action === 'test-sms') {
       if (me.role !== 'admin') return reply({ error: 'Not allowed.' }, 403);
       return reply(await sendSms('Coolibah Orders: test text. New-login alerts will arrive like this.'));
+    }
+    if (body.action === 'welcome-sms') {
+      if (me.role !== 'admin') return reply({ error: 'Not allowed.' }, 403);
+      return reply(await welcomeSms(String(body.id || '')));
     }
     if (body.action === 'supplier') {
       if (!['manager', 'admin'].includes(me.role)) return reply({ error: 'Not allowed.' }, 403);

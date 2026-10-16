@@ -229,6 +229,11 @@ async function enter() {
 }
 $('#signout').addEventListener('click', () => sb.auth.signOut());
 
+// An Australian mobile number written as 04XX XXX XXX, or '' if it isn't one (also takes +61 4.. and 61 4..).
+function auMobile(v) {
+  let d = String(v || '').replace(/[\s().-]/g, '').replace(/^\+?61(?=4)/, '0');
+  return /^04\d{8}$/.test(d) ? `${d.slice(0, 4)} ${d.slice(4, 7)} ${d.slice(7)}` : '';
+}
 function renderAuth() {
   const app = $('#app');
   const msg = authMsg ? `<p class="${authMsg.startsWith('!') ? 'err' : 'ok'}">${esc(authMsg.replace(/^!/, ''))}</p>` : '';
@@ -241,6 +246,7 @@ function renderAuth() {
     signup: `<h1>Create an account</h1><p class="sub">Once SMFW links your account to your business, you can start ordering.</p>${msg}
       <form id="af" class="grid"><label class="f">Your name<input id="a-name" autocomplete="name" required></label>
       <label class="f">Business name<input id="a-biz" autocomplete="organization" required></label>
+      <label class="f">Mobile number<input id="a-mobile" type="tel" inputmode="tel" autocomplete="tel" placeholder="04XX XXX XXX" required><span class="muted" style="font-size:12px;font-weight:400">We’ll text you when your account is ready.</span></label>
       <label class="f">Email<input id="a-email" type="email" autocomplete="email" required></label>
       <label class="f">Password (at least 8 characters)<input id="a-pass" type="password" autocomplete="new-password" minlength="8" required></label>
       <button class="primary" type="submit">Create account</button></form>
@@ -263,7 +269,9 @@ function renderAuth() {
     claimDevice = true;
     if (authMode === 'signin') ({ error } = await sb.auth.signInWithPassword({ email, password }));
     else if (authMode === 'signup') {
-      const r = await sb.auth.signUp({ email, password, options: { data: { full_name: $('#a-name').value.trim(), business: $('#a-biz').value.trim() }, emailRedirectTo: location.origin + location.pathname } });
+      const mobile = auMobile($('#a-mobile').value);
+      if (!mobile) { const m = $('#a-mobile'); m.setCustomValidity('Please enter a valid Australian mobile number, like 0412 345 678.'); m.oninput = () => m.setCustomValidity(''); m.reportValidity(); btn.disabled = false; claimDevice = false; return; }
+      const r = await sb.auth.signUp({ email, password, options: { data: { full_name: $('#a-name').value.trim(), business: $('#a-biz').value.trim(), mobile }, emailRedirectTo: location.origin + location.pathname } });
       error = r.error;
       if (!error && !r.data.session) { authMode = 'signin'; authMsg = 'Account created. Check your email to confirm it, then sign in.'; return renderAuth(); }
     } else if (authMode === 'forgot') {
@@ -823,8 +831,8 @@ function viewUsers() {
   const waiting = us.filter(u => !u.approved).length;
   const link = location.origin + location.pathname;
   return `<h1>Logins</h1><p class="sub">Customers create their own account at <span class="mono">${esc(link)}</span>. Link each new account to its customer so they can start ordering.${waiting ? ` <b>${waiting} waiting.</b>` : ''}</p>
-  <div class="tablewrap"><table><thead><tr><th>Name</th><th>Email</th><th>Business they gave</th><th>Role</th><th>Linked customer</th><th>Access</th><th></th></tr></thead><tbody>
-  ${us.map(u => `<tr><td>${esc(u.full_name)}</td><td class="mono">${esc(u.email)}</td><td>${esc(u.business || '')}</td><td>${u.role === 'admin' ? 'Admin' : u.role === 'manager' ? 'Manager' : u.role === 'receiver' ? 'Receiver' : 'Customer'}</td>
+  <div class="tablewrap"><table><thead><tr><th>Name</th><th>Email</th><th>Mobile</th><th>Business they gave</th><th>Role</th><th>Linked customer</th><th>Access</th><th></th></tr></thead><tbody>
+  ${us.map(u => `<tr><td>${esc(u.full_name)}</td><td class="mono">${esc(u.email)}</td><td style="white-space:nowrap">${esc(u.mobile || '')}</td><td>${esc(u.business || '')}</td><td>${u.role === 'admin' ? 'Admin' : u.role === 'manager' ? 'Manager' : u.role === 'receiver' ? 'Receiver' : 'Customer'}</td>
     <td>${['admin', 'manager'].includes(u.role) ? '<span class="muted">All customers</span>' : u.role === 'receiver' ? '<span class="muted">All orders, view only</span>' : loginCustIds(u).map(id => esc(custOf(id)?.name || '')).sort().join('<br>')}</td>
     <td>${u.approved ? '<span class="pill complete">Active</span>' : '<span class="pill draft">Waiting</span>'}</td>
     <td class="num">${u.id === profile.id ? '<span class="muted">You</span>' : `<button class="ghost" onclick="editLogin('${u.id}')">${u.approved ? 'Edit' : 'Approve'}</button>`}</td></tr>`).join('')}
@@ -1535,21 +1543,34 @@ function editProduct(id) {
 }
 function editLogin(uid) {
   const u = S.profiles.find(x => x.id === uid);
+  let welcomed = false; // so pressing Save again after an error can't text twice
   openDialog(u.approved ? 'Edit login' : 'Approve login',
     `<p style="margin:0"><b>${esc(u.full_name || u.email)}</b><br><span class="mono muted">${esc(u.email)}</span>${u.business ? `<br>Business they gave: ${esc(u.business)}` : ''}</p>
+    <label class="f">Mobile number<input name="mobile" id="f-mobile" type="tel" placeholder="04XX XXX XXX" value="${esc(u.mobile || '')}"></label>
     <label class="f">Role<select name="role" id="f-role" onchange="document.getElementById('custpick').hidden = this.value!=='customer'"><option value="customer" ${!['admin', 'manager', 'receiver'].includes(u.role) ? 'selected' : ''}>Customer: orders for the businesses ticked below</option><option value="receiver" ${u.role === 'receiver' ? 'selected' : ''}>Receiver: checks deliveries and marks orders received</option><option value="manager" ${u.role === 'manager' ? 'selected' : ''}>Manager: orders, customers and products, not Suppliers or Administration</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin: full access, like you</option></select></label>
     ${`<div class="custpick" id="custpick" ${['admin', 'manager', 'receiver'].includes(u.role) ? 'hidden' : ''}>Customers this login orders for<input class="search" placeholder="Find a customer" oninput="for(const l of document.querySelectorAll('#custlist label'))l.hidden=!l.textContent.toLowerCase().includes(this.value.toLowerCase())"><div class="custlist" id="custlist">${S.customers.slice().sort(byName).map(c => `<label><input type="checkbox" name="customer_ids" value="${c.id}" ${loginCustIds(u).includes(c.id) ? 'checked' : ''}> ${esc(c.name)}</label>`).join('')}</div><span class="muted" style="font-size:12px">Tick more than one and the customer picks which business each order is for.</span></div>`}
     <label class="f">Access<select name="approved" id="f-approved"><option value="1" selected>Allowed to sign in</option><option value="0">Blocked</option></select></label>`,
     async f => {
-      const role = f.get('role'), approved = f.get('approved') === '1';
+      const role = f.get('role'), approved = f.get('approved') === '1', mtxt = f.get('mobile').trim(), mobile = auMobile(mtxt);
+      if (mtxt && !mobile) { toast('Please enter a valid Australian mobile number, like 0412 345 678.'); return false; }
       const ids = role !== 'customer' ? [] : f.getAll('customer_ids');
       if (role === 'customer' && approved && !ids.length) { toast('Choose which customer this login orders for.'); return false; }
       // The main customer stays the same while it is still ticked; the rest are linked in profile_customers.
       const customer_id = ids.includes(u.customer_id) ? u.customer_id : ids[0] || null;
-      if (!(await run(sb.from('profiles').update({ role, customer_id, approved }).eq('id', uid)))) return false;
+      const upd = { role, customer_id, approved }; if ((mobile || null) !== (u.mobile ?? null)) upd.mobile = mobile || null;
+      if (!(await run(sb.from('profiles').update(upd).eq('id', uid)))) return false;
       const gone = loginCustIds(u).filter(id => !ids.includes(id));
       if (gone.length && !(await run(sb.from('profile_customers').delete().eq('profile_id', uid).in('customer_id', gone)))) return false;
       if (ids.length && !(await run(sb.from('profile_customers').upsert(ids.map(id => ({ profile_id: uid, customer_id: id })))))) return false;
+      // A customer login that has just been approved gets a text saying it is ready.
+      if (!u.approved && approved && role === 'customer' && !welcomed) {
+        welcomed = true;
+        if (!mobile) { toast('Login saved. No mobile number, so no welcome text was sent.', true); return true; }
+        const { data, error } = await sb.functions.invoke(NOTIFY_FN, { body: { action: 'welcome-sms', id: uid } });
+        let m = ''; if (error) try { m = (await error.context.json()).error; } catch { }
+        toast(data?.sent ? `Login saved. Welcome text sent to ${mobile}.` : `Login saved, but the welcome text wasn’t sent: ${data?.reason || m || 'the text service didn’t answer.'}`, !!data?.sent);
+        return true;
+      }
       toast('Login saved', true); return true;
     },
     // Deleting removes the sign-in for good. Not offered on your own login.
