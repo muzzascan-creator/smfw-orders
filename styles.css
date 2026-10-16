@@ -113,7 +113,15 @@ th.pick,td.pick{width:36px;text-align:center;padding-inline:8px}
 /* iPhone: 16px text stops Safari zooming into fields; respect the notch and home bar. */
 @media (hover:none) and (pointer:coarse){input,select,textarea{font-size:16px}.sec td.q input{width:64px;padding:8px 4px}nav button{padding:12px 12px}}
 body{padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px);padding-bottom:env(safe-area-inset-bottom,0px);-webkit-text-size-adjust:100%}
-.hometip{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--accent-soft);color:var(--fg);border-radius:8px;padding:8px 8px 8px 14px;margin:0 0 12px;font-size:14px}
+.hometip{display:flex;align-items:flex-start;gap:12px;background:var(--accent);color:var(--accent-fg);border-radius:12px;padding:14px 10px 14px 16px;margin:16px 0;font-size:16px;line-height:1.4;box-shadow:0 4px 14px rgba(0,0,0,.18)}
+.hometip .ht-icon{font-size:30px;line-height:1}
+.hometip .ht-body{flex:1;min-width:0}
+.hometip .ht-title{display:block;font-size:18px;margin-bottom:6px}
+.hometip ol{margin:0 0 6px;padding-left:22px}
+.hometip li{margin:2px 0}
+.hometip .ht-share{display:inline-block;background:var(--accent-fg);color:var(--accent);border-radius:5px;padding:0 6px;font-weight:700}
+.hometip .ht-sub{font-size:14px;opacity:.9}
+.hometip .ht-x{background:none;border:0;color:inherit;font-size:20px;padding:2px 8px;cursor:pointer;opacity:.85}
 @media (max-width:600px){
   nav{order:3;flex-basis:100%}
   .who{padding-bottom:0;padding-top:4px}

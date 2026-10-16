@@ -466,7 +466,12 @@ const isStandalone = () => navigator.standalone === true || matchMedia('(display
 function homeTip() {
   let hidden = false; try { hidden = localStorage.getItem('smfw-hometip') === 'off'; } catch (e) {}
   if (hidden || !isIos() || isStandalone()) return '';
-  return `<div class="hometip" id="hometip"><span>Tip: tap <b>Share</b> <span aria-hidden="true">⬆︎</span> then <b>Add to Home Screen</b> to open Coolibah Orders like an app.</span><button class="ghost" aria-label="Hide this tip" onclick="try{localStorage.setItem('smfw-hometip','off')}catch(e){};document.getElementById('hometip').remove()">✕</button></div>`;
+  const hide = `try{localStorage.setItem('smfw-hometip','off')}catch(e){};document.getElementById('hometip').remove()`;
+  return `<div class="hometip" id="hometip" role="note"><div class="ht-icon" aria-hidden="true">📱</div><div class="ht-body">
+    <b class="ht-title">Put Coolibah Orders on your Home Screen</b>
+    <ol><li>Tap <b>Share</b> <span class="ht-share" aria-hidden="true">⬆︎</span> in Safari</li><li>Tap <b>Add to Home Screen</b></li></ol>
+    <span class="ht-sub">It then opens like an app, straight to your orders.</span></div>
+    <button class="ht-x" aria-label="Hide this tip" onclick="${hide}">✕</button></div>`;
 }
 function viewMine() {
   const os = S.orders, many = S.customers.length > 1;
@@ -474,8 +479,7 @@ function viewMine() {
   const head = many
     ? `<label class="f custpicker">Ordering for<select id="mycust" onchange="pickCust(this.value)">${myCusts().map(c => `<option value="${c.id}" ${c.id === me?.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`
     : me?.name ? `<p class="custname">${esc(me.name)}</p>` : '';
-  return `<div class="row spread"><div>${head}<h1>My orders</h1></div><button class="primary" onclick="go('entry')">New order</button></div>
-    ${homeTip()}
+  return `${homeTip()}<div class="row spread"><div>${head}<h1>My orders</h1></div><button class="primary" onclick="go('entry')">New order</button></div>
     ${os.length ? `<div class="tablewrap mine"><table><thead><tr><th>Order</th>${many ? '<th>Customer</th>' : ''}<th>Required</th><th class="num lines">Lines</th><th>Status</th><th class="acts"></th></tr></thead><tbody>${os.map(o => orderRow(o, { customer: many, acts: true })).join('')}</tbody></table></div>`
       : `<div class="card empty">You haven’t placed any orders yet. Press <b>New order</b> to start one.</div>`}`;
 }
