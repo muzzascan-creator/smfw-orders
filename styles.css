@@ -253,3 +253,24 @@ label.chk.spo input{margin:0;width:18px;height:18px}
 }
 /* Sign-in screen warnings (e.g. signed out because the login was used on another device): white on red. */
 .auth p.err{background:#c62828;color:#fff;border-radius:8px;padding:10px 14px;font-size:15px;font-weight:600}
+/* Customer's My orders on a phone: each order is a small stacked card, so nothing runs off the right edge.
+   Line 1: order number and location with the status on the right; then customer and date, with View / Print on the right. */
+.c-date .c-lbl:not(.muted){display:none}
+@media (max-width:600px){
+  .tablewrap.mine{overflow:visible}
+  .tablewrap.mine thead{display:none}
+  .tablewrap.mine table,.tablewrap.mine tbody{display:block}
+  .tablewrap.mine tr{display:grid;grid-template-columns:1fr auto;column-gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
+  .tablewrap.mine tr:last-child{border-bottom:0}
+  .tablewrap.mine td{display:block;padding:0;border:0;white-space:normal;background:none}
+  .tablewrap.mine td.lines{display:none}
+  .tablewrap.mine tr.rowlink:hover td{background:none}
+  .tablewrap.mine tr.rowlink:active{background:var(--sunk)}
+  .tablewrap.mine td.c-no{grid-column:1;grid-row:1;font-size:15px}
+  .tablewrap.mine td.c-st{grid-column:2;grid-row:1;text-align:right}
+  .tablewrap.mine td.c-cust{grid-column:1;font-weight:600;margin-top:4px}
+  .tablewrap.mine td.c-date{grid-column:1;margin-top:4px;color:var(--muted)}
+  .tablewrap.mine .c-date .c-lbl{display:inline}
+  .tablewrap.mine td.c-acts{grid-column:2;grid-row:2 / span 2;align-self:center;display:flex;gap:4px;justify-content:flex-end}
+  .tablewrap.mine td.c-acts button{display:inline-block;margin:0;padding:6px 8px}
+}

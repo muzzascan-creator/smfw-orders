@@ -336,15 +336,15 @@ function render() {
 function orderRow(o, opts = {}) {
   const c = custOf(o.customer_id);
   return `<tr class="rowlink" onclick="openOrder('${o.id}')">
-    <td class="mono">${esc(orderNo(o.number))}${orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conventional</span>' : ''}${o.special_order && isAdmin() ? ' <span class="pill spo">Special Order</span>' : ''}</td>
-    ${opts.customer === false ? '' : `<td>${c ? esc(c.name) : o.customer_id ? 'Unknown customer' : '<span class="muted">No customer</span>'}</td>`}
-    <td>${esc(fmtDate(o.required_date))}</td>
+    <td class="mono c-no">${esc(orderNo(o.number))}${orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conventional</span>' : ''}${o.special_order && isAdmin() ? ' <span class="pill spo">Special Order</span>' : ''}</td>
+    ${opts.customer === false ? '' : `<td class="c-cust">${c ? esc(c.name) : o.customer_id ? 'Unknown customer' : '<span class="muted">No customer</span>'}</td>`}
+    <td class="c-date">${o.required_date ? `<span class="c-lbl">Required </span>${esc(fmtDate(o.required_date))}` : '<span class="c-lbl muted">No date yet</span>'}</td>
     ${opts.sent ? `<td>${esc(fmtWhen(o.submitted_at))}</td>` : ''}
     ${opts.source ? `<td>${o.source === 'customer' ? 'Customer' : 'SMFW'}</td>` : ''}
     <td class="num lines">${(o.lines || []).filter(l => !l.undelivered).length}</td>
-    <td>${opts.pick ? `<div class="stgrid"><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span><span>${o.emailed_at ? `<span class="pill emailed" title="Emailed ${esc(fmtWhen(o.emailed_at))}">Emailed</span>` : ''}</span><span>${receivedPill(o)}</span><span>${o.csv_at ? `<span class="pill emailed" title="CSV created ${esc(fmtWhen(o.csv_at))}">CSV</span>` : ''}</span></div>`
+    <td class="c-st">${opts.pick ? `<div class="stgrid"><span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span><span>${o.emailed_at ? `<span class="pill emailed" title="Emailed ${esc(fmtWhen(o.emailed_at))}">Emailed</span>` : ''}</span><span>${receivedPill(o)}</span><span>${o.csv_at ? `<span class="pill emailed" title="CSV created ${esc(fmtWhen(o.csv_at))}">CSV</span>` : ''}</span></div>`
       : `<span class="pill ${esc(o.status)}">${STATUS[o.status] || esc(o.status)}</span>`}</td>
-    ${opts.acts ? `<td class="num acts" onclick="event.stopPropagation()"><button class="ghost" onclick="openOrder('${o.id}')">View</button><button class="ghost" onclick="printOrder('${o.id}', this)">Print<span class="long"> Order</span></button></td>`
+    ${opts.acts ? `<td class="num acts c-acts" onclick="event.stopPropagation()"><button class="ghost" onclick="openOrder('${o.id}')">View</button><button class="ghost" onclick="printOrder('${o.id}', this)">Print<span class="long"> Order</span></button></td>`
       : `<td class="num openc"><button class="ghost" onclick="event.stopPropagation();openOrder('${o.id}')">Open</button></td>`}
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
@@ -474,7 +474,7 @@ function viewMine() {
     : me?.name ? `<p class="custname">${esc(me.name)}</p>` : '';
   return `<div class="row spread"><div>${head}<h1>My orders</h1></div><button class="primary" onclick="go('entry')">New order</button></div>
     ${homeTip()}
-    ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th>${many ? '<th>Customer</th>' : ''}<th>Required</th><th class="num lines">Lines</th><th>Status</th><th class="acts"></th></tr></thead><tbody>${os.map(o => orderRow(o, { customer: many, acts: true })).join('')}</tbody></table></div>`
+    ${os.length ? `<div class="tablewrap mine"><table><thead><tr><th>Order</th>${many ? '<th>Customer</th>' : ''}<th>Required</th><th class="num lines">Lines</th><th>Status</th><th class="acts"></th></tr></thead><tbody>${os.map(o => orderRow(o, { customer: many, acts: true })).join('')}</tbody></table></div>`
       : `<div class="card empty">You haven’t placed any orders yet. Press <b>New order</b> to start one.</div>`}`;
 }
 function openOrder(id) {
