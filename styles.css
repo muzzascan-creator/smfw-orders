@@ -291,3 +291,7 @@ label.chk.spo input{margin:0;width:18px;height:18px}
 #nav button:disabled{opacity:.4;cursor:not-allowed}
 /* Customer order form: customer and location on the left, the two dates stacked on the right. */
 .datecol{align-content:start}
+/* Customer order form: the two dates stacked together in one box. */
+.datebox{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--sunk);gap:4px}
+.datebox .dl{font-size:13px;font-weight:600;color:var(--muted)}
+.datebox .dv{font-size:16px;font-weight:600;margin-bottom:8px}
