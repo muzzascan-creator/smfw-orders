@@ -274,3 +274,7 @@ label.chk.spo input{margin:0;width:18px;height:18px}
   .tablewrap.mine td.c-acts{grid-column:2;grid-row:2 / span 2;align-self:center;display:flex;gap:4px;justify-content:flex-end}
   .tablewrap.mine td.c-acts button{display:inline-block;margin:0;padding:6px 8px}
 }
+/* An order in show mode: the short list of what was ordered. Long product names wrap so it fits a phone. */
+.ordered .tablewrap{margin-top:10px}
+.ordered .tablewrap td{white-space:normal}
+.ordered .tablewrap td.num,.ordered .tablewrap th.num{white-space:nowrap;width:1%}

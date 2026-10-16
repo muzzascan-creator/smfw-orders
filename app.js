@@ -545,6 +545,18 @@ function flatHtml(products, dis) {
     ${rows[pk].map(({ p, k }) => { const q = draft.qty[k.id]; return `<tr><td class="code">${esc(p.code)}</td><td>${esc(p.name)}</td><td class="q"><input inputmode="numeric" ${dis} aria-label="${esc(p.name)}, ${esc(pk)}" title="SID ${esc(k.sid)}" data-k="${k.id}" value="${esc(q || '')}" class="${q ? 'has' : ''}"></td></tr>`; }).join('')}
   </tbody></table></div>`).join('')}</div>`;
 }
+// What was ordered, one line per product and pack, in the order form's order. Short or undelivered lines are marked.
+function orderedHtml(d) {
+  const o = S.orders.find(x => x.id === d.id), pos = new Map(S.products.slice().sort(bySort).map((p, i) => [p.id, i]));
+  const ls = (o?.lines || []).filter(l => +l.qty > 0 || l.undelivered || +l.ordered_qty > 0).slice()
+    .sort((a, b) => (pos.get(a.product_id) ?? 1e9) - (pos.get(b.product_id) ?? 1e9) || String(a.pack_name).localeCompare(b.pack_name));
+  if (!ls.length) return '<div class="card empty" style="margin-top:16px">Nothing was ordered.</div>';
+  const qtyOf = l => l.undelivered ? `<span class="ndtxt">Not delivered</span>` : l.ordered_qty != null && +l.qty < +l.ordered_qty ? `${+l.qty} <span class="muted">of ${+l.ordered_qty}</span>` : esc(+l.qty);
+  return `<section class="supplier-block ordered"><div class="supplier-head"><h2>What was ordered</h2><span>${ls.length} line${ls.length === 1 ? '' : 's'}</span></div>
+    <div class="tablewrap"><table><thead><tr><th>Product</th><th>Pack</th><th class="num">Qty</th></tr></thead><tbody>
+    ${ls.map(l => { const p = prodOf(l.product_id); return `<tr${l.undelivered ? ' class="nd"' : ''}><td><b>${esc(l.product_name || p?.name || '')}</b>${p?.code || l.code ? ` <span class="muted mono" style="font-size:12px">${esc(p?.code || l.code)}</span>` : ''}</td><td>${esc(l.pack_name || '')}</td><td class="num">${qtyOf(l)}</td></tr>`; }).join('')}
+    </tbody></table></div></section>`;
+}
 function canEditDraft() {
   if (isAdmin()) return draft.status !== 'complete';
   return draft.status === 'draft';
@@ -565,6 +577,8 @@ function viewEntry() {
     const g = custGroup(custOf(d.customer_id)) === 'Both' ? (d.group || 'Organic') : custGroup(custOf(d.customer_id)), mine = S.products.filter(p => groupOf(p) === g), secs = sectionsFor(mine);
     blocks = secs.length ? `<section class="supplier-block"><div class="supplier-head"><h2>${g}</h2><span>${g === 'Conventional' ? 'Fill in the quantities you need.' : 'Fill in the boxes you need. Grey boxes aren’t available.'}</span></div><div class="sections">${g === 'Conventional' ? flatHtml(mine, dis) : gridHtml(secs, dis)}</div></section>` : '';
   }
+  // Show mode (an order that can't be changed): just what was ordered, not the whole product list.
+  if (!editable) blocks = orderedHtml(d);
   const custField = admin
     ? `<label class="f">Customer<select id="e-cust" ${dis}><option value="">${needsCustomer(d) ? 'Choose a customer…' : 'No customer (SMFW, CID 1183)'}</option>${S.customers.filter(c => custAllows(c, d.group || 'Organic') || c.id === d.customer_id).sort(byName).map(c => `<option value="${c.id}" ${c.id === d.customer_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
        <label class="f">Contact phone<input id="e-phone" disabled value="${esc(custOf(d.customer_id)?.phone || '')}"></label>`
@@ -587,7 +601,7 @@ function viewEntry() {
         <div class="f"><label for="e-req">Day / date required</label><div class="reqrow"><input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${earliestReq(d.group || 'Organic', custOf(d.customer_id))}"` : ''} max="${latestReq()}" value="${esc(d.required_date)}">${spoBox(d, dis)}</div>${!admin && d.status === 'draft' && orderHint(d.group || 'Organic', custOf(d.customer_id)) ? `<span class="muted" style="font-size:12px;font-weight:400">${orderHint(d.group || 'Organic', custOf(d.customer_id))}</span>` : ''}</div>
         <label class="f" style="grid-column:1/-1">Special requirements<textarea id="e-special" ${dis}>${esc(d.special)}</textarea></label>
       </div>
-      <div class="row" style="margin-top:16px"><input class="search" id="e-find" placeholder="Find a product by name or code"></div>
+      ${editable ? `<div class="row" style="margin-top:16px"><input class="search" id="e-find" placeholder="Find a product by name or code"></div>` : ''}
       ${blocks || '<div class="card empty" style="margin-top:16px">No products are set up yet.</div>'}
     </div>
     <aside class="card summary" id="summary">${summaryHtml()}</aside></div>`;
