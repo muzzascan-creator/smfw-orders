@@ -313,4 +313,8 @@ dialog:has(.packrow.withref){width:min(880px,calc(100vw - 32px))}
 .rbatch input{width:170px;max-width:100%;font-size:16px;padding:6px 8px}
 .rbatch.need input{border:2px solid var(--danger);background:color-mix(in srgb,var(--danger) 10%,var(--surface))}
 .rbatch.need{color:var(--danger)}
-.batchlist td{vertical-align:top}
+.batchwrap{overflow-x:auto}
+.batchgrid th,.batchgrid td{white-space:nowrap;vertical-align:top}
+.batchgrid tbody th{text-align:left;font-weight:600;font-size:14px;letter-spacing:0;text-transform:none;color:var(--fg);position:sticky;left:0;background:var(--surface);border-bottom:1px solid var(--line)}
+.batchgrid tbody tr:last-child th{border-bottom:0}
+.batchgrid td{border-left:1px solid var(--line);font-weight:600;font-size:14px}

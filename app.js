@@ -944,16 +944,20 @@ function emailSummary(sid) {
 }
 // ---------- order cut-off rules (Administration › Cut-offs, migrations/026) ----------
 const TIMES = Array.from({ length: 48 }, (_, i) => `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
-// Batch codes recorded by Receivers on Conventional, No customer orders, newest first.
+// Batch codes recorded by Receivers on Conventional, No customer orders: one row per day entered (newest first),
+// one column per product, the batch code(s) where they meet.
 function viewBatch() {
-  const bs = (S.batches || []).slice().sort((a, b) => (b.entered_at || '').localeCompare(a.entered_at || ''));
-  const ord = id => S.orders.find(o => o.id === id);
-  return `<h1>Batch Code</h1><p class="sub">Batch codes entered when Conventional orders for No customer are received, newest first. Products that need one are ticked Batch Code in Products.</p>
-    ${bs.length ? `<div class="tablewrap"><table class="batchlist"><thead><tr><th>Entered</th><th>Batch code</th><th>Product</th><th>Pack</th><th class="num">Qty</th><th>Order</th><th>Required</th><th>Entered by</th></tr></thead><tbody>${bs.map(b => {
-      const o = ord(b.order_id);
-      return `<tr><td>${esc(fmtWhen(b.entered_at))}</td><td class="mono"><b>${esc(b.code)}</b></td><td>${esc(b.product_name)}</td><td>${esc(b.pack_name)}</td><td class="num">${esc(b.qty ?? '')}</td>
-        <td class="mono">${o ? esc(orderNo(o.number)) : ''}</td><td>${o?.required_date ? esc(fmtDate(o.required_date)) : ''}</td><td>${esc(b.entered_by || '')}</td></tr>`;
-    }).join('')}</tbody></table></div>` : `<div class="card empty">No batch codes yet. They appear here once a Receiver saves a Conventional, No customer order with Batch Code products ticked Received.</div>`}`;
+  const bs = (S.batches || []).slice().sort((a, b) => (a.entered_at || '').localeCompare(b.entered_at || ''));
+  const packs = {}; bs.forEach(b => (packs[b.product_name] ||= new Set()).add(b.pack_name));
+  const col = b => packs[b.product_name].size > 1 ? `${b.product_name} (${b.pack_name})` : b.product_name;
+  const cols = [...new Set(bs.map(col))].sort((a, b) => a.localeCompare(b));
+  const grid = {}; // day -> column -> codes
+  bs.forEach(b => { const day = new Date(b.entered_at).toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' }); const cell = ((grid[day] ||= {})[col(b)] ||= []); if (!cell.includes(b.code)) cell.push(b.code); });
+  const days = Object.keys(grid).sort().reverse();
+  return `<h1>Batch Code</h1><p class="sub">Batch codes entered when Conventional orders for No customer are received, by the day they were entered (newest first). Products that need one are ticked Batch Code in Products.</p>
+    ${bs.length ? `<div class="tablewrap batchwrap"><table class="batchgrid"><thead><tr><th>Date</th>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${days.map(d =>
+      `<tr><th scope="row">${esc(fmtDate(d))}</th>${cols.map(c => `<td class="mono">${(grid[d][c] || []).map(esc).join('<br>')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`
+      : `<div class="card empty">No batch codes yet. They appear here once a Receiver saves a Conventional, No customer order with Batch Code products ticked Received.</div>`}`;
 }
 function viewCutoffs() {
   const head = `<h1>Order cut-offs</h1><p class="sub">For each product location: the days you deliver, and when orders for each day close (Sydney time). Customers can’t send an order after its cut-off. You and your staff still can. Choose <b>Same day</b> to take orders for delivery that day, up to the time set.</p>`;
