@@ -644,7 +644,7 @@ async function saveFav() {
   const row = { customer_id: d.customer_id, name: same?.name || name, product_group: draftGroup(d), lines, updated_at: new Date().toISOString() };
   const { error } = await sb.from('favourites').upsert(row, { onConflict: 'customer_id,name' });
   if (error) return toast(friendly(error));
-  await loadFavs(); $('#summary').innerHTML = summaryHtml();
+  await loadFavs(); render();
   toast(`Saved as your favourite “${row.name}”`, true);
 }
 // Start a new order with the same products and quantities as the one being viewed.
@@ -660,7 +660,7 @@ function manageFavs() {
     async f => {
       const ids = f.getAll('del'); if (!ids.length) return true;
       if (!(await run(sb.from('favourites').delete().in('id', ids)))) return false;
-      await loadFavs(); $('#summary').innerHTML = summaryHtml(); toast(`${ids.length} favourite${ids.length > 1 ? 's' : ''} deleted`, true); return true;
+      await loadFavs(); toast(`${ids.length} favourite${ids.length > 1 ? 's' : ''} deleted`, true); return true;
     });
 }
 function canEditDraft() {
@@ -698,7 +698,7 @@ function viewEntry() {
     : 'Fill in the quantities needed. Empty boxes are ignored.';
   const missing = d.missing?.length ? `<div class="banner">${d.missing.length} line${d.missing.length > 1 ? 's refer' : ' refers'} to a pack type that no longer exists: ${d.missing.map(l => esc(`${l.product_name} (${l.pack_name}) × ${l.qty}`)).join(', ')}. Saving will drop ${d.missing.length > 1 ? 'them' : 'it'}.</div>` : '';
   return `<div class="row spread"><div><h1>${d.id ? 'Order ' + esc(orderNo(d.number)) : 'New order'}</h1><p class="sub">${note}</p></div>
-      <span class="pill ${d.status}">${esc(statusText(d.status))}</span></div>${missing}
+      <span class="pill ${d.status}">${esc(statusText(d.status))}</span></div>${missing}${admin ? '' : favPicker(d)}
     <div class="entry"><div>
       ${admin ? `<div class="grpswitch" role="radiogroup" aria-label="Order type">${GROUPS.map(g => `<button type="button" role="radio" aria-checked="${(d.group || 'Organic') === g}" class="${(d.group || 'Organic') === g ? 'on' : ''}" ${dis} onclick="setGroup('${g}')">${g} order</button>`).join('')}</div>` : ''}
       <div class="card grid g2">
@@ -746,7 +746,7 @@ function summaryHtml() {
   else btns = `<button class="primary" onclick="draft=null;go('mine',false)">Close</button>`;
   const del = d.id && (admin || d.status === 'draft') ? `<div class="row" style="margin-top:8px"><button class="danger" onclick="deleteOrder(this)">Delete order</button></div>` : '';
   const favRow = admin ? '' : `<div class="row favrow">${lines.length ? `<button onclick="saveFav()">☆ Save as favourite</button>` : ''}${d.status !== 'draft' && lines.length ? `<button onclick="repeatOrder()">↻ Repeat this order</button>` : ''}</div>`;
-  return `<h2>Order summary</h2>${admin ? '' : favPicker(d)}
+  return `<h2>Order summary</h2>
     <p class="muted" style="margin:4px 0 0">${esc(custOf(d.customer_id)?.name || (needsCustomer(d) ? 'No customer chosen' : 'Conventional order'))}${d.required_date ? ' · needed ' + esc(fmtDate(d.required_date)) : ''}</p>
     ${lines.length ? body + `<p style="margin:12px 0 0"><b>${got.length}</b> line${got.length === 1 ? '' : 's'} · <b>${total}</b> in total${nd ? ` · <span class="ndtxt">${nd} not delivered</span>` : ''}</p>` : '<p class="muted">No quantities entered yet.</p>'}
     ${notifyHtml(d)}<div class="row" style="margin-top:16px">${btns}</div>${favRow}${del}`;

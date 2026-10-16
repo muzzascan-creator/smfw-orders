@@ -295,9 +295,10 @@ label.chk.spo input{margin:0;width:18px;height:18px}
 .datebox{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--sunk);gap:4px}
 .datebox .dl{font-size:13px;font-weight:600;color:var(--muted)}
 .datebox .dv{font-size:16px;font-weight:600;margin-bottom:8px}
-/* Favourite orders (customer app): pick one at the top of the summary; save or repeat under the main buttons. */
-.favpick{margin:10px 0 4px;padding:10px 12px;border-radius:10px;background:var(--accent-soft)}
-.favpick .f{margin:0}
-.favpick .link{margin-top:6px;font-size:13px}
+/* Favourite orders (customer app): pick one at the top of the New order page; save or repeat under the main buttons. */
+.favpick{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px 16px;margin:12px 0 16px;padding:14px 16px;border-radius:12px;background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent)}
+.favpick .f{margin:0;flex:1 1 260px;font-size:15px;font-weight:700;color:var(--accent)}
+.favpick select{font-size:16px;font-weight:600}
+.favpick .link{font-size:13px;padding-bottom:10px}
 .favrow{margin-top:8px}
 .favrow:empty{display:none}
