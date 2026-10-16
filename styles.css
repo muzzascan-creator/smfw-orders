@@ -304,10 +304,10 @@ label.chk.spo input{margin:0;width:18px;height:18px}
 .favpick .link{font-size:13px}
 .favrow{margin-top:8px}
 .favrow:empty{display:none}
-.packrow.withref{grid-template-columns:76px 96px auto minmax(0,1fr) 60px 126px 32px}
+.packrow.withref{grid-template-columns:76px 72px auto minmax(0,1fr) 60px 126px 32px}
 dialog:has(.packrow.withref){width:min(880px,calc(100vw - 32px))}
 .pbatch{display:flex;align-items:center;gap:5px;font-size:13px;white-space:nowrap;cursor:pointer}
-@media (max-width:520px){.packrow.withref{grid-template-columns:70px 90px minmax(0,1fr)}}
+@media (max-width:520px){.packrow.withref{grid-template-columns:70px 72px minmax(0,1fr)}}
 .rbatch{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:6px;font-size:14px;font-weight:600;color:var(--muted)}
 .rbatch span{white-space:nowrap}
 .rbatch input{width:170px;max-width:100%;font-size:16px;padding:6px 8px}
