@@ -318,7 +318,9 @@ function setPageHeadHeight() { document.documentElement.style.setProperty('--ph'
 addEventListener('resize', () => setPageHeadHeight());
 function render() {
   const nav = $('#nav');
-  nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" aria-current="${(v === view || v === 'admin' && ADMIN_TABS.some(([t]) => t === view)) && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
+  // A customer looking at an order they can't change uses Close to leave it; the tabs wait until then.
+  const locked = !isAdmin() && !isReceiver() && view === 'entry' && !!draft?.id && !canEditDraft();
+  nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" ${locked ? 'disabled title="Press Close to leave this order"' : ''} aria-current="${(v === view || v === 'admin' && ADMIN_TABS.some(([t]) => t === view)) && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
   const views = { recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers, sms: viewSms, cutoffs: viewCutoffs };
   const allowed = isManager() ? Object.keys(views).filter(v => !ADMIN_ONLY.includes(v) && !v.startsWith('recv')) : isAdmin() ? null : isReceiver() ? ['recv', 'recvorder'] : ['mine', 'entry'];
   if (!views[view] || ['recv', 'recvorder'].includes(view) && !isReceiver() || (allowed && !allowed.includes(view))) view = homeView();

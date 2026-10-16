@@ -287,3 +287,5 @@ label.chk.spo input{margin:0;width:18px;height:18px}
 .ordered .tablewrap{margin-top:10px}
 .ordered .tablewrap td{white-space:normal}
 .ordered .tablewrap td.num,.ordered .tablewrap th.num{white-space:nowrap;width:1%}
+/* Tabs paused while a customer views an order (they press Close first). */
+#nav button:disabled{opacity:.4;cursor:not-allowed}
