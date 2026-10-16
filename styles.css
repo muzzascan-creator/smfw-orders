@@ -289,3 +289,5 @@ label.chk.spo input{margin:0;width:18px;height:18px}
 .ordered .tablewrap td.num,.ordered .tablewrap th.num{white-space:nowrap;width:1%}
 /* Tabs paused while a customer views an order (they press Close first). */
 #nav button:disabled{opacity:.4;cursor:not-allowed}
+/* Customer order form: customer and location on the left, the two dates stacked on the right. */
+.datecol{align-content:start}
