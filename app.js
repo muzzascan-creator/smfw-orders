@@ -699,11 +699,11 @@ function viewEntry() {
     : 'Fill in the quantities needed. Empty boxes are ignored.';
   const missing = d.missing?.length ? `<div class="banner">${d.missing.length} line${d.missing.length > 1 ? 's refer' : ' refers'} to a pack type that no longer exists: ${d.missing.map(l => esc(`${l.product_name} (${l.pack_name}) × ${l.qty}`)).join(', ')}. Saving will drop ${d.missing.length > 1 ? 'them' : 'it'}.</div>` : '';
   return `<div class="row spread"><div><h1>${d.id ? 'Order ' + esc(orderNo(d.number)) : 'New order'}</h1><p class="sub">${note}</p></div>
-      <span class="pill ${d.status}">${esc(statusText(d.status))}</span></div>${missing}${admin ? '' : favPicker(d)}
+      <span class="pill ${d.status}">${esc(statusText(d.status))}</span></div>${missing}
     <div class="entry"><div>
       ${admin ? `<div class="grpswitch" role="radiogroup" aria-label="Order type">${GROUPS.map(g => `<button type="button" role="radio" aria-checked="${(d.group || 'Organic') === g}" class="${(d.group || 'Organic') === g ? 'on' : ''}" ${dis} onclick="setGroup('${g}')">${g} order</button>`).join('')}</div>` : ''}
       <div class="card grid g2">
-        ${admin ? '' : '<div class="grid datecol">'}${custField}${locField}${admin ? '' : '</div><div class="grid datecol">'}
+        ${admin ? '' : '<div class="grid datecol">'}${custField}${locField}${admin ? '' : favPicker(d) + '</div><div class="grid datecol">'}
         ${admin ? `<label class="f">Today’s date<input type="date" id="e-date" disabled title="Set automatically" value="${esc(d.status === 'draft' ? today() : d.order_date)}"></label>` : `<div class="f datebox"><span class="dl">Today’s date</span><span class="dv">${esc(fmtDate(d.status === 'draft' ? today() : d.order_date))}</span>`}
         ${admin ? '<div class="f">' : ''}<label for="e-req">Day / date required</label><div class="reqrow"><input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${earliestReq(d.group || 'Organic', custOf(d.customer_id))}"` : ''} max="${latestReq()}" value="${esc(d.required_date)}">${spoBox(d, dis)}</div>${!admin && d.status === 'draft' && orderHint(d.group || 'Organic', custOf(d.customer_id)) ? `<span class="muted" style="font-size:12px;font-weight:400">${orderHint(d.group || 'Organic', custOf(d.customer_id))}</span>` : ''}</div>${admin ? '' : '</div>'}
         ${admin ? `<label class="f" style="grid-column:1/-1">Special requirements<span class="muted" style="font-size:12px;font-weight:400">Printed on the supplier order form.</span><textarea id="e-special" ${dis}>${esc(d.special)}</textarea></label>` : ''}
