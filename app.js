@@ -128,11 +128,12 @@ async function loadAll() {
     const [c, s, p, o] = base = await Promise.all([sb.from('customers').select('id,cid,name,phone'), sb.from('suppliers').select('*'), prods, orders]);
     S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; if (seq === ordersSeq) S.orders = o.data || [];
   } else if (isAdmin()) {
-    let c, s, p, o, u, m, sec, lk, bc;
-    [c, s, p, o, u, m, sec, lk, bc, cr, cs] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort'), sb.from('product_sections').select('name'), sb.from('profile_customers').select('*'), sb.from('batch_codes').select('*').order('entered_at', { ascending: false }), ...cuts]);
+    let c, s, p, o, u, m, sec, lk, bc, st;
+    [c, s, p, o, u, m, sec, lk, bc, st, cr, cs] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort'), sb.from('product_sections').select('name'), sb.from('profile_customers').select('*'), sb.from('batch_codes').select('*').order('entered_at', { ascending: false }), sb.from('staff_settings').select('key,value'), ...cuts]);
     base = [c, s, p, o, u, m, sec, lk];
     S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; if (seq === ordersSeq) S.orders = o.data || []; S.profiles = u.data || [];
     S.emails = m.data || []; S.sections = (sec.data || []).map(r => r.name); S.links = lk.data || []; S.batches = bc.data || []; // batch codes: empty until 030 is run
+    S.settings = Object.fromEntries((st.data || []).map(r => [r.key, r.value])); // empty until 031 is run
   } else {
     let c, p, o;
     [c, p, o, cr, cs] = await Promise.all([sb.from('customers').select('id,cid,name,product_group,sunday_delivery'), prods.eq('active', true), orders, ...cuts]);
@@ -207,7 +208,7 @@ async function enter() {
   if (!session) {
     // Nothing from the last person carries over to whoever signs in next on this device.
     if ($('#dlg').open) $('#dlg').close();
-    Object.assign(S, { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], links: [], sections: [], cutRules: [], cutSettings: [], favs: [], batches: [] });
+    Object.assign(S, { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], links: [], sections: [], cutRules: [], cutSettings: [], favs: [], batches: [], settings: {} });
     draft = null; receipt = null; search = ''; custSearch = ''; listFilter = 'pending'; groupFilter = 'all'; adminTab = 'emails'; picked.clear(); upPicked.clear();
     clearInterval(deviceTimer); deviceTimer = null; clearInterval(autoRefresh); autoRefresh = null; profile = null; view = null; smsCfg = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
   if (authMode === 'newpass') return renderAuth();
@@ -967,8 +968,8 @@ function viewBatch() {
 // so each folder is chosen once on each computer and remembered in that browser.
 function viewSettings() {
   const folder = canPickFolder()
-    ? `<div class="row" style="gap:12px;align-items:center"><span>Folder: <b>${esc(csvDir?.name || 'Not chosen yet')}</b></span><button onclick="chooseCsvFolder()">${csvDir ? 'Change folder' : 'Choose folder'}</button></div>
-       <p class="muted" style="margin:8px 0 0;font-size:13px">Pick the ${CSV_FOLDER} folder on the network. It is remembered on this computer, so do this once on each PC that creates CSV files.</p>`
+    ? `<div class="row" style="gap:12px;align-items:center"><span>Folder: <b>${esc(S.settings?.csv_folder_1 || csvDir?.name || 'Not chosen yet')}</b></span><button onclick="chooseCsvFolder()">${csvDir ? 'Change folder' : 'Choose folder'}</button></div>
+       <p class="muted" style="margin:8px 0 0;font-size:13px">This applies to every Admin and Manager login. Managers can’t change it. The first time a Manager creates CSV files on their PC, the app asks them once to connect to this folder (the browser needs the folder picked on each computer) and only accepts this one.</p>`
     : `<p class="muted" style="margin:0">This browser can’t save into a chosen folder, so CSV files go to Downloads. Use Chrome or Edge on a PC to save them straight into the ${CSV_FOLDER} folder.</p>`;
   return `<h1>Settings</h1><p class="sub">Where the system copies CSV files.</p>
     <div class="card setcard"><h2>Condition 1: Upload CSV</h2>
@@ -1377,24 +1378,37 @@ function idb(mode, fn) {
     q.onsuccess = () => { try { const t = q.result.transaction('kv', mode), x = fn(t.objectStore('kv')); t.oncomplete = () => res(x?.result); t.onerror = () => rej(t.error); } catch (e) { rej(e); } }; q.onerror = () => rej(q.error); });
 }
 async function loadCsvDir() { if (!canPickFolder()) return null; try { csvDir = await idb('readonly', st => st.get('csvDir')) || null; } catch { csvDir = null; } return csvDir; }
+// The Admin's choice (Administration > Settings) is shared with every staff login. Managers can't change it:
+// on their PC they only connect to that same folder once, as the browser needs it picked on each computer.
+const csvTarget = () => S.settings?.csv_folder_1 || CSV_FOLDER;
+const sameName = (a, b) => (a || '').toUpperCase() === (b || '').toUpperCase();
 async function chooseCsvFolder() {
-  try { csvDir = await window.showDirectoryPicker({ id: 'csvfolder', mode: 'readwrite' }); } catch { return null; } // cancelled
+  let dir;
+  try { dir = await window.showDirectoryPicker({ id: 'csvfolder', mode: 'readwrite' }); } catch { return null; } // cancelled
+  if (isManager() && !sameName(dir.name, csvTarget())) { toast(`That folder is "${dir.name}". Admin has set CSV files to go to ${csvTarget()}, so pick that folder.`); return null; }
+  csvDir = dir;
   try { await idb('readwrite', st => st.put(csvDir, 'csvDir')); } catch {}
-  if (csvDir.name.toUpperCase() !== CSV_FOLDER) toast(`That folder is "${csvDir.name}", not ${CSV_FOLDER}. CSV files will be saved there until you change it.`);
+  if (!isManager() && !sameName(dir.name, S.settings?.csv_folder_1)) {
+    const { error } = await sb.from('staff_settings').upsert({ key: 'csv_folder_1', value: dir.name, updated_at: new Date().toISOString() });
+    if (!error) S.settings = { ...S.settings, csv_folder_1: dir.name };
+  }
+  toast(`CSV files will be saved in ${dir.name}.`, true);
   render(); return csvDir;
 }
 async function csvFolder() {
   if (!canPickFolder()) return null;
   if (!csvDir) await loadCsvDir();
-  if (!csvDir) return chooseCsvFolder();
+  if (!csvDir || (isManager() && !sameName(csvDir.name, csvTarget()))) { toast(`Pick the ${csvTarget()} folder so CSV files can be saved there.`); return chooseCsvFolder(); }
   const ok = async q => (await csvDir[q]({ mode: 'readwrite' })) === 'granted';
   try { if (await ok('queryPermission') || await ok('requestPermission')) return csvDir; } catch {}
   return chooseCsvFolder(); // folder moved, renamed or access refused: pick it again
 }
-const csvFolderNote = () => canPickFolder() ? `<span class="muted" style="font-size:12px">CSV folder: <b>${esc(csvDir?.name || 'not chosen')}</b> <button class="link" onclick="chooseCsvFolder()">${csvDir ? 'Change' : 'Choose'}</button></span>` : '';
+const csvFolderNote = () => !canPickFolder() ? '' : isManager()
+  ? `<span class="muted" style="font-size:12px">CSV folder: <b>${esc(csvTarget())}</b>${csvDir && sameName(csvDir.name, csvTarget()) ? '' : ` <button class="link" onclick="chooseCsvFolder()">Connect this PC</button>`}</span>`
+  : `<span class="muted" style="font-size:12px">CSV folder: <b>${esc(csvDir?.name || 'not chosen')}</b> <button class="link" onclick="go('settings')">Change</button></span>`;
 async function uploadCsvs() {
   const dir = await csvFolder();
-  if (canPickFolder() && !dir) return toast(`Choose the ${CSV_FOLDER} folder so the CSV files can be saved there.`);
+  if (canPickFolder() && !dir) return toast(`Choose the ${csvTarget()} folder so the CSV files can be saved there.`);
   const os = S.orders.filter(o => upPicked.has(o.id)).sort((a, b) => a.number - b.number);
   const bad = [], made = [];
   for (const o of os) {
