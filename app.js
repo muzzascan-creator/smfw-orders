@@ -469,7 +469,7 @@ function viewOrders() {
   const count = f => S.orders.filter(o => inTab(o, f)).length;
   return `<div class="row spread"><div><h1>Orders</h1><p class="sub">Every order, whether a customer sent it or you entered it.</p></div><button class="primary" onclick="go('entry')">New order</button></div>
     <div class="row" style="margin-bottom:12px">
-      ${['pending', 'draft', 'submitted', 'complete'].map(f => `<button class="${listFilter === f ? 'primary' : ''}" onclick="listFilter='${f}';render()">${f === 'pending' ? 'Pending' : f === 'draft' ? 'Drafts' : f === 'submitted' ? 'Sent' : 'Complete'} (${count(f)})</button>`).join('')}
+      ${['pending', 'draft', 'submitted', 'complete'].map(f => `<button class="${listFilter === f ? 'primary' : ''}" onclick="listFilter='${f}';render()">${f === 'pending' ? 'Pending' : f === 'draft' ? 'Drafts' : f === 'submitted' ? 'Received' : 'Complete'} (${count(f)})</button>`).join('')}
       <input class="search" id="osearch" placeholder="Search order no., customer or CID" value="${esc(search)}">
     </div>
     ${os.length ? `<div class="pickbar row spread"><span id="pickcount">${pickText()}</span><div class="row"><button id="pickclear" ${picked.size || upPicked.size ? '' : 'hidden'} onclick="picked.clear();upPicked.clear();render()">Clear</button><button class="primary" id="pickup" ${upPicked.size ? '' : 'disabled'} onclick="uploadCsvs()">Create upload CSV</button><button class="primary" id="pickmail" ${picked.size ? '' : 'disabled'} onclick="emailPicked()">Email selected</button></div></div>
