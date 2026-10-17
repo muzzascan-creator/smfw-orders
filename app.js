@@ -973,8 +973,28 @@ function viewSettings() {
     : `<p class="muted" style="margin:0">This browser can’t save into a chosen folder, so CSV files go to Downloads. Use Chrome or Edge on a PC to save them straight into the ${CSV_FOLDER} folder.</p>`;
   return `<h1>Settings</h1><p class="sub">Where the system copies CSV files.</p>
     <div class="card setcard"><h2>Condition 1: Upload CSV</h2>
-      <p class="sub" style="margin-top:4px">Created from the Orders tab with <b>Create upload CSV</b>. One file per order, as now.</p>${folder}</div>
+      <p class="sub" style="margin-top:4px">Created from the Orders tab with <b>Create upload CSV</b>. One file per order, as now.</p>${folder}
+      <h3 class="seth">H line</h3>
+      <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap"><input id="h-tpl" class="mono" style="flex:1;min-width:240px" value="${esc(hTemplate())}" oninput="hPreview()" aria-label="H line">
+        <button onclick="$('#h-tpl').value=H_DEFAULT;hPreview()">Reset</button><button class="primary" onclick="saveHLine(this)">Save</button></div>
+      <p class="muted" style="margin:8px 0 4px;font-size:13px">Separate fields with commas. Codes you can use:</p>
+      <ul class="hcodes">${H_CODES.map(([c, d]) => `<li><code>${c}</code> ${esc(d)}</li>`).join('')}</ul>
+      <div class="muted" style="font-size:13px">Example: <code id="h-prev">${esc(hSample())}</code></div></div>
     <div class="card setcard"><h2>Condition 2</h2><p class="muted" style="margin:4px 0 0">Not set up yet.</p></div>`;
+}
+function hSample(tpl) {
+  const o = S.orders.find(x => x.customer_id && x.required_date) || { number: 13, required_date: '2026-10-15', special_order: false };
+  const cust = o.customer_id ? custOf(o.customer_id)?.cid ?? '' : CONVENTIONAL_CID;
+  return hLine(o, cust, tpl).map(csvCell).join(',');
+}
+function hPreview() { $('#h-prev').textContent = hSample($('#h-tpl').value.trim() || H_DEFAULT); }
+async function saveHLine(btn) {
+  const v = $('#h-tpl').value.trim() || H_DEFAULT;
+  btn.disabled = true;
+  const { error } = await sb.from('staff_settings').upsert({ key: 'csv1_h', value: v, updated_at: new Date().toISOString() });
+  btn.disabled = false;
+  if (error) return toast(/staff_settings/.test(error.message) ? 'Run migration 031 first, then try again.' : friendly(error));
+  S.settings = { ...S.settings, csv1_h: v }; toast('H line saved. New CSV files use it.', true);
 }
 function viewCutoffs() {
   const head = `<h1>Order cut-offs</h1><p class="sub">For each product location: the days you deliver, and when orders for each day close (Sydney time). Customers can’t send an order after its cut-off. You and your staff still can. Choose <b>Same day</b> to take orders for delivery that day, up to the time set.</p>`;
@@ -1356,10 +1376,21 @@ async function outlookEmail(i, btn) {
 const CONVENTIONAL_CID = 1183;
 const ymd = d => (d || '').replace(/-/g, '');
 const csvCell = v => /[",\r\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? '');
+// The H line follows the template set in Administration > Settings (Condition 1). Each comma-separated field
+// can hold fixed text and these codes; empty fields at the end are left off (so no S means no trailing comma).
+const H_DEFAULT = 'H,{CID},{DATE},{S}';
+const H_CODES = [['{CID}', 'Customer CID'], ['{DATE}', 'Date required, YYYYMMDD'], ['{S}', 'S when Special Order is ticked, otherwise blank'], ['{ORDER}', 'Order number, e.g. SO-0013'], ['{CUSTOMER}', 'Customer name']];
+const hTemplate = () => S.settings?.csv1_h || H_DEFAULT;
+function hLine(o, cust, tpl = hTemplate()) {
+  const vals = { CID: cust, DATE: ymd(o.required_date || o.order_date), S: o.special_order ? 'S' : '', ORDER: orderNo(o.number), CUSTOMER: custOf(o.customer_id)?.name || '' };
+  const f = tpl.split(',').map(x => x.replace(/\{(CID|DATE|S|ORDER|CUSTOMER)\}/gi, (_, k) => vals[k.toUpperCase()] ?? '').trim());
+  while (f.length > 1 && f[f.length - 1] === '') f.pop();
+  return f;
+}
 function orderCsv(o) {
   // An order goes under its customer's CID; a Conventional order SMFW enters without a customer goes under 1183.
   const cust = o.customer_id ? custOf(o.customer_id)?.cid ?? '' : orderGroup(o) === 'Conventional' ? CONVENTIONAL_CID : '';
-  const missing = [], rows = [['H', cust, ymd(o.required_date || o.order_date), ...(o.special_order ? ['S'] : [])]];
+  const missing = [], rows = [hLine(o, cust)];
   for (const l of o.lines || []) {
     if (l.undelivered || !(+l.qty > 0)) continue; // undelivered lines never go in the upload
     const k = packOf(l.pack_id)?.k, ref = (k?.ref || '').trim();
