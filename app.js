@@ -360,8 +360,8 @@ function orderRow(o, opts = {}) {
       : `<span class="pill ${esc(o.status)}">${esc(statusText(o.status))}</span>`}</td>
     ${opts.acts ? `<td class="num acts c-acts" onclick="event.stopPropagation()"><button class="ghost" onclick="openOrder('${o.id}')">View</button><button class="ghost" onclick="printOrder('${o.id}', this)">Print<span class="long"> Order</span></button></td>`
       : `<td class="num openc"><button class="ghost" onclick="event.stopPropagation();openOrder('${o.id}')">Open</button></td>`}
-    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
-    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
+    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${pastDone(o) ? 'disabled title="Required date has passed"' : upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
+    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${pastDone(o) ? 'disabled title="Required date has passed"' : picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
 }
 // Receiver: completed orders not yet received.
 function viewRecv() {
@@ -455,10 +455,13 @@ function viewInbox() {
       : `<div class="card empty">No orders waiting. New customer orders appear here as soon as they’re sent.</div>`}`;
 }
 const finished = o => o.status === 'complete' && !!o.emailed_at && !!o.received_at && !!o.csv_at;
+// Rule: a Complete-tab order whose required date has passed can't be emailed or uploaded again.
+const pastDone = o => finished(o) && !!o.required_date && o.required_date < today();
 function viewOrders() {
   // Pending holds every transmitted order until it is Complete, Emailed, Received and has its CSV; then it moves to Complete.
   // Orders still in the Inbox (sent by a customer, not yet transmitted) stay out of Pending.
   const inTab = (o, f) => f === 'pending' ? o.status !== 'submitted' && !finished(o) : f === 'complete' ? finished(o) : o.status === f;
+  dropPastDone();
   let os = S.orders.filter(o => inTab(o, listFilter));
   const q = search.trim().toLowerCase();
   if (q) os = os.filter(o => [orderNo(o.number), custOf(o.customer_id)?.name, custOf(o.customer_id)?.cid].join(' ').toLowerCase().includes(q));
@@ -470,7 +473,7 @@ function viewOrders() {
       <input class="search" id="osearch" placeholder="Search order no., customer or CID" value="${esc(search)}">
     </div>
     ${os.length ? `<div class="pickbar row spread"><span id="pickcount">${pickText()}</span><div class="row"><button id="pickclear" ${picked.size || upPicked.size ? '' : 'hidden'} onclick="picked.clear();upPicked.clear();render()">Clear</button><button class="primary" id="pickup" ${upPicked.size ? '' : 'disabled'} onclick="uploadCsvs()">Create upload CSV</button><button class="primary" id="pickmail" ${picked.size ? '' : 'disabled'} onclick="emailPicked()">Email selected</button></div></div>
-      <div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num lines">Lines</th><th><div class="stgrid"><span>Status</span><span>Emailed</span><span>Received</span><span>CSV</span></div></th><th class="openc"></th><th class="pick"><span class="picklbl">Upload</span><input type="checkbox" id="upall" aria-label="Select all orders shown for upload" ${os.every(o => upPicked.has(o.id)) ? 'checked' : ''}></th><th class="pick"><span class="picklbl">Email</span><input type="checkbox" id="pickall" aria-label="Select all orders shown for emailing" ${os.every(o => picked.has(o.id)) ? 'checked' : ''}></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true, pick: true })).join('')}</tbody></table></div>`
+      <div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num lines">Lines</th><th><div class="stgrid"><span>Status</span><span>Emailed</span><span>Received</span><span>CSV</span></div></th><th class="openc"></th><th class="pick"><span class="picklbl">Upload</span><input type="checkbox" id="upall" aria-label="Select all orders shown for upload" ${os.some(o => !pastDone(o)) && os.every(o => pastDone(o) || upPicked.has(o.id)) ? 'checked' : ''} ${os.every(pastDone) ? 'disabled' : ''}></th><th class="pick"><span class="picklbl">Email</span><input type="checkbox" id="pickall" aria-label="Select all orders shown for emailing" ${os.some(o => !pastDone(o)) && os.every(o => pastDone(o) || picked.has(o.id)) ? 'checked' : ''} ${os.every(pastDone) ? 'disabled' : ''}></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true, pick: true })).join('')}</tbody></table></div>`
       : `<div class="card empty">${S.orders.length ? 'No orders match this filter.' : 'No orders yet.'}</div>`}`;
 }
 function wireOrderSearch() {
@@ -478,7 +481,7 @@ function wireOrderSearch() {
   // Two tick columns: Upload (CSV) and Email, each with its own select-all box.
   const sync = () => { $('#pickcount').textContent = pickText(); $('#pickmail').disabled = !picked.size; $('#pickup').disabled = !upPicked.size; $('#pickclear').hidden = !picked.size && !upPicked.size; };
   [['pick', picked, 'pickall'], ['up', upPicked, 'upall']].forEach(([key, set, allId]) => {
-    const boxes = [...document.querySelectorAll(`input[data-${key}]`)], all = $('#' + allId);
+    const boxes = [...document.querySelectorAll(`input[data-${key}]:not(:disabled)`)], all = $('#' + allId);
     const syncAll = () => { if (all) all.checked = boxes.length && boxes.every(b => b.checked); sync(); };
     boxes.forEach(b => b.onchange = () => { b.checked ? set.add(b.dataset[key]) : set.delete(b.dataset[key]); syncAll(); });
     if (all) all.onchange = () => { boxes.forEach(b => { b.checked = all.checked; all.checked ? set.add(b.dataset[key]) : set.delete(b.dataset[key]); }); sync(); };
@@ -1314,7 +1317,9 @@ function pickedBySupplier() {
 }
 // Suppliers already emailed from the open dialog, so "Try again" only sends to the ones that failed.
 const sentSuppliers = new Set();
+function dropPastDone() { S.orders.filter(pastDone).forEach(o => { picked.delete(o.id); upPicked.delete(o.id); }); }
 function emailPicked() {
+  dropPastDone(); if (!picked.size) return toast('Those orders’ required date has passed, so they can’t be emailed.');
   sentSuppliers.clear();
   const { os, groups } = pickedBySupplier();
   const empty = os.filter(o => !(o.lines || []).some(supplierOfLine));
@@ -1435,6 +1440,7 @@ async function csvFolder() {
   return chooseCsvFolder(); // folder moved, renamed or access refused: pick it again
 }
 async function uploadCsvs() {
+  dropPastDone(); if (!upPicked.size) { render(); return toast('Those orders’ required date has passed, so no CSV can be created.'); }
   const dir = await csvFolder();
   if (canPickFolder() && !dir) return toast(`Choose the ${csvTarget()} folder so the CSV files can be saved there.`);
   const os = S.orders.filter(o => upPicked.has(o.id)).sort((a, b) => a.number - b.number);
