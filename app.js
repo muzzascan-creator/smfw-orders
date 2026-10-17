@@ -74,11 +74,11 @@ const isAdmin = () => ['admin', 'manager'].includes(profile?.role) && profile?.a
 const isManager = () => profile?.role === 'manager' && profile?.approved;
 const ADMIN_ONLY = ['suppliers', 'emails', 'users', 'sms', 'cutoffs', 'settings'];
 // The Administration tab holds Emails, Logins, SMS and Cut-offs; it opens on whichever was used last.
-const ADMIN_TABS = [['customers', 'Customers'], ['emails', 'Emails'], ['users', 'Logins'], ['sms', 'SMS'], ['cutoffs', 'Cut-offs'], ['settings', 'Settings']];
+const ADMIN_TABS = [['customers', 'Customers'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['emails', 'Emails'], ['users', 'Logins'], ['sms', 'SMS'], ['cutoffs', 'Cut-offs'], ['settings', 'Settings']];
 // The top bar's height, so sticky bits (the Administration switch) sit just under it.
 new ResizeObserver(() => document.documentElement.style.setProperty('--hdr', $('#top').offsetHeight + 'px')).observe(document.getElementById('top'));
 let adminTab = 'customers';
-// Managers see only the Administration sub tabs open to them (Customers).
+// Managers see only the Administration sub tabs open to them (Customers and Products).
 const adminTabs = () => ADMIN_TABS.filter(([t]) => !isManager() || !ADMIN_ONLY.includes(t));
 // Receivers see every order read-only (migrations/010).
 const isReceiver = () => profile?.role === 'receiver' && profile?.approved;
@@ -356,7 +356,7 @@ const homeView = () => isAdmin() ? 'inbox' : isReceiver() ? 'recv' : 'mine';
 function navItems() {
   if (isReceiver()) return [['recv', 'Orders']];
   return isAdmin()
-    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['batch', 'Batch Code'], ['admin', 'Administration']].filter(([v]) => !isManager() || !ADMIN_ONLY.includes(v))
+    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['batch', 'Batch Code'], ['admin', 'Administration']].filter(([v]) => !isManager() || !ADMIN_ONLY.includes(v))
     : [['mine', 'My orders'], ['entry', 'New order']];
 }
 function inboxCount() { return S.orders.filter(o => o.status === 'submitted').length; }
