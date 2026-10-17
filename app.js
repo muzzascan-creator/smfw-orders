@@ -120,25 +120,25 @@ async function run(promise, okMsg) { const { data, error } = await promise; if (
 // ---------- data ----------
 async function loadAll() {
   const prods = sb.from('products').select('id,supplier_id,code,name,section,sort,active,product_group,product_packs(*)');
-  const seq = ++ordersSeq, orders = sb.from('orders').select('*').order('number', { ascending: false });
+  const orders = reloadOrders();
   // Cut-off rules: receivers don't need them. If they can't be fetched, the last ones fetched stay in use.
   const cuts = isReceiver() ? [] : [sb.from('cutoff_rules').select('*'), sb.from('cutoff_settings').select('*')];
   let base, cr, cs;
   if (isReceiver()) {
     const [c, s, p, o] = base = await Promise.all([sb.from('customers').select('id,cid,name,phone'), sb.from('suppliers').select('*'), prods, orders]);
-    S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; if (seq === ordersSeq) S.orders = o.data || [];
+    S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || [];
   } else if (isAdmin()) {
     let c, s, p, o, u, m, sec, lk, bc, st;
     [c, s, p, o, u, m, sec, lk, bc, st, cr, cs] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort'), sb.from('product_sections').select('name'), sb.from('profile_customers').select('*'), sb.from('batch_codes').select('*').order('entered_at', { ascending: false }), sb.from('staff_settings').select('key,value'), ...cuts]);
     base = [c, s, p, o, u, m, sec, lk];
-    S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; if (seq === ordersSeq) S.orders = o.data || []; S.profiles = u.data || [];
+    S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; S.profiles = u.data || [];
     S.emails = m.data || []; S.sections = (sec.data || []).map(r => r.name); S.links = lk.data || []; S.batches = bc.data || []; // batch codes: empty until 030 is run
     S.settings = Object.fromEntries((st.data || []).map(r => [r.key, r.value])); // empty until 031 is run
   } else {
     let c, p, o;
     [c, p, o, cr, cs] = await Promise.all([sb.from('customers').select('id,cid,name,product_group,sunday_delivery'), prods.eq('active', true), orders, ...cuts]);
     base = [c, p, o];
-    S.customers = c.data || []; S.suppliers = []; S.products = p.data || []; if (seq === ordersSeq) S.orders = o.data || [];
+    S.customers = c.data || []; S.suppliers = []; S.products = p.data || [];
     await loadFavs();
   }
   const bad = [...base, cr, cs].find(r => r?.error);
@@ -146,9 +146,39 @@ async function loadAll() {
   if (cr && !cr.error) S.cutRules = cr.data; if (cs && !cs.error) S.cutSettings = cs.data;
   S.products.forEach(p => (p.product_packs || []).sort((a, b) => a.sort - b.sort));
 }
+// Orders come down in pages of 1,000, the most Supabase sends at once, so none go missing however many there are.
+// After the first load only orders changed since the last fetch are sent (the database stamps updated_at on every
+// change), which keeps open screens light. A quick count catches deleted orders and then everything is fetched again.
 // Only the newest request's answer is kept, so a slow older one can't put back out-of-date orders.
-let ordersSeq = 0;
-async function reloadOrders() { const n = ++ordersSeq, { data, error } = await sb.from('orders').select('*').order('number', { ascending: false }); if (!error && n === ordersSeq) S.orders = data; }
+let ordersSeq = 0, ordersMark = 0;
+const ORDER_PAGE = 1000;
+async function fetchOrders(since) {
+  const out = new Map();
+  for (let from = 0; ; from += ORDER_PAGE) {
+    let q = sb.from('orders').select('*').order('number').range(from, from + ORDER_PAGE - 1); // oldest first, so new orders don't shift the pages
+    if (since) q = q.gte('updated_at', since);
+    const { data, error } = await q;
+    if (error) return { error };
+    data.forEach(o => out.set(o.id, o));
+    if (data.length < ORDER_PAGE) return { data: [...out.values()] };
+  }
+}
+async function reloadOrders(full = false) {
+  const n = ++ordersSeq;
+  const since = !full && ordersMark && S.orders.length ? new Date(ordersMark - 60000).toISOString() : null; // a minute's overlap for slow saves
+  const r = await fetchOrders(since);
+  if (r.error || n !== ordersSeq) return r;
+  let os = r.data;
+  if (since) {
+    const m = new Map(S.orders.map(o => [o.id, o])); os.forEach(o => m.set(o.id, o)); os = [...m.values()];
+    const { count, error } = await sb.from('orders').select('id', { count: 'exact', head: true });
+    if (error || n !== ordersSeq) return { error };
+    if (count !== os.length) return reloadOrders(true);
+  }
+  S.orders = os.sort((a, b) => b.number - a.number);
+  ordersMark = Math.max(0, ...S.orders.map(o => Date.parse(o.updated_at) || 0));
+  return {};
+}
 
 function listenForOrders() {
   if (ordersChannel) sb.removeChannel(ordersChannel);
@@ -204,13 +234,33 @@ async function stillMyDevice() {
   await sb.auth.signOut({ scope: 'local' }); // local only: the other device stays signed in
   return false;
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden && profile) stillMyDevice(); });
+// Coming back to a screen (a tablet waking, a PC unlocked) catches up straight away: changed orders after a short
+// break, everything after 5 minutes or more. Live updates sent while the device slept are otherwise lost.
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { hiddenAt = Date.now(); return; }
+  if (!profile) return;
+  stillMyDevice(); refreshInBackground(Date.now() - hiddenAt > 5 * 60000); checkVersion();
+});
+addEventListener('online', () => { if (profile) { refreshInBackground(); checkVersion(); } });
+// A screen left open for days picks up a new version of the app by itself (checked every 5 minutes), reloading only
+// when nothing is being typed, edited, ticked or saved.
+const APP_V = (document.querySelector('script[src*="app.js"]')?.src.match(/[?&]v=([^&]+)/) || [])[1];
+let versionAt = 0, newVersion = false;
+async function checkVersion() {
+  if (!APP_V) return;
+  if (!newVersion && Date.now() - versionAt > 5 * 60000) {
+    versionAt = Date.now();
+    try { const v = ((await (await fetch(location.pathname + '?check=' + Date.now(), { cache: 'no-store' })).text()).match(/app\.js\?v=([^"'&]+)/) || [])[1]; newVersion = !!v && v !== APP_V; } catch (e) {}
+  }
+  if (newVersion && canRedraw() && view !== 'recvorder' && !saving && !auto2Busy && !picked.size && !upPicked.size) location.reload();
+}
 async function enter() {
   if (!session) {
     // Nothing from the last person carries over to whoever signs in next on this device.
     if ($('#dlg').open) $('#dlg').close();
     Object.assign(S, { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], links: [], sections: [], cutRules: [], cutSettings: [], favs: [], batches: [], settings: {} });
-    draft = null; receipt = null; search = ''; custSearch = ''; listFilter = 'pending'; groupFilter = 'all'; adminTab = 'emails'; picked.clear(); upPicked.clear();
+    draft = null; receipt = null; ordersMark = 0; search = ''; custSearch = ''; listFilter = 'pending'; groupFilter = 'all'; adminTab = 'emails'; picked.clear(); upPicked.clear();
     clearInterval(deviceTimer); deviceTimer = null; clearInterval(autoRefresh); autoRefresh = null; profile = null; view = null; smsCfg = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
   if (authMode === 'newpass') return renderAuth();
   if (!(await stillMyDevice())) return;
@@ -225,8 +275,10 @@ async function enter() {
   await loadAll();
   if (isAdmin()) { await loadCsvDir(1); await loadCsvDir(2); autoCsv2(); }
   listenForOrders();
-  // Admin dashboard refreshes itself every 30 seconds (skipped while the tab is hidden; no redraw mid-edit).
-  clearInterval(autoRefresh); autoRefresh = isAdmin() ? setInterval(() => { if (!document.hidden && profile) refreshInBackground(); }, 30000) : null;
+  // Admin dashboards and receiver tablets refresh themselves every 30 seconds (skipped while the tab is hidden; no
+  // redraw mid-edit): changed orders each time, everything else every 5 minutes.
+  let ticks = 0;
+  clearInterval(autoRefresh); autoRefresh = setInterval(() => { if (document.hidden || !profile) return; if (isAdmin() || isReceiver()) refreshInBackground(++ticks % 10 === 0); checkVersion(); }, 30000);
   if (!view) view = homeView();
   render();
 }
@@ -315,11 +367,12 @@ $('#nav').addEventListener('click', e => { const b = e.target.closest('button[da
 // Redraw after new data only where it can't wipe something being typed or chosen: never on screens with unsaved
 // settings (New order, Emails, SMS, Cut-offs), nor while a dialog is open or a box has the cursor.
 const canRedraw = () => !['entry', 'emails', 'sms', 'cutoffs'].includes(view) && !document.querySelector('dialog[open]') && !['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName);
-function refreshInBackground() {
+// all = false fetches only changed orders (the 30-second timer); a tab press or a long time away fetches everything.
+function refreshInBackground(all = true) {
   if (refreshing) return refreshing;
   const v = view, snap = () => JSON.stringify([S.customers, S.suppliers, S.products, S.orders, S.profiles, S.emails, S.sections, S.links]);
   const before = snap();
-  return refreshing = loadAll().then(() => {
+  return refreshing = (all ? loadAll() : reloadOrders()).then(() => {
     autoCsv2();
     if (view === v && canRedraw() && snap() !== before) render(); else updateNavBadge();
   }).finally(() => { refreshing = null; });
