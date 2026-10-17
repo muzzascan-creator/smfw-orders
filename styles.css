@@ -318,3 +318,4 @@ dialog:has(.packrow.withref){width:min(880px,calc(100vw - 32px))}
 .batchgrid tbody th{text-align:left;font-weight:600;font-size:14px;letter-spacing:0;text-transform:none;color:var(--fg);position:sticky;left:0;background:var(--surface);border-bottom:1px solid var(--line)}
 .batchgrid tbody tr:last-child th{border-bottom:0}
 .batchgrid td{border-left:1px solid var(--line);font-weight:600;font-size:14px}
+.setcard{margin-bottom:16px;max-width:760px}.setcard h2{margin:0;font-size:18px}

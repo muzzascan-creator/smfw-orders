@@ -72,9 +72,9 @@ const orderNo = n => n == null ? '' : 'SO-' + String(n).padStart(4, '0');
 // Admins and Managers share the office dashboard; only Admins see Suppliers and Administration (migrations/012).
 const isAdmin = () => ['admin', 'manager'].includes(profile?.role) && profile?.approved;
 const isManager = () => profile?.role === 'manager' && profile?.approved;
-const ADMIN_ONLY = ['suppliers', 'emails', 'users', 'sms', 'cutoffs', 'admin'];
+const ADMIN_ONLY = ['suppliers', 'emails', 'users', 'sms', 'cutoffs', 'settings', 'admin'];
 // The Administration tab holds Emails, Logins, SMS and Cut-offs; it opens on whichever was used last.
-const ADMIN_TABS = [['emails', 'Emails'], ['users', 'Logins'], ['sms', 'SMS'], ['cutoffs', 'Cut-offs']];
+const ADMIN_TABS = [['emails', 'Emails'], ['users', 'Logins'], ['sms', 'SMS'], ['cutoffs', 'Cut-offs'], ['settings', 'Settings']];
 // The top bar's height, so sticky bits (the Administration switch) sit just under it.
 new ResizeObserver(() => document.documentElement.style.setProperty('--hdr', $('#top').offsetHeight + 'px')).observe(document.getElementById('top'));
 let adminTab = 'emails';
@@ -330,7 +330,7 @@ function render() {
   // A customer looking at an order they can't change uses Close to leave it; the tabs wait until then.
   const locked = !isAdmin() && !isReceiver() && view === 'entry' && !!draft?.id && !canEditDraft();
   nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" ${locked ? 'disabled title="Press Close to leave this order"' : ''} aria-current="${(v === view || v === 'admin' && ADMIN_TABS.some(([t]) => t === view)) && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
-  const views = { recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, batch: viewBatch, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers, sms: viewSms, cutoffs: viewCutoffs };
+  const views = { recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, batch: viewBatch, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers, sms: viewSms, cutoffs: viewCutoffs, settings: viewSettings };
   const allowed = isManager() ? Object.keys(views).filter(v => !ADMIN_ONLY.includes(v) && !v.startsWith('recv')) : isAdmin() ? null : isReceiver() ? ['recv', 'recvorder'] : ['mine', 'entry'];
   if (!views[view] || ['recv', 'recvorder'].includes(view) && !isReceiver() || (allowed && !allowed.includes(view))) view = homeView();
   if (view === 'entry' && !draft) draft = blankOrder();
@@ -962,6 +962,18 @@ function viewBatch() {
     ${bs.length ? `<div class="tablewrap batchwrap"><table class="batchgrid"><thead><tr><th>Date</th>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${days.map(d =>
       `<tr><th scope="row">${esc(fmtDate(d))}</th>${cols.map(c => `<td class="mono">${(grid[d][c] || []).map(esc).join('<br>')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`
       : `<div class="card empty">No batch codes yet. They appear here once a Receiver saves a Conventional, No customer order with Batch Code products ticked Received.</div>`}`;
+}
+// Settings: where the system copies CSV files. Browsers only let a page save into a folder the user picks,
+// so each folder is chosen once on each computer and remembered in that browser.
+function viewSettings() {
+  const folder = canPickFolder()
+    ? `<div class="row" style="gap:12px;align-items:center"><span>Folder: <b>${esc(csvDir?.name || 'Not chosen yet')}</b></span><button onclick="chooseCsvFolder()">${csvDir ? 'Change folder' : 'Choose folder'}</button></div>
+       <p class="muted" style="margin:8px 0 0;font-size:13px">Pick the ${CSV_FOLDER} folder on the network. It is remembered on this computer, so do this once on each PC that creates CSV files.</p>`
+    : `<p class="muted" style="margin:0">This browser can’t save into a chosen folder, so CSV files go to Downloads. Use Chrome or Edge on a PC to save them straight into the ${CSV_FOLDER} folder.</p>`;
+  return `<h1>Settings</h1><p class="sub">Where the system copies CSV files.</p>
+    <div class="card setcard"><h2>Condition 1: Upload CSV</h2>
+      <p class="sub" style="margin-top:4px">Created from the Orders tab with <b>Create upload CSV</b>. One file per order, as now.</p>${folder}</div>
+    <div class="card setcard"><h2>Condition 2</h2><p class="muted" style="margin:4px 0 0">Not set up yet.</p></div>`;
 }
 function viewCutoffs() {
   const head = `<h1>Order cut-offs</h1><p class="sub">For each product location: the days you deliver, and when orders for each day close (Sydney time). Customers can’t send an order after its cut-off. You and your staff still can. Choose <b>Same day</b> to take orders for delivery that day, up to the time set.</p>`;
