@@ -461,7 +461,7 @@ function viewOrders() {
   let os = S.orders.filter(o => inTab(o, listFilter));
   const q = search.trim().toLowerCase();
   if (q) os = os.filter(o => [orderNo(o.number), custOf(o.customer_id)?.name, custOf(o.customer_id)?.cid].join(' ').toLowerCase().includes(q));
-  if (listFilter === 'pending') os = [...os].sort((x, y) => (y.required_date || '').localeCompare(x.required_date || '') || y.number - x.number); // latest required date on top
+  if (listFilter === 'pending') os = [...os].sort((x, y) => (x.required_date || '9999').localeCompare(y.required_date || '9999') || x.number - y.number); // earliest required date on top
   const count = f => S.orders.filter(o => inTab(o, f)).length;
   return `<div class="row spread"><div><h1>Orders</h1><p class="sub">Every order, whether a customer sent it or you entered it.</p></div><button class="primary" onclick="go('entry')">New order</button></div>
     <div class="row" style="margin-bottom:12px">
