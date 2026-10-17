@@ -158,8 +158,9 @@ function listenForOrders() {
     const before = payload.old, after = payload.new;
     if (isAdmin() && after?.status === 'submitted' && before?.status !== 'submitted' && after.source === 'customer')
       toast(`New order ${orderNo(after.number)} from ${custOf(after.customer_id)?.name || 'a customer'}`, true);
+    if (isAdmin() && after?.direct && !before?.direct) toast(`New Conventional order ${orderNo(after.number)} from ${custOf(after.customer_id)?.name || 'a customer'} (Received tab)`, true);
     clearTimeout(timer);
-    timer = setTimeout(async () => { await reloadOrders(); if (canRedraw()) render(); else updateNavBadge(); }, 300);
+    timer = setTimeout(async () => { await reloadOrders(); if (canRedraw()) render(); else updateNavBadge(); autoCsv2(); }, 300);
   }).subscribe();
 }
 
@@ -222,7 +223,7 @@ async function enter() {
   $('#contact').hidden = isAdmin() || isReceiver(); // customers see who to call or email
   $('#whoami').textContent = (profile.full_name || profile.email) + (isManager() ? ' · Manager' : isAdmin() ? ' · Admin' : isReceiver() ? ' · Receiver' : '');
   await loadAll();
-  if (isAdmin()) await loadCsvDir();
+  if (isAdmin()) { await loadCsvDir(1); await loadCsvDir(2); autoCsv2(); }
   listenForOrders();
   // Admin dashboard refreshes itself every 30 seconds (skipped while the tab is hidden; no redraw mid-edit).
   clearInterval(autoRefresh); autoRefresh = isAdmin() ? setInterval(() => { if (!document.hidden && profile) refreshInBackground(); }, 30000) : null;
@@ -319,6 +320,7 @@ function refreshInBackground() {
   const v = view, snap = () => JSON.stringify([S.customers, S.suppliers, S.products, S.orders, S.profiles, S.emails, S.sections, S.links]);
   const before = snap();
   return refreshing = loadAll().then(() => {
+    autoCsv2();
     if (view === v && canRedraw() && snap() !== before) render(); else updateNavBadge();
   }).finally(() => { refreshing = null; });
 }
@@ -360,12 +362,12 @@ function orderRow(o, opts = {}) {
       : `<span class="pill ${esc(o.status)}">${esc(statusText(o.status))}</span>`}</td>
     ${opts.acts ? `<td class="num acts c-acts" onclick="event.stopPropagation()"><button class="ghost" onclick="openOrder('${o.id}')">View</button><button class="ghost" onclick="printOrder('${o.id}', this)">Print<span class="long"> Order</span></button></td>`
       : `<td class="num openc"><button class="ghost" onclick="event.stopPropagation();openOrder('${o.id}')">Open</button></td>`}
-    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${pastDone(o) ? 'disabled title="Required date has passed"' : upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
-    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${pastDone(o) ? 'disabled title="Required date has passed"' : picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
+    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${pastDone(o) ? `disabled title="${o.direct ? 'CSV is saved automatically (Condition 2)' : 'Required date has passed'}"` : upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
+    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${pastDone(o) ? `disabled title="${o.direct ? 'Not emailed: CSV only' : 'Required date has passed'}"` : picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
 }
 // Receiver: completed orders not yet received.
 function viewRecv() {
-  let os = S.orders.filter(o => o.status === 'complete' && !o.received_at);
+  let os = S.orders.filter(o => o.status === 'complete' && !o.received_at && !o.direct); // direct orders never go to the Receiver
   const q = search.trim().toLowerCase();
   if (q) os = os.filter(o => [orderNo(o.number), custOf(o.customer_id)?.name, custOf(o.customer_id)?.cid].join(' ').toLowerCase().includes(q));
   const gr = o => orderGroup(o) === 'Conventional' ? 0 : 1;
@@ -378,7 +380,7 @@ function viewRecv() {
         <td class="rcust">${c ? esc(c.name) : '<span class="muted">No customer</span>'}</td>
         <td>${esc(fmtDate(o.required_date))}</td><td><span class="${tickedCount(o) < (o.lines || []).length ? 'ndtxt' : 'okgreen'}">${tickedCount(o)}/${(o.lines || []).length}</span></td>
         <td class="num acts recvacts"><button class="ghost ropen" onclick="openReceipt('${o.id}')">Open</button><button class="ghost rmark" onclick="markReceived('${o.id}', this)">Mark received</button></td></tr>`;
-    }).join('')}</tbody></table></div>` : `<div class="card empty">${S.orders.some(o => o.status === 'complete' && !o.received_at) ? 'No orders match this search.' : 'Nothing waiting. Every order has been received.'}</div>`}`;
+    }).join('')}</tbody></table></div>` : `<div class="card empty">${S.orders.some(o => o.status === 'complete' && !o.received_at && !o.direct) ? 'No orders match this search.' : 'Nothing waiting. Every order has been received.'}</div>`}`;
 }
 // Receiver: one order's lines, with the quantity that arrived and a Not delivered tick for each.
 let receipt = null;
@@ -456,24 +458,26 @@ function viewInbox() {
 }
 const finished = o => o.status === 'complete' && !!o.emailed_at && !!o.received_at && !!o.csv_at;
 // Rule: a Complete-tab order whose required date has passed can't be emailed or uploaded again.
-const pastDone = o => finished(o) && !!o.required_date && o.required_date < today();
+const pastDone = o => o.direct || (finished(o) && !!o.required_date && o.required_date < today()); // direct: Condition 2 handles the CSV, no email
 function viewOrders() {
   // Pending holds every transmitted order until it is Complete, Emailed, Received and has its CSV; then it moves to Complete.
   // Orders still in the Inbox (sent by a customer, not yet transmitted) stay out of Pending.
   // Pending holds every order (Sent ones included) until it is Complete, Emailed, Received and has its CSV; then it
-  // moves to Complete. The Received tab is kept empty for now.
-  const inTab = (o, f) => f === 'pending' ? !finished(o) : f === 'received' ? false : f === 'complete' ? finished(o) : o.status === f;
+  // moves to Complete. Received holds the Conventional orders customers send (they skip the Inbox); they stay there,
+  // showing CSV once Condition 2 has saved it.
+  const inTab = (o, f) => o.direct ? f === 'received' : f === 'pending' ? !finished(o) : f === 'complete' ? finished(o) : f !== 'received' && o.status === f;
   dropPastDone();
   let os = S.orders.filter(o => inTab(o, listFilter));
   const q = search.trim().toLowerCase();
   if (q) os = os.filter(o => [orderNo(o.number), custOf(o.customer_id)?.name, custOf(o.customer_id)?.cid].join(' ').toLowerCase().includes(q));
-  if (listFilter === 'pending') os = [...os].sort((x, y) => (x.required_date || '9999').localeCompare(y.required_date || '9999') || x.number - y.number); // earliest required date on top
+  if (listFilter === 'pending' || listFilter === 'received') os = [...os].sort((x, y) => (x.required_date || '9999').localeCompare(y.required_date || '9999') || x.number - y.number); // earliest required date on top
   const count = f => S.orders.filter(o => inTab(o, f)).length;
   return `<div class="row spread"><div><h1>Orders</h1><p class="sub">Every order, whether a customer sent it or you entered it.</p></div><button class="primary" onclick="go('entry')">New order</button></div>
     <div class="row" style="margin-bottom:12px">
       ${['pending', 'draft', 'received', 'complete'].map(f => `<button class="${listFilter === f ? 'primary' : ''}" onclick="listFilter='${f}';render()">${f === 'pending' ? 'Pending' : f === 'draft' ? 'Drafts' : f === 'received' ? 'Received' : 'Complete'} (${count(f)})</button>`).join('')}
       <input class="search" id="osearch" placeholder="Search order no., customer or CID" value="${esc(search)}">
     </div>
+    ${auto2Banner()}
     ${os.length ? `<div class="pickbar row spread"><span id="pickcount">${pickText()}</span><div class="row"><button id="pickclear" ${picked.size || upPicked.size ? '' : 'hidden'} onclick="picked.clear();upPicked.clear();render()">Clear</button><button class="primary" id="pickup" ${upPicked.size ? '' : 'disabled'} onclick="uploadCsvs()">Create upload CSV</button><button class="primary" id="pickmail" ${picked.size ? '' : 'disabled'} onclick="emailPicked()">Email selected</button></div></div>
       <div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num lines">Lines</th><th><div class="stgrid"><span>Status</span><span>Emailed</span><span>Received</span><span>CSV</span></div></th><th class="openc"></th><th class="pick"><span class="picklbl">Upload</span><input type="checkbox" id="upall" aria-label="Select all orders shown for upload" ${os.some(o => !pastDone(o)) && os.every(o => pastDone(o) || upPicked.has(o.id)) ? 'checked' : ''} ${os.every(pastDone) ? 'disabled' : ''}></th><th class="pick"><span class="picklbl">Email</span><input type="checkbox" id="pickall" aria-label="Select all orders shown for emailing" ${os.some(o => !pastDone(o)) && os.every(o => pastDone(o) || picked.has(o.id)) ? 'checked' : ''} ${os.every(pastDone) ? 'disabled' : ''}></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true, pick: true })).join('')}</tbody></table></div>`
       : `<div class="card empty">${S.orders.length ? 'No orders match this filter.' : 'No orders yet.'}</div>`}`;
@@ -972,34 +976,37 @@ function viewBatch() {
 // Settings: where the system copies CSV files. Browsers only let a page save into a folder the user picks,
 // so each folder is chosen once on each computer and remembered in that browser.
 function viewSettings() {
-  const folder = canPickFolder()
-    ? `<div class="row" style="gap:12px;align-items:center"><span>Folder: <b>${esc(S.settings?.csv_folder_1 || csvDir?.name || 'Not chosen yet')}</b></span><button onclick="chooseCsvFolder()">${csvDir ? 'Change folder' : 'Choose folder'}</button></div>
-       <p class="muted" style="margin:8px 0 0;font-size:13px">This applies to every Admin and Manager login. Managers can’t change it. The first time a Manager creates CSV files on their PC, the app asks them once to connect to this folder (the browser needs the folder picked on each computer) and only accepts this one.</p>`
-    : `<p class="muted" style="margin:0">This browser can’t save into a chosen folder, so CSV files go to Downloads. Use Chrome or Edge on a PC to save them straight into the ${CSV_FOLDER} folder.</p>`;
-  return `<h1>Settings</h1><p class="sub">Where the system copies CSV files.</p>
-    <div class="card setcard"><h2>Condition 1: Upload CSV</h2>
-      <p class="sub" style="margin-top:4px">Created from the Orders tab with <b>Create upload CSV</b>. One file per order, as now.</p>${folder}
+  const card = (n, title, about) => {
+    const set = S.settings?.['csv_folder_' + n], dir = dirs[n];
+    const folder = canPickFolder()
+      ? `<div class="row" style="gap:12px;align-items:center"><span>Folder: <b>${esc(set || dir?.name || 'Not chosen yet')}</b>${set && !(dir && sameName(dir.name, set)) ? ' <span class="muted">(not connected on this PC)</span>' : ''}</span><button onclick="chooseCsvFolder(${n})">${set || dir ? 'Change folder' : 'Choose folder'}</button></div>
+         <p class="muted" style="margin:8px 0 0;font-size:13px">This applies to every Admin and Manager login. Managers can’t change it. The first time a Manager needs it on their PC, the app asks them once to connect to this folder (the browser needs the folder picked on each computer) and only accepts this one.</p>`
+      : `<p class="muted" style="margin:0">This browser can’t save into a chosen folder. Use Chrome or Edge on a PC.</p>`;
+    return `<div class="card setcard"><h2>${title}</h2><p class="sub" style="margin-top:4px">${about}</p>${folder}
       <h3 class="seth">H line</h3>
-      <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap"><input id="h-tpl" class="mono" style="flex:1;min-width:240px" value="${esc(hTemplate())}" oninput="hPreview()" aria-label="H line">
-        <button onclick="$('#h-tpl').value=H_DEFAULT;hPreview()">Reset</button><button class="primary" onclick="saveHLine(this)">Save</button></div>
+      <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap"><input id="h-tpl-${n}" class="mono" style="flex:1;min-width:240px" value="${esc(hTemplate(n))}" oninput="hPreview(${n})" aria-label="Condition ${n} H line">
+        <button onclick="$('#h-tpl-${n}').value=H_DEFAULT;hPreview(${n})">Reset</button><button class="primary" onclick="saveHLine(this, ${n})">Save</button></div>
       <p class="muted" style="margin:8px 0 4px;font-size:13px">Separate fields with commas. Codes you can use:</p>
       <ul class="hcodes">${H_CODES.map(([c, d]) => `<li><code>${c}</code> ${esc(d)}</li>`).join('')}</ul>
-      <div class="muted" style="font-size:13px">Example: <code id="h-prev">${esc(hSample())}</code></div></div>
-    <div class="card setcard"><h2>Condition 2</h2><p class="muted" style="margin:4px 0 0">Not set up yet.</p></div>`;
+      <div class="muted" style="font-size:13px">Example: <code id="h-prev-${n}">${esc(hSample(hTemplate(n)))}</code></div></div>`;
+  };
+  return `<h1>Settings</h1><p class="sub">Where the system copies CSV files.</p>
+    ${card(1, 'Condition 1: Upload CSV', 'Created from the Orders tab with <b>Create upload CSV</b>. One file per order, as now.')}
+    ${card(2, 'Condition 2: Upload CSV', 'Saved automatically, with no one pressing anything, for Conventional orders sent from customer logins (Received tab). It happens on any Admin or Manager PC that has this app open and is connected to this folder.')}`;
 }
 function hSample(tpl) {
   const o = S.orders.find(x => x.customer_id && x.required_date) || { number: 13, required_date: '2026-10-15', special_order: false };
   const cust = o.customer_id ? custOf(o.customer_id)?.cid ?? '' : CONVENTIONAL_CID;
   return hLine(o, cust, tpl).map(csvCell).join(',');
 }
-function hPreview() { $('#h-prev').textContent = hSample($('#h-tpl').value.trim() || H_DEFAULT); }
-async function saveHLine(btn) {
-  const v = $('#h-tpl').value.trim() || H_DEFAULT;
+function hPreview(n) { $('#h-prev-' + n).textContent = hSample($('#h-tpl-' + n).value.trim() || H_DEFAULT); }
+async function saveHLine(btn, n) {
+  const v = $('#h-tpl-' + n).value.trim() || H_DEFAULT;
   btn.disabled = true;
-  const { error } = await sb.from('staff_settings').upsert({ key: 'csv1_h', value: v, updated_at: new Date().toISOString() });
+  const { error } = await sb.from('staff_settings').upsert({ key: `csv${n}_h`, value: v, updated_at: new Date().toISOString() });
   btn.disabled = false;
   if (error) return toast(/staff_settings/.test(error.message) ? 'Run migration 031 first, then try again.' : friendly(error));
-  S.settings = { ...S.settings, csv1_h: v }; toast('H line saved. New CSV files use it.', true);
+  S.settings = { ...S.settings, [`csv${n}_h`]: v }; toast(`Condition ${n} H line saved. New CSV files use it.`, true);
 }
 function viewCutoffs() {
   const head = `<h1>Order cut-offs</h1><p class="sub">For each product location: the days you deliver, and when orders for each day close (Sydney time). Customers can’t send an order after its cut-off. You and your staff still can. Choose <b>Same day</b> to take orders for delivery that day, up to the time set.</p>`;
@@ -1387,17 +1394,17 @@ const csvCell = v => /[",\r\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"
 // can hold fixed text and these codes; empty fields at the end are left off (so no S means no trailing comma).
 const H_DEFAULT = 'H,{CID},{DATE},{S}';
 const H_CODES = [['{CID}', 'Customer CID'], ['{DATE}', 'Date required, YYYYMMDD'], ['{S}', 'S when Special Order is ticked, otherwise blank'], ['{ORDER}', 'Order number, e.g. SO-0013'], ['{CUSTOMER}', 'Customer name']];
-const hTemplate = () => S.settings?.csv1_h || H_DEFAULT;
+const hTemplate = (n = 1) => S.settings?.[`csv${n}_h`] || H_DEFAULT;
 function hLine(o, cust, tpl = hTemplate()) {
   const vals = { CID: cust, DATE: ymd(o.required_date || o.order_date), S: o.special_order ? 'S' : '', ORDER: orderNo(o.number), CUSTOMER: custOf(o.customer_id)?.name || '' };
   const f = tpl.split(',').map(x => x.replace(/\{(CID|DATE|S|ORDER|CUSTOMER)\}/gi, (_, k) => vals[k.toUpperCase()] ?? '').trim());
   while (f.length > 1 && f[f.length - 1] === '') f.pop();
   return f;
 }
-function orderCsv(o) {
+function orderCsv(o, n = 1) {
   // An order goes under its customer's CID; a Conventional order SMFW enters without a customer goes under 1183.
   const cust = o.customer_id ? custOf(o.customer_id)?.cid ?? '' : orderGroup(o) === 'Conventional' ? CONVENTIONAL_CID : '';
-  const missing = [], rows = [hLine(o, cust)];
+  const missing = [], rows = [hLine(o, cust, hTemplate(n))];
   for (const l of o.lines || []) {
     if (l.undelivered || !(+l.qty > 0)) continue; // undelivered lines never go in the upload
     const k = packOf(l.pack_id)?.k, ref = (k?.ref || '').trim();
@@ -1410,36 +1417,81 @@ function orderCsv(o) {
 // The folder is picked once and remembered in this browser; other browsers fall back to Downloads.
 const CSV_FOLDER = 'C94GSHS';
 const canPickFolder = () => 'showDirectoryPicker' in window;
-let csvDir = null;
+const dirs = { 1: null, 2: null }; // the folder for each Condition, on this computer
 function idb(mode, fn) {
   return new Promise((res, rej) => { const q = indexedDB.open('smfw', 1); q.onupgradeneeded = () => q.result.createObjectStore('kv');
     q.onsuccess = () => { try { const t = q.result.transaction('kv', mode), x = fn(t.objectStore('kv')); t.oncomplete = () => res(x?.result); t.onerror = () => rej(t.error); } catch (e) { rej(e); } }; q.onerror = () => rej(q.error); });
 }
-async function loadCsvDir() { if (!canPickFolder()) return null; try { csvDir = await idb('readonly', st => st.get('csvDir')) || null; } catch { csvDir = null; } return csvDir; }
+async function loadCsvDir(n = 1) { if (!canPickFolder()) return null; try { dirs[n] = await idb('readonly', st => st.get(n === 1 ? 'csvDir' : 'csvDir' + n)) || null; } catch { dirs[n] = null; } return dirs[n]; }
 // The Admin's choice (Administration > Settings) is shared with every staff login. Managers can't change it:
 // on their PC they only connect to that same folder once, as the browser needs it picked on each computer.
-const csvTarget = () => S.settings?.csv_folder_1 || CSV_FOLDER;
+const csvTarget = (n = 1) => S.settings?.['csv_folder_' + n] || (n === 1 ? CSV_FOLDER : '');
 const sameName = (a, b) => (a || '').toUpperCase() === (b || '').toUpperCase();
-async function chooseCsvFolder() {
+async function chooseCsvFolder(n = 1) {
+  if (isManager() && !csvTarget(n)) { toast(`Admin hasn’t chosen the Condition ${n} folder yet.`); return null; }
   let dir;
-  try { dir = await window.showDirectoryPicker({ id: 'csvfolder', mode: 'readwrite' }); } catch { return null; } // cancelled
-  if (isManager() && !sameName(dir.name, csvTarget())) { toast(`That folder is "${dir.name}". Admin has set CSV files to go to ${csvTarget()}, so pick that folder.`); return null; }
-  csvDir = dir;
-  try { await idb('readwrite', st => st.put(csvDir, 'csvDir')); } catch {}
-  if (!isManager() && !sameName(dir.name, S.settings?.csv_folder_1)) {
-    const { error } = await sb.from('staff_settings').upsert({ key: 'csv_folder_1', value: dir.name, updated_at: new Date().toISOString() });
-    if (!error) S.settings = { ...S.settings, csv_folder_1: dir.name };
+  try { dir = await window.showDirectoryPicker({ id: n === 1 ? 'csvfolder' : 'csvfolder' + n, mode: 'readwrite' }); } catch { return null; } // cancelled
+  if (isManager() && !sameName(dir.name, csvTarget(n))) { toast(`That folder is "${dir.name}". Admin has set Condition ${n} CSV files to go to ${csvTarget(n)}, so pick that folder.`); return null; }
+  dirs[n] = dir;
+  try { await idb('readwrite', st => st.put(dir, n === 1 ? 'csvDir' : 'csvDir' + n)); } catch {}
+  if (!isManager() && !sameName(dir.name, S.settings?.['csv_folder_' + n])) {
+    const { error } = await sb.from('staff_settings').upsert({ key: 'csv_folder_' + n, value: dir.name, updated_at: new Date().toISOString() });
+    if (!error) S.settings = { ...S.settings, ['csv_folder_' + n]: dir.name };
   }
-  toast(`CSV files will be saved in ${dir.name}.`, true);
-  render(); return csvDir;
+  toast(`Condition ${n} CSV files will be saved in ${dir.name}.`, true);
+  render(); if (n === 2) autoCsv2(); return dir;
 }
-async function csvFolder() {
+async function csvFolder(n = 1) {
   if (!canPickFolder()) return null;
-  if (!csvDir) await loadCsvDir();
-  if (!csvDir || (isManager() && !sameName(csvDir.name, csvTarget()))) { toast(`Pick the ${csvTarget()} folder so CSV files can be saved there.`); return chooseCsvFolder(); }
-  const ok = async q => (await csvDir[q]({ mode: 'readwrite' })) === 'granted';
-  try { if (await ok('queryPermission') || await ok('requestPermission')) return csvDir; } catch {}
-  return chooseCsvFolder(); // folder moved, renamed or access refused: pick it again
+  if (!dirs[n]) await loadCsvDir(n);
+  if (!dirs[n] || (isManager() && !sameName(dirs[n].name, csvTarget(n)))) { toast(`Pick the ${csvTarget(n)} folder so CSV files can be saved there.`); return chooseCsvFolder(n); }
+  const ok = async q => (await dirs[n][q]({ mode: 'readwrite' })) === 'granted';
+  try { if (await ok('queryPermission') || await ok('requestPermission')) return dirs[n]; } catch {}
+  return chooseCsvFolder(n); // folder moved, renamed or access refused: pick it again
+}
+// Condition 2: Conventional orders sent from customer logins (marked "direct" by the database) skip the Inbox and
+// sit on the Received tab. Any Admin/Manager PC with this app open and the Condition 2 folder connected saves their
+// CSV on its own. Each order is claimed first, so two open PCs never both save it.
+let auto2Busy = false, auto2Issue = '';
+const csvName = o => safeName(`${orderNo(o.number)} ${custOf(o.customer_id)?.name || ''}`) + '.csv';
+const auto2Due = () => S.orders.filter(o => o.direct && !o.csv_at);
+function setAuto2(msg) { if (msg === auto2Issue) return; auto2Issue = msg; if (view === 'orders' && canRedraw()) render(); }
+async function autoCsv2() {
+  if (!isAdmin() || !canPickFolder() || auto2Busy || !auto2Due().length) return auto2Due().length || setAuto2('');
+  auto2Busy = true;
+  try {
+    if (!dirs[2]) await loadCsvDir(2);
+    const dir = dirs[2];
+    if (!csvTarget(2)) return setAuto2('no-folder');
+    if (!dir || !sameName(dir.name, csvTarget(2))) return setAuto2('connect');
+    let perm = 'denied'; try { perm = await dir.queryPermission({ mode: 'readwrite' }); } catch {}
+    if (perm !== 'granted') return setAuto2('connect');
+    const problems = []; let saved = 0;
+    for (const o of auto2Due()) {
+      const { text, missing, lines } = orderCsv(o, 2);
+      if (missing.length) { problems.push(`${orderNo(o.number)}: no Ref for ${missing.join(', ')}`); continue; }
+      if (!lines) continue;
+      const { data, error } = await sb.from('orders').update({ csv_at: new Date().toISOString() }).eq('id', o.id).is('csv_at', null).select('id');
+      if (error || !data?.length) continue; // another PC got it first
+      try { const w = await (await dir.getFileHandle(csvName(o), { create: true })).createWritable(); await w.write(text); await w.close(); saved++; }
+      catch (e) { await sb.from('orders').update({ csv_at: null }).eq('id', o.id); problems.push(`${orderNo(o.number)}: couldn’t save to ${dir.name} (${e.message})`); }
+    }
+    setAuto2(problems.length ? 'problems:' + problems.join('\n') : '');
+    if (saved) { await reloadOrders(); if (canRedraw()) render(); toast(`${saved} Condition 2 CSV file${saved > 1 ? 's' : ''} saved to ${dir.name}`, true); }
+  } finally { auto2Busy = false; }
+}
+async function reconnectCsv2() {
+  const dir = dirs[2] || await loadCsvDir(2);
+  if (dir && sameName(dir.name, csvTarget(2))) { try { if (await dir.requestPermission({ mode: 'readwrite' }) === 'granted') { auto2Issue = ''; return autoCsv2(); } } catch {} }
+  await chooseCsvFolder(2);
+}
+function auto2Banner() {
+  const n = auto2Due().length; if (!n || !auto2Issue) return '';
+  const what = `${n} order${n > 1 ? 's are' : ' is'} waiting for a Condition 2 CSV.`;
+  if (!canPickFolder()) return `<div class="banner">${what} Open this app in Chrome or Edge on a PC to save them.</div>`;
+  if (auto2Issue === 'no-folder') return `<div class="banner">${what} Choose the Condition 2 folder in Administration › Settings.</div>`;
+  if (auto2Issue === 'connect') return `<div class="banner">${what} This PC isn’t connected to the ${esc(csvTarget(2))} folder. <button class="link" onclick="reconnectCsv2()">Connect</button></div>`;
+  return `<div class="banner">${what} Fix these, then they save on their own:<br>${esc(auto2Issue.slice(9)).replace(/\n/g, '<br>')}</div>`;
 }
 async function uploadCsvs() {
   dropPastDone(); if (!upPicked.size) { render(); return toast('Those orders’ required date has passed, so no CSV can be created.'); }
@@ -1451,7 +1503,7 @@ async function uploadCsvs() {
     const { text, missing, lines } = orderCsv(o);
     if (missing.length) { bad.push(`${orderNo(o.number)}: no Ref for ${missing.join(', ')}`); continue; }
     if (!lines) { bad.push(`${orderNo(o.number)} has nothing delivered on it`); continue; }
-    const name = safeName(`${orderNo(o.number)} ${custOf(o.customer_id)?.name || ''}`) + '.csv';
+    const name = csvName(o);
     if (dir) {
       try { const w = await (await dir.getFileHandle(name, { create: true })).createWritable(); await w.write(text); await w.close(); }
       catch (e) { bad.push(`${orderNo(o.number)}: couldn’t save to ${dir.name} (${e.message})`); continue; }
