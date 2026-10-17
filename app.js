@@ -460,9 +460,9 @@ const pastDone = o => finished(o) && !!o.required_date && o.required_date < toda
 function viewOrders() {
   // Pending holds every transmitted order until it is Complete, Emailed, Received and has its CSV; then it moves to Complete.
   // Orders still in the Inbox (sent by a customer, not yet transmitted) stay out of Pending.
-  // Pending: everything still in progress, including orders customers have sent. Received: marked received by a
-  // Receiver but not yet finished (emailed + CSV). Complete: emailed, received and CSV done.
-  const inTab = (o, f) => f === 'pending' ? !o.received_at && !finished(o) : f === 'received' ? !!o.received_at && !finished(o) : f === 'complete' ? finished(o) : o.status === f;
+  // Pending holds every order (Sent ones included) until it is Complete, Emailed, Received and has its CSV; then it
+  // moves to Complete. The Received tab is kept empty for now.
+  const inTab = (o, f) => f === 'pending' ? !finished(o) : f === 'received' ? false : f === 'complete' ? finished(o) : o.status === f;
   dropPastDone();
   let os = S.orders.filter(o => inTab(o, listFilter));
   const q = search.trim().toLowerCase();
