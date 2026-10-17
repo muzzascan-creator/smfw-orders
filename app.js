@@ -381,7 +381,7 @@ function refreshInBackground(all = true) {
 }
 
 // Frozen column headings sit just under a frozen title row (.pagehead), so they need its height.
-function setPageHeadHeight() { document.documentElement.style.setProperty('--ph', ($('.pagehead')?.offsetHeight || 0) + 'px'); }
+function setPageHeadHeight() { const st = document.documentElement.style; st.setProperty('--ph', ($('.pagehead')?.offsetHeight || 0) + 'px'); st.setProperty('--ab', ($('.adminbar')?.offsetHeight || 0) + 'px'); }
 addEventListener('resize', () => setPageHeadHeight());
 function render() {
   const nav = $('#nav');

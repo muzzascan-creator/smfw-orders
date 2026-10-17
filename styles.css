@@ -246,21 +246,21 @@ label.chk.spo input{margin:0;width:18px;height:18px}
 /* Administration's sub-tabs (Emails, Logins, SMS, Cut-offs) stays in view under the top bar while the page scrolls. */
 .adminbar{position:sticky;top:var(--hdr,0px);z-index:4;background:var(--bg);padding:20px 0 4px;margin-bottom:4px}
 .adminbar .grpswitch{margin:0}
-/* A page's title row that stays in view under the top bar while the list scrolls (Customers, Products, Suppliers). */
-.pagehead{position:sticky;top:var(--hdr,0px);z-index:4;background:var(--bg);padding:8px 0 10px;margin-top:-8px}
+/* A page's title row that stays in view under the top bar (and Administration's sub-tabs) while the list scrolls (Customers, Products, Suppliers). */
+.pagehead{position:sticky;top:calc(var(--hdr,0px) + var(--ab,0px));z-index:4;background:var(--bg);padding:8px 0 10px;margin-top:-8px}
 /* Column headings that stay in view under the frozen title row (Customers, Products, Suppliers). On narrow screens the
    table scrolls sideways instead, so the headings scroll with it. */
 @media (min-width:900px){
   .tablewrap.stickyhead{overflow:visible}
-  .tablewrap.stickyhead thead th{position:sticky;top:calc(var(--hdr,0px) + var(--ph,0px));z-index:3}
+  .tablewrap.stickyhead thead th{position:sticky;top:calc(var(--hdr,0px) + var(--ab,0px) + var(--ph,0px));z-index:3}
   .tablewrap.stickyhead thead th:first-child{border-top-left-radius:10px}
   .tablewrap.stickyhead thead th:last-child{border-top-right-radius:10px}
 }
 /* Products: each supplier's name stays in view above its frozen column headings. */
 .supblock h2{margin:12px 0 0;height:44px;line-height:44px}
 @media (min-width:900px){
-  .supblock h2{position:sticky;top:calc(var(--hdr,0px) + var(--ph,0px));z-index:3;background:var(--bg)}
-  .supblock .tablewrap.stickyhead thead th{top:calc(var(--hdr,0px) + var(--ph,0px) + 44px)}
+  .supblock h2{position:sticky;top:calc(var(--hdr,0px) + var(--ab,0px) + var(--ph,0px));z-index:3;background:var(--bg)}
+  .supblock .tablewrap.stickyhead thead th{top:calc(var(--hdr,0px) + var(--ab,0px) + var(--ph,0px) + 44px)}
 }
 /* Sign-in screen warnings (e.g. signed out because the login was used on another device): white on red. */
 .auth p.err{background:#c62828;color:#fff;border-radius:8px;padding:10px 14px;font-size:15px;font-weight:600}
