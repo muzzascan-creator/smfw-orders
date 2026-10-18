@@ -524,9 +524,117 @@ async function setReceived(id, btn) {
 }
 function viewInbox() {
   const os = S.orders.filter(o => o.status === 'submitted').sort((a, b) => (a.submitted_at || '').localeCompare(b.submitted_at || ''));
-  return `<h1>Inbox</h1><p class="sub">Orders customers have sent that still need processing. Open one to check it and mark it complete.</p>
+  return `<div class="row spread"><div><h1>Inbox</h1><p class="sub">Orders customers have sent that still need processing. Open one to check it and mark it complete.</p></div><button onclick="$('#pofile').click()">Import purchase order</button><input type="file" id="pofile" accept="application/pdf,.pdf" hidden onchange="importPo(this)"></div>
     ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>Sent</th><th>From</th><th class="num lines">Lines</th><th>Status</th><th class="openc"></th></tr></thead><tbody>${os.map(o => orderRow(o, { sent: true, source: true })).join('')}</tbody></table></div>`
       : `<div class="card empty">No orders waiting. New customer orders appear here as soon as they’re sent.</div>`}`;
+}
+// ---------- import a buyer's purchase order (PDF) ----------
+// Some buyers send one PDF listing several stores side by side: product descriptions down the left, a quantity column
+// per store, then Total. The app reads the text with PDF.js, splits it into one order per store (and per product
+// location), and asks once which customer each store column is and which product/pack each description is
+// (remembered in po_stores / po_items, migration 034). The orders go into the Inbox for checking.
+const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+let po = null;
+const poKey = t => String(t || '').toLowerCase().replace(/\s+/g, ' ').trim();
+function loadPdfJs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  return new Promise((res, rej) => { const sc = Object.assign(document.createElement('script'), { src: PDFJS + 'pdf.min.js' });
+    sc.onload = () => { pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js'; res(pdfjsLib); }; sc.onerror = () => rej(new Error('PDF reader could not load')); document.head.append(sc); });
+}
+// Reads the PDF's text positions into { cols: [{label, hint}], lines: [{desc, qty: {col: n}}], date }.
+async function readPo(file) {
+  const lib = await loadPdfJs(), doc = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const cols = [], lines = [], hints = {}; let date = '';
+  for (let n = 1; n <= doc.numPages; n++) {
+    const items = (await (await doc.getPage(n)).getTextContent()).items.filter(i => i.str.trim())
+      .map(i => ({ t: i.str.trim(), x: i.transform[4], y: i.transform[5], w: i.width, c: i.transform[4] + i.width / 2 }));
+    items.forEach(i => { const m = i.t.match(/customer\s+(.+?)\s+(\d{3,})\b/i); if (m) hints[poKey(m[2])] = m[1].trim(); const d = i.t.match(/^(\d{1,2}\/\d{1,2}\/\d{4})/); if (d && !date) date = d[1]; });
+    const head = items.find(i => /^description$/i.test(i.t)); if (!head) continue;
+    // Column headings: everything level with "Description" (a little above or below it) and to its right.
+    const hs = items.filter(i => i !== head && i.x > head.x + head.w && Math.abs(i.y - head.y) <= 20).sort((a, b) => b.y - a.y);
+    const pcols = [];
+    hs.forEach(i => { const col = pcols.find(c => Math.abs(c.c - i.c) < 18); if (col) col.parts.push(i.t); else pcols.push({ c: i.c, parts: [i.t] }); });
+    pcols.sort((a, b) => a.c - b.c).forEach(c => { c.label = c.parts.join(' '); c.total = /^total$/i.test(c.label); if (!c.total && !cols.some(x => x.label === c.label)) cols.push({ label: c.label }); });
+    if (!pcols.length) continue;
+    const left = Math.min(...pcols.map(c => c.c)) - 30, top = Math.min(...hs.map(i => i.y)) - 4;
+    const rows = new Map();
+    items.filter(i => i.y < top && !/^page \d+/i.test(i.t)).forEach(i => { const y = [...rows.keys()].find(k => Math.abs(k - i.y) < 4) ?? i.y; (rows.get(y) || rows.set(y, []).get(y)).push(i); });
+    [...rows.entries()].sort((a, b) => b[0] - a[0]).forEach(([, its]) => {
+      const desc = its.filter(i => i.c < left).sort((a, b) => a.x - b.x).map(i => i.t).join(' ').trim();
+      if (!desc) return;
+      const qty = {};
+      its.filter(i => i.c >= left && /^\d+(\.\d+)?$/.test(i.t)).forEach(i => {
+        const col = pcols.reduce((b, c) => Math.abs(c.c - i.c) < Math.abs(b.c - i.c) ? c : b);
+        if (!col.total && Math.abs(col.c - i.c) < 30) qty[col.label] = (qty[col.label] || 0) + Number(i.t);
+      });
+      if (Object.keys(qty).length) lines.push({ desc, qty });
+    });
+  }
+  cols.forEach(c => { c.hint = hints[poKey(c.label.match(/\d{3,}/)?.[0])] || ''; c.lines = lines.filter(l => l.qty[c.label] > 0).length; });
+  return { cols: cols.filter(c => c.lines), lines, date };
+}
+async function importPo(input) {
+  const file = input.files[0]; input.value = ''; if (!file) return;
+  let r; try { r = await readPo(file); } catch (e) { return toast('That PDF couldn’t be read: ' + e.message); }
+  if (!r.cols.length || !r.lines.length) return toast('No store columns or product lines were found in that PDF. It needs a Description column with a quantity column per store.');
+  const [st, it] = await Promise.all([sb.from('po_stores').select('*'), sb.from('po_items').select('*')]);
+  if (st.error || it.error) return toast(friendly(st.error || it.error));
+  // A match saved with no customer / product means "Don't import" / "Skip".
+  const stores = Object.fromEntries(st.data.map(x => [x.label, x.customer_id || 'skip'])), packs = Object.fromEntries(it.data.map(x => [x.description, x.pack_id || 'skip']));
+  po = { ...r, no: file.name.match(/\d{4,}/)?.[0] || '', file: file.name };
+  const custOpts = sel => `<option value="">Choose the customer</option><option value="skip" ${sel === 'skip' ? 'selected' : ''}>Don’t import this store</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)} (${esc(c.cid)})</option>`).join('')}`;
+  const packList = S.products.filter(p => p.active !== false).sort(byName).flatMap(p => (p.product_packs || []).filter(k => k.available).map(k => ({ id: k.id, t: `${p.name} · ${k.name} (${groupOf(p)})` })));
+  const packOpts = sel => `<option value="">Choose the product</option><option value="skip" ${sel === 'skip' ? 'selected' : ''}>Skip this line</option>${packList.map(k => `<option value="${k.id}" ${k.id === sel ? 'selected' : ''}>${esc(k.t)}</option>`).join('')}`;
+  const dlg = $('#dlg');
+  dlg.innerHTML = `<form class="grid" id="poform"><h2>Purchase order${po.no ? ' ' + esc(po.no) : ''}</h2>
+    <p class="muted" style="margin:0">${esc(po.file)}${po.date ? ' · dated ' + esc(po.date) : ''}. One order is made for each store below and goes into the Inbox for checking.</p>
+    <label class="f" style="max-width:220px">Date required<input type="date" id="po-date" required min="${today()}"></label>
+    <h3 style="margin:6px 0 0">Stores</h3>
+    <div class="tablewrap"><table><thead><tr><th>Store on the PO</th><th class="num">Lines</th><th>Customer</th></tr></thead><tbody>
+      ${po.cols.map((c, i) => `<tr><td><b>${esc(c.label)}</b>${c.hint ? `<div class="muted" style="font-size:12px">${esc(c.hint)}</div>` : ''}</td><td class="num">${c.lines}</td><td><select data-store="${i}" style="width:100%">${custOpts(stores[poKey(c.label)] === 'skip' || custOf(stores[poKey(c.label)]) ? stores[poKey(c.label)] : '')}</select></td></tr>`).join('')}
+    </tbody></table></div>
+    <h3 style="margin:6px 0 0">Products</h3>
+    <div class="tablewrap"><table><thead><tr><th>Product on the PO</th>${po.cols.map(c => `<th class="num">${esc(c.label)}</th>`).join('')}<th>Our product</th></tr></thead><tbody>
+      ${po.lines.map((l, i) => `<tr><td>${esc(l.desc)}</td>${po.cols.map(c => `<td class="num">${l.qty[c.label] || ''}</td>`).join('')}<td style="min-width:300px"><select data-item="${i}" style="width:100%">${packOpts(packs[poKey(l.desc)] === 'skip' || packOf(packs[poKey(l.desc)]) ? packs[poKey(l.desc)] : '')}</select></td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="row" style="justify-content:flex-end"><button type="button" onclick="document.getElementById('dlg').close()">Cancel</button><button type="submit" class="primary" id="pogo">Create orders</button></div></form>`;
+  dlg.querySelector('#poform').onsubmit = e => { e.preventDefault(); createPoOrders(e.submitter); };
+  dlg.classList.add('wide'); dlg.addEventListener('close', () => dlg.classList.remove('wide'), { once: true });
+  dlg.showModal();
+}
+async function createPoOrders(btn) {
+  const date = $('#po-date').value;
+  if (!date) return toast('Choose the date required first.');
+  const cust = po.cols.map((c, i) => $(`select[data-store="${i}"]`).value), pk = po.lines.map((l, i) => $(`select[data-item="${i}"]`).value);
+  const ci = cust.indexOf(''); if (ci >= 0) return toast(`Choose the customer for ${po.cols[ci].label}, or Don’t import this store.`);
+  const pi = pk.indexOf(''); if (pi >= 0) return toast(`Choose our product for “${po.lines[pi].desc}”, or Skip this line.`);
+  const special = po.no ? `PO ${po.no}` : `PO ${po.file}`;
+  const rows = [];
+  po.cols.forEach((c, i) => {
+    if (cust[i] === 'skip') return;
+    const byGroup = {};
+    po.lines.forEach((l, j) => {
+      const q = l.qty[c.label]; if (!q || pk[j] === 'skip') return;
+      const f = packOf(pk[j]); if (!f) return;
+      const ls = (byGroup[groupOf(f.p)] ||= []), had = ls.find(x => x.pack_id === f.k.id);
+      if (had) had.qty += q; else ls.push({ pack_id: f.k.id, product_id: f.p.id, sid: f.k.sid, code: f.p.code || '', product_name: f.p.name, pack_name: f.k.name, outer: outerOf(f.k), qty: q });
+    });
+    // An order holds one product location, so a store with both gets an Organic and a Conventional order.
+    Object.values(byGroup).forEach(lines => rows.push({ customer_id: cust[i], order_date: today(), required_date: date, special, status: 'submitted', source: 'admin', lines }));
+  });
+  if (!rows.length) return toast('Nothing to import: every store or line is skipped.');
+  const dup = rows.filter(r => S.orders.some(o => o.special === special && o.customer_id === r.customer_id));
+  if (dup.length && !confirm(`${special} has already been imported for ${[...new Set(dup.map(r => custOf(r.customer_id)?.name))].join(', ')}. Import it again?`)) return;
+  btn.disabled = true;
+  const { error } = await sb.from('orders').insert(rows);
+  if (error) { btn.disabled = false; return toast(friendly(error)); }
+  // Remember the matches for next time.
+  await Promise.all([
+    sb.from('po_stores').upsert(po.cols.map((c, i) => ({ label: poKey(c.label), customer_id: cust[i] === 'skip' ? null : cust[i], updated_at: new Date().toISOString() }))),
+    sb.from('po_items').upsert(po.lines.map((l, j) => ({ description: poKey(l.desc), pack_id: pk[j] === 'skip' ? null : pk[j], updated_at: new Date().toISOString() })))]);
+  $('#dlg').close(); po = null;
+  await reloadOrders(); go('inbox', false);
+  toast(`${rows.length} order${rows.length > 1 ? 's' : ''} from ${special} added to the Inbox`, true);
 }
 const finished = o => o.status === 'complete' && !!o.emailed_at && !!o.received_at && !!o.csv_at;
 // Rule: a Complete-tab order whose required date has passed can't be emailed or uploaded again.
