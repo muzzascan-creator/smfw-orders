@@ -583,7 +583,8 @@ async function importPo(input) {
   const stores = Object.fromEntries(st.data.map(x => [x.label, x.customer_id || 'skip'])), packs = Object.fromEntries(it.data.map(x => [x.description, x.pack_id || 'skip']));
   po = { ...r, no: file.name.match(/\d{4,}/)?.[0] || '', file: file.name };
   const custOpts = sel => `<option value="">Choose the customer</option><option value="skip" ${sel === 'skip' ? 'selected' : ''}>Don’t import this store</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)} (${esc(c.cid)})</option>`).join('')}`;
-  const packList = S.products.filter(p => p.active !== false).sort(byName).flatMap(p => (p.product_packs || []).filter(k => k.available).map(k => ({ id: k.id, t: `${p.name} · ${k.name} (${groupOf(p)})` })));
+  // Products hidden from order forms can still be imported, as long as the pack is Available.
+  const packList = S.products.slice().sort(byName).flatMap(p => (p.product_packs || []).filter(k => k.available).map(k => ({ id: k.id, t: `${p.name} · ${k.name} (${groupOf(p)}${p.active === false ? ', hidden from order forms' : ''})` })));
   const packOpts = sel => `<option value="">Choose the product</option><option value="skip" ${sel === 'skip' ? 'selected' : ''}>Skip this line</option>${packList.map(k => `<option value="${k.id}" ${k.id === sel ? 'selected' : ''}>${esc(k.t)}</option>`).join('')}`;
   const dlg = $('#dlg');
   dlg.innerHTML = `<form class="grid" id="poform"><h2>Purchase order${po.no ? ' ' + esc(po.no) : ''}</h2>
@@ -774,9 +775,11 @@ const loginCustIds = u => [...new Set([u.customer_id, ...(S.links || []).filter(
 // ---------- order entry ----------
 function blankOrder() { return { id: null, number: null, customer_id: isAdmin() ? '' : curCust(), order_date: today(), required_date: '', special: '', special_order: false, status: 'draft', source: isAdmin() ? 'admin' : 'customer', qty: {}, missing: [], group: isAdmin() ? 'Organic' : custDefault(custOf(curCust())) }; }
 const outerOf = k => Number(k.outer_multiple) || 1;
+// A product hidden from order forms still shows on an order that already has it (e.g. one made by Import purchase order).
+const shownOnForm = p => p.active !== false || (p.product_packs || []).some(k => +draft?.qty?.[k.id] > 0);
 function sectionsFor(products) {
   const secs = [], idx = {};
-  products.filter(p => p.active !== false).sort(bySort).forEach(p => {
+  products.filter(shownOnForm).sort(bySort).forEach(p => {
     const name = p.section || 'Other';
     if (!(name in idx)) { idx[name] = secs.length; secs.push({ name, packs: [], products: [] }); }
     const s = secs[idx[name]]; s.products.push(p);
@@ -799,7 +802,7 @@ function flatHtml(products, dis) {
   // Pack types follow the order form's column order.
   const packs = [], rows = {};
   sectionsFor(products).forEach(sec => sec.packs.forEach(pk => { if (!(pk in rows)) { packs.push(pk); rows[pk] = []; } }));
-  products.filter(p => p.active !== false).sort(bySort).forEach(p => (p.product_packs || []).filter(k => k.available).forEach(k => rows[k.name]?.push({ p, k })));
+  products.filter(shownOnForm).sort(bySort).forEach(p => (p.product_packs || []).filter(k => k.available).forEach(k => rows[k.name]?.push({ p, k })));
   packs.splice(0, packs.length, ...packs.filter(pk => rows[pk].length));
   return `<div class="flat">${packs.map(pk => `<div class="sec flatsec"><table><colgroup><col style="width:52px"><col><col style="width:90px"></colgroup><thead><tr><th colspan="2"><span class="sectitle">${esc(pk)}</span> <span class="muted" style="font-weight:400">${rows[pk].length} products</span></th><th class="packh">Qty</th></tr></thead><tbody>
     ${rows[pk].map(({ p, k }) => { const q = draft.qty[k.id]; return `<tr><td class="code">${esc(p.code)}</td><td>${esc(p.name)}</td><td class="q"><input inputmode="numeric" ${dis} aria-label="${esc(p.name)}, ${esc(pk)}" title="SID ${esc(k.sid)}" data-k="${k.id}" value="${esc(q || '')}" class="${q ? 'has' : ''}"></td></tr>`; }).join('')}
