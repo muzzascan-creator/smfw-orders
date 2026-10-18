@@ -1220,12 +1220,14 @@ function viewBatch() {
   const bs = (S.batches || []).slice().sort((a, b) => (a.entered_at || '').localeCompare(b.entered_at || ''));
   const packs = {}; bs.forEach(b => (packs[b.product_name] ||= new Set()).add(b.pack_name));
   const col = b => packs[b.product_name].size > 1 ? `${b.product_name} (${b.pack_name})` : b.product_name;
+  // Headings stack the product name over its pack, so each column only needs to be as wide as its codes.
+  const heads = {}; bs.forEach(b => heads[col(b)] = esc(b.product_name) + (packs[b.product_name].size > 1 ? `<span class="bpack">${esc(b.pack_name)}</span>` : ''));
   const cols = [...new Set(bs.map(col))].sort((a, b) => a.localeCompare(b));
   const grid = {}; // day -> column -> codes
   bs.forEach(b => { const day = new Date(b.entered_at).toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' }); const cell = ((grid[day] ||= {})[col(b)] ||= []); if (!cell.includes(b.code)) cell.push(b.code); });
   const days = Object.keys(grid).sort().reverse();
   return `<h1>Batch Code</h1><p class="sub">Batch codes entered when Conventional orders for No customer are received, by the day they were entered (newest first). Products that need one are ticked Batch Code in Products.</p>
-    ${bs.length ? `<div class="tablewrap batchwrap"><table class="batchgrid"><thead><tr><th>Date</th>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${days.map(d =>
+    ${bs.length ? `<div class="tablewrap batchwrap"><table class="batchgrid"><thead><tr><th>Date</th>${cols.map(c => `<th>${heads[c]}</th>`).join('')}</tr></thead><tbody>${days.map(d =>
       `<tr><th scope="row">${esc(fmtDate(d))}</th>${cols.map(c => `<td class="mono">${(grid[d][c] || []).map(esc).join('<br>')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`
       : `<div class="card empty">No batch codes ${batchAll ? 'yet' : 'in the last 90 days'}. They appear here once a Receiver saves a Conventional, No customer order with Batch Code products ticked Received.</div>`}
     ${batchAll ? '' : `<p class="muted" style="margin-top:10px">Showing the last 90 days. <button class="link" onclick="batchAll=true;loadAll().then(render)">Show all</button></p>`}`;

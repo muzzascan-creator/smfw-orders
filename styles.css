@@ -315,6 +315,9 @@ dialog:has(.packrow.withref){width:min(880px,calc(100vw - 32px))}
 .rbatch.need{color:var(--danger)}
 .batchwrap{overflow-x:auto}
 .batchgrid th,.batchgrid td{white-space:nowrap;vertical-align:top}
+.batchgrid thead th{white-space:normal;vertical-align:bottom;min-width:80px;max-width:120px;line-height:1.3}
+.batchgrid thead th:first-child{min-width:0;max-width:none}
+.batchgrid .bpack{display:block;font-weight:500;opacity:.75;margin-top:2px}
 .batchgrid tbody th{text-align:left;font-weight:600;font-size:14px;letter-spacing:0;text-transform:none;color:var(--fg);position:sticky;left:0;background:var(--surface);border-bottom:1px solid var(--line)}
 .batchgrid tbody tr:last-child th{border-bottom:0}
 .batchgrid td{border-left:1px solid var(--line);font-weight:600;font-size:14px}
