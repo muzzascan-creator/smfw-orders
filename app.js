@@ -652,7 +652,8 @@ function viewOrders() {
   // Pending holds every order (Sent ones included) until it is Complete, Emailed, Received and has its CSV; then it
   // moves to Complete. Received holds the Conventional orders customers send (they skip the Inbox); they stay there,
   // showing CSV once Condition 2 has saved it.
-  const inTab = (o, f) => o.direct ? f === 'received' : f === 'pending' ? !finished(o) : f === 'complete' ? finished(o) : f !== 'received' && o.status === f;
+  // Direct orders sit on Received until they are Complete with their CSV saved, then move to Complete.
+  const inTab = (o, f) => o.direct ? f === (o.status === 'complete' && o.csv_at ? 'complete' : 'received') : f === 'pending' ? !finished(o) : f === 'complete' ? finished(o) : f !== 'received' && o.status === f;
   dropPastDone();
   let os = S.orders.filter(o => inTab(o, listFilter));
   const q = search.trim().toLowerCase();
