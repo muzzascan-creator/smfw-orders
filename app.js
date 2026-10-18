@@ -74,7 +74,7 @@ const isAdmin = () => ['admin', 'manager'].includes(profile?.role) && profile?.a
 const isManager = () => profile?.role === 'manager' && profile?.approved;
 const ADMIN_ONLY = ['suppliers', 'emails', 'users', 'sms', 'cutoffs', 'settings', 'recv'];
 // The Administration tab holds Emails, Logins, SMS and Cut-offs; it opens on whichever was used last.
-const ADMIN_TABS = [['customers', 'Customers'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['emails', 'Emails'], ['users', 'Logins'], ['sms', 'SMS'], ['cutoffs', 'Cut-offs'], ['settings', 'Settings']];
+const ADMIN_TABS = [['customers', 'Customers'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['emails', 'Emails'], ['users', 'Logins'], ['sms', 'SMS'], ['cutoffs', 'Cut-offs'], ['pomatch', 'PO Matching'], ['settings', 'Settings']];
 // The top bar's height, so sticky bits (the Administration switch) sit just under it.
 new ResizeObserver(() => document.documentElement.style.setProperty('--hdr', $('#top').offsetHeight + 'px')).observe(document.getElementById('top'));
 let adminTab = 'customers';
@@ -278,7 +278,7 @@ async function enter() {
     // Nothing from the last person carries over to whoever signs in next on this device.
     if ($('#dlg').open) $('#dlg').close();
     Object.assign(S, { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], links: [], sections: [], cutRules: [], cutSettings: [], favs: [], batches: [], settings: {} });
-    draft = null; receipt = null; ordersMark = 0; older.clear(); noDirect = false; batchAll = false; olderMine = false; search = ''; custSearch = ''; listFilter = 'pending'; groupFilter = 'all'; adminTab = 'customers'; picked.clear(); upPicked.clear();
+    draft = null; receipt = null; ordersMark = 0; S.poMatch = null; older.clear(); noDirect = false; batchAll = false; olderMine = false; search = ''; custSearch = ''; listFilter = 'pending'; groupFilter = 'all'; adminTab = 'customers'; picked.clear(); upPicked.clear();
     clearInterval(deviceTimer); deviceTimer = null; clearInterval(autoRefresh); autoRefresh = null; profile = null; view = null; smsCfg = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
   if (authMode === 'newpass') return renderAuth();
   if (!(await stillMyDevice())) return;
@@ -404,7 +404,7 @@ function render() {
   // A customer looking at an order they can't change uses Close to leave it; the tabs wait until then.
   const locked = !isAdmin() && !isReceiver() && view === 'entry' && !!draft?.id && !canEditDraft();
   nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" ${locked ? 'disabled title="Press Close to leave this order"' : ''} aria-current="${(v === view || v === 'recv' && view === 'recvorder' || v === 'admin' && adminTabs().some(([t]) => t === view)) && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
-  const views = { recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, batch: viewBatch, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers, sms: viewSms, cutoffs: viewCutoffs, settings: viewSettings };
+  const views = { pomatch: viewPoMatch, recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, batch: viewBatch, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers, sms: viewSms, cutoffs: viewCutoffs, settings: viewSettings };
   const allowed = isManager() ? Object.keys(views).filter(v => !ADMIN_ONLY.includes(v) && !v.startsWith('recv')) : isAdmin() ? null : isReceiver() ? ['recv', 'recvorder'] : ['mine', 'entry'];
   // The Receiver screens are for Receivers, and for an Admin through the Receiver tab (not Managers).
   if (!views[view] || ['recv', 'recvorder'].includes(view) && !isReceiver() && !(isAdmin() && !isManager()) || (allowed && !allowed.includes(view))) view = homeView();
@@ -415,6 +415,7 @@ function render() {
   if (view === 'entry') wireEntry();
   if (view === 'orders') wireOrderSearch();
   setPageHeadHeight();
+  if (view === 'pomatch' && !S.poMatch) loadPoMatch();
   if (view === 'cutoffs') document.querySelectorAll('.cuttbl [name=delivers]').forEach(cutRowState);
   if (view === 'recvorder') { wireRecvOrder(); if (keep) $('.recvscroll').scrollTop = keep; }
   if (view === 'recv') { const i = $('#osearch'); if (i) i.oninput = () => { search = i.value; render(); const j = $('#osearch'); j.focus(); j.setSelectionRange(j.value.length, j.value.length); }; }
@@ -592,12 +593,14 @@ async function importPo(input) {
     <label class="f" style="max-width:220px">Date required<input type="date" id="po-date" required min="${today()}"></label>
     <h3 style="margin:6px 0 0">Stores</h3>
     <div class="tablewrap"><table><thead><tr><th>Store on the PO</th><th class="num">Lines</th><th>Customer</th></tr></thead><tbody>
-      ${po.cols.map((c, i) => `<tr><td><b>${esc(c.label)}</b>${c.hint ? `<div class="muted" style="font-size:12px">${esc(c.hint)}</div>` : ''}</td><td class="num">${c.lines}</td><td><select data-store="${i}" style="width:100%">${custOpts(stores[poKey(c.label)] === 'skip' || custOf(stores[poKey(c.label)]) ? stores[poKey(c.label)] : '')}</select></td></tr>`).join('')}
+      ${po.cols.map((c, i) => `<tr${stores[poKey(c.label)] === 'skip' || custOf(stores[poKey(c.label)]) ? ' class="pomatched" hidden' : ''}><td><b>${esc(c.label)}</b>${c.hint ? `<div class="muted" style="font-size:12px">${esc(c.hint)}</div>` : ''}</td><td class="num">${c.lines}</td><td><select data-store="${i}" style="width:100%">${custOpts(stores[poKey(c.label)] === 'skip' || custOf(stores[poKey(c.label)]) ? stores[poKey(c.label)] : '')}</select></td></tr>`).join('')}
     </tbody></table></div>
     <h3 style="margin:6px 0 0">Products</h3>
     <div class="tablewrap"><table><thead><tr><th>Product on the PO</th>${po.cols.map(c => `<th class="num">${esc(c.label)}</th>`).join('')}<th>Our product</th></tr></thead><tbody>
-      ${po.lines.map((l, i) => `<tr><td>${esc(l.desc)}</td>${po.cols.map(c => `<td class="num">${l.qty[c.label] || ''}</td>`).join('')}<td style="min-width:300px"><select data-item="${i}" style="width:100%">${packOpts(packs[poKey(l.desc)] === 'skip' || packOf(packs[poKey(l.desc)]) ? packs[poKey(l.desc)] : '')}</select></td></tr>`).join('')}
+      ${po.lines.map((l, i) => `<tr${packs[poKey(l.desc)] === 'skip' || packOf(packs[poKey(l.desc)]) ? ' class="pomatched" hidden' : ''}><td>${esc(l.desc)}</td>${po.cols.map(c => `<td class="num">${l.qty[c.label] || ''}</td>`).join('')}<td style="min-width:300px"><select data-item="${i}" style="width:100%">${packOpts(packs[poKey(l.desc)] === 'skip' || packOf(packs[poKey(l.desc)]) ? packs[poKey(l.desc)] : '')}</select></td></tr>`).join('')}
     </tbody></table></div>
+    ${(() => { const n = po.cols.filter(c => stores[poKey(c.label)] === 'skip' || custOf(stores[poKey(c.label)])).length + po.lines.filter(l => packs[poKey(l.desc)] === 'skip' || packOf(packs[poKey(l.desc)])).length;
+      return n ? `<p class="muted" style="margin:0">${n} store${n > 1 ? 's and products are' : ' or product is'} already matched and hidden above. <button type="button" class="link" onclick="document.querySelectorAll('#poform tr.pomatched').forEach(r => r.hidden = false);this.parentElement.remove()">Show them</button> · Change matches any time in Administration › PO Matching.</p>` : ''; })()}
     <p class="banner" style="margin:0">These orders go straight to the Received tab and their CSV is saved straight away. Any Organic products become a separate order in the Inbox.</p>
     <div class="row" style="justify-content:flex-end"><button type="button" onclick="document.getElementById('dlg').close()">Cancel</button><button type="submit" class="primary" id="pogo">Create orders</button></div></form>`;
   dlg.querySelector('#poform').onsubmit = e => { e.preventDefault(); createPoOrders(e.submitter); };
@@ -637,11 +640,44 @@ async function createPoOrders(btn) {
   await Promise.all([
     sb.from('po_stores').upsert(po.cols.map((c, i) => ({ label: poKey(c.label), customer_id: cust[i] === 'skip' ? null : cust[i], updated_at: new Date().toISOString() }))),
     sb.from('po_items').upsert(po.lines.map((l, j) => ({ description: poKey(l.desc), pack_id: pk[j] === 'skip' ? null : pk[j], updated_at: new Date().toISOString() })))]);
-  $('#dlg').close(); po = null;
+  $('#dlg').close(); po = null; S.poMatch = null;
   const nd = rows.filter(r => r.direct).length, ni = rows.length - nd;
   await reloadOrders(); if (nd) { listFilter = 'received'; go('orders', false); } else go('inbox', false);
   toast(`${special}: ${[nd && `${nd} order${nd > 1 ? 's' : ''} on the Received tab`, ni && `${ni} Organic order${ni > 1 ? 's' : ''} in the Inbox`].filter(Boolean).join(' and ')}`, true);
   autoCsv2();
+}
+// Administration › PO Matching: the remembered store and product matches used by Import purchase order.
+async function loadPoMatch() {
+  const [st, it] = await Promise.all([sb.from('po_stores').select('*').order('label'), sb.from('po_items').select('*').order('description')]);
+  if (st.error || it.error) { S.poMatch = { error: friendly(st.error || it.error) }; } else S.poMatch = { stores: st.data, items: it.data };
+  if (view === 'pomatch') render();
+}
+function viewPoMatch() {
+  const m = S.poMatch;
+  const head = `<h1>PO Matching</h1><p class="sub">How Import purchase order reads a buyer’s PDF: which customer each store column is, and which of our products each of their product lines is. Changes save straight away and apply to the next import.</p>`;
+  if (!m) return head + '<div class="card empty">Loading…</div>';
+  if (m.error) return head + `<div class="card empty">${esc(m.error)} (needs migration 034).</div>`;
+  const custOpts = sel => `<option value="" ${sel ? '' : 'selected'}>Don’t import this store</option>${S.customers.slice().sort(byName).map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)} (${esc(c.cid)})</option>`).join('')}`;
+  const packList = S.products.slice().sort(byName).flatMap(p => (p.product_packs || []).map(k => ({ id: k.id, t: `${p.name} · ${k.name} (${groupOf(p)}${p.active === false ? ', hidden from order forms' : ''}${k.available ? '' : ', not available'})` })));
+  const packOpts = sel => `<option value="" ${sel ? '' : 'selected'}>Skip this line</option>${packList.map(k => `<option value="${k.id}" ${k.id === sel ? 'selected' : ''}>${esc(k.t)}</option>`).join('')}`;
+  return head + `<h2 style="margin-top:8px">Stores (${m.stores.length})</h2>
+    ${m.stores.length ? `<div class="tablewrap"><table><thead><tr><th>Store on the PO</th><th>Customer</th><th></th></tr></thead><tbody>${m.stores.map((r, i) => `<tr><td class="mono">${esc(r.label)}</td><td><select style="width:100%" onchange="savePoMatch('stores',${i},this.value)">${custOpts(r.customer_id)}</select></td><td class="num"><button class="ghost" onclick="delPoMatch('stores',${i})">Remove</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="card empty">No stores matched yet. They’re added the first time you import a PO.</div>'}
+    <h2 style="margin-top:16px">Products (${m.items.length})</h2>
+    ${m.items.length ? `<div class="tablewrap"><table><thead><tr><th>Product on the PO</th><th>Our product</th><th></th></tr></thead><tbody>${m.items.map((r, i) => `<tr><td>${esc(r.description)}</td><td style="min-width:320px"><select style="width:100%" onchange="savePoMatch('items',${i},this.value)">${packOpts(r.pack_id)}</select></td><td class="num"><button class="ghost" onclick="delPoMatch('items',${i})">Remove</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="card empty">No products matched yet. They’re added the first time you import a PO.</div>'}
+    <p class="muted" style="margin-top:10px">Remove a match to be asked again on the next import.</p>`;
+}
+const PO_T = { stores: ['po_stores', 'label', 'customer_id'], items: ['po_items', 'description', 'pack_id'] };
+async function savePoMatch(kind, i, val) {
+  const [t, key, col] = PO_T[kind], r = S.poMatch[kind][i];
+  const { error } = await sb.from(t).update({ [col]: val || null, updated_at: new Date().toISOString() }).eq(key, r[key]);
+  if (error) return toast(friendly(error));
+  r[col] = val || null; toast('Match saved', true);
+}
+async function delPoMatch(kind, i) {
+  const [t, key] = PO_T[kind];
+  const { error } = await sb.from(t).delete().eq(key, S.poMatch[kind][i][key]);
+  if (error) return toast(friendly(error));
+  S.poMatch[kind].splice(i, 1); render(); toast('Match removed', true);
 }
 const finished = o => o.status === 'complete' && !!o.emailed_at && !!o.received_at && !!o.csv_at;
 // Rule: a Complete-tab order whose required date has passed can't be emailed or uploaded again.
