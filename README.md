@@ -6,6 +6,7 @@ A web app (csorders.org) where SMFW's customers sign in and place their own orde
 - **Admins** get an Inbox of orders customers have sent, can enter orders for any customer, email suppliers, make upload CSVs, and manage customers (CID), products (each pack type has its own SID, outer multiple and availability) and suppliers. Under **Administration** they manage supplier Emails, Logins, SMS settings and order Cut-offs.
 - **Managers** have the Admin dashboard without Suppliers and Administration.
 - **Receivers** see every order read-only and tick off deliveries; customers are emailed about anything short. On Conventional orders for No customer, pack types ticked **Batch Code** in Products need a batch code when received; SMFW sees them on the Batch Code tab (needs migration 030). Conventional orders sent from customer logins skip the Inbox, go to the Received tab and have their CSV saved automatically (Settings, Condition 2; needs migration 032).
+- **Scale:** staff screens load unfinished orders plus the last 2 weeks (customers: their last 2 months), then only what changed. Older orders are found with **Search older orders** on the Orders tab or **Show older orders** on My orders. Migration 033 adds the indexes for this.
 
 It is a plain web page (`index.html`, `app.js`, `styles.css`) with no build step. Logins and data live in [Supabase](https://supabase.com); the access rules in `supabase/schema.sql` and `supabase/migrations/` keep each customer's data private.
 

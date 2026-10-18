@@ -131,7 +131,7 @@ async function loadAll() {
     S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || [];
   } else if (isAdmin()) {
     let c, s, p, o, u, m, sec, lk, bc, st;
-    [c, s, p, o, u, m, sec, lk, bc, st, cr, cs] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort'), sb.from('product_sections').select('name'), sb.from('profile_customers').select('*'), sb.from('batch_codes').select('*').order('entered_at', { ascending: false }), sb.from('staff_settings').select('key,value'), ...cuts]);
+    [c, s, p, o, u, m, sec, lk, bc, st, cr, cs] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort'), sb.from('product_sections').select('name'), sb.from('profile_customers').select('*'), (batchAll ? sb.from('batch_codes').select('*') : sb.from('batch_codes').select('*').gte('entered_at', shiftDate(today(), -90))).order('entered_at', { ascending: false }), sb.from('staff_settings').select('key,value'), ...cuts]);
     base = [c, s, p, o, u, m, sec, lk];
     S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; S.profiles = u.data || [];
     S.emails = m.data || []; S.sections = (sec.data || []).map(r => r.name); S.links = lk.data || []; S.batches = bc.data || []; // batch codes: empty until 030 is run
@@ -152,31 +152,47 @@ async function loadAll() {
 // After the first load only orders changed since the last fetch are sent (the database stamps updated_at on every
 // change), which keeps open screens light. A quick count catches deleted orders and then everything is fetched again.
 // Only the newest request's answer is kept, so a slow older one can't put back out-of-date orders.
-let ordersSeq = 0, ordersMark = 0;
+// Screens load only the orders still in play: every order not yet finished, plus everything touched or required in
+// the last 2 weeks (2 months for a customer's own orders). Older finished orders are fetched on request (Search older
+// orders / Show older orders) and kept in `older` until the next sign-in.
+let ordersSeq = 0, ordersMark = 0, noDirect = false, batchAll = false, olderMine = false;
 const ORDER_PAGE = 1000;
+const older = new Map();
+const recentDays = () => isAdmin() || isReceiver() ? 14 : 60;
+const recentFrom = () => shiftDate(today(), -recentDays());
+function inPlay(q) {
+  const d = recentFrom();
+  // Not finished: not Complete, no CSV yet, or (for orders that aren't direct) not yet emailed or received.
+  return q.or(noDirect ? `status.neq.complete,csv_at.is.null,emailed_at.is.null,received_at.is.null,updated_at.gte.${d},required_date.gte.${d}`
+    : `status.neq.complete,csv_at.is.null,and(direct.is.false,or(emailed_at.is.null,received_at.is.null)),updated_at.gte.${d},required_date.gte.${d}`);
+}
 async function fetchOrders(since) {
   const out = new Map();
   for (let from = 0; ; from += ORDER_PAGE) {
     let q = sb.from('orders').select('*').order('number').range(from, from + ORDER_PAGE - 1); // oldest first, so new orders don't shift the pages
-    if (since) q = q.gte('updated_at', since);
+    q = since ? q.gte('updated_at', since) : inPlay(q);
     const { data, error } = await q;
+    if (error && !noDirect && /direct/.test(error.message || '')) { noDirect = true; return fetchOrders(since); } // before migration 032
     if (error) return { error };
     data.forEach(o => out.set(o.id, o));
     if (data.length < ORDER_PAGE) return { data: [...out.values()] };
   }
 }
+// Older orders asked for by a search: added to what's shown, without disturbing the in-play list.
+function addOlder(rows) { let n = 0; rows.forEach(o => { if (!S.orders.some(x => x.id === o.id)) { older.set(o.id, o); n++; } }); S.orders = [...S.orders, ...[...older.values()].filter(o => !S.orders.some(x => x.id === o.id))].sort((a, b) => b.number - a.number); return n; }
 async function reloadOrders(full = false) {
   const n = ++ordersSeq;
   const since = !full && ordersMark && S.orders.length ? new Date(ordersMark - 60000).toISOString() : null; // a minute's overlap for slow saves
   const r = await fetchOrders(since);
   if (r.error || n !== ordersSeq) return r;
   let os = r.data;
+  os.forEach(o => older.delete(o.id)); // an old order changed today is in play again
   if (since) {
     const m = new Map(S.orders.map(o => [o.id, o])); os.forEach(o => m.set(o.id, o)); os = [...m.values()];
-    const { count, error } = await sb.from('orders').select('id', { count: 'exact', head: true });
+    const { count, error } = await inPlay(sb.from('orders').select('id', { count: 'exact', head: true }));
     if (error || n !== ordersSeq) return { error };
-    if (count !== os.length) return reloadOrders(true);
-  }
+    if (count !== os.filter(o => !older.has(o.id)).length) return reloadOrders(true); // deleted, or a day has passed
+  } else os = [...os, ...older.values()];
   S.orders = os.sort((a, b) => b.number - a.number);
   ordersMark = Math.max(0, ...S.orders.map(o => Date.parse(o.updated_at) || 0));
   return {};
@@ -262,7 +278,7 @@ async function enter() {
     // Nothing from the last person carries over to whoever signs in next on this device.
     if ($('#dlg').open) $('#dlg').close();
     Object.assign(S, { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], links: [], sections: [], cutRules: [], cutSettings: [], favs: [], batches: [], settings: {} });
-    draft = null; receipt = null; ordersMark = 0; search = ''; custSearch = ''; listFilter = 'pending'; groupFilter = 'all'; adminTab = 'customers'; picked.clear(); upPicked.clear();
+    draft = null; receipt = null; ordersMark = 0; older.clear(); noDirect = false; batchAll = false; olderMine = false; search = ''; custSearch = ''; listFilter = 'pending'; groupFilter = 'all'; adminTab = 'customers'; picked.clear(); upPicked.clear();
     clearInterval(deviceTimer); deviceTimer = null; clearInterval(autoRefresh); autoRefresh = null; profile = null; view = null; smsCfg = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
   if (authMode === 'newpass') return renderAuth();
   if (!(await stillMyDevice())) return;
@@ -535,7 +551,31 @@ function viewOrders() {
     ${auto2Banner()}
     ${os.length ? `<div class="pickbar row spread"><span id="pickcount">${pickText()}</span><div class="row"><button id="pickclear" ${picked.size || upPicked.size ? '' : 'hidden'} onclick="picked.clear();upPicked.clear();render()">Clear</button><button class="primary" id="pickup" ${upPicked.size ? '' : 'disabled'} onclick="uploadCsvs()">Create upload CSV</button><button class="primary" id="pickmail" ${picked.size ? '' : 'disabled'} onclick="emailPicked()">Email selected</button></div></div>
       <div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num lines">Lines</th><th><div class="stgrid"><span>Status</span><span>Emailed</span><span>Received</span><span>CSV</span></div></th><th class="openc"></th><th class="pick"><span class="picklbl">Upload</span><input type="checkbox" id="upall" aria-label="Select all orders shown for upload" ${os.some(o => !pastDone(o)) && os.every(o => pastDone(o) || upPicked.has(o.id)) ? 'checked' : ''} ${os.every(pastDone) ? 'disabled' : ''}></th><th class="pick"><span class="picklbl">Email</span><input type="checkbox" id="pickall" aria-label="Select all orders shown for emailing" ${os.some(o => !pastDone(o)) && os.every(o => pastDone(o) || picked.has(o.id)) ? 'checked' : ''} ${os.every(pastDone) ? 'disabled' : ''}></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true, pick: true })).join('')}</tbody></table></div>`
-      : `<div class="card empty">${S.orders.length ? 'No orders match this filter.' : 'No orders yet.'}</div>`}`;
+      : `<div class="card empty">${S.orders.length ? 'No orders match this filter.' : 'No orders yet.'}</div>`}
+    <p class="muted" style="margin-top:10px">Showing unfinished orders and the last ${recentDays()} days. ${q ? `<button class="link" onclick="searchOlder(this)">Search older orders for “${esc(search.trim())}”</button>` : 'Type an order number, customer or CID in the search box to look further back.'}</p>`;
+}
+// The list holds unfinished orders and the last 2 weeks; this looks further back in the database.
+async function searchOlder(btn) {
+  const q = search.trim(), ql = q.toLowerCase(); if (!q) return;
+  const num = +(q.match(/^(?:so-?)?0*(\d+)$/i)?.[1] || 0);
+  const ids = S.customers.filter(c => (c.name || '').toLowerCase().includes(ql) || String(c.cid) === q).map(c => c.id);
+  if (!num && !ids.length) return toast('No order number, customer or CID matches that search.');
+  btn.disabled = true;
+  let r = sb.from('orders').select('*').order('number', { ascending: false }).limit(500);
+  r = num && ids.length ? r.or(`number.eq.${num},customer_id.in.(${ids.join(',')})`) : num ? r.eq('number', num) : r.in('customer_id', ids);
+  const { data, error } = await r;
+  btn.disabled = false;
+  if (error) return toast(friendly(error));
+  const n = addOlder(data); render();
+  toast(n ? `${n} older order${n > 1 ? 's' : ''} added. Older finished orders are on the Complete tab.` : 'No older orders found for that search.', n > 0);
+}
+// My orders: the last 2 months, and the rest on request.
+async function showOlderMine(btn) {
+  btn.disabled = true;
+  const { data, error } = await sb.from('orders').select('*').order('number', { ascending: false }).limit(1000);
+  btn.disabled = false;
+  if (error) return toast(friendly(error));
+  addOlder(data); olderMine = true; render();
 }
 function wireOrderSearch() {
   const i = $('#osearch'); if (!i) return; i.oninput = () => { search = i.value; render(); const j = $('#osearch'); j.focus(); j.setSelectionRange(j.value.length, j.value.length); };
@@ -585,7 +625,8 @@ function viewMine() {
     : me?.name ? `<p class="custname">${esc(me.name)}</p>` : '';
   return `${homeTip()}<div class="row spread"><div>${head}<h1>My orders</h1></div><button class="primary" onclick="go('entry')">New order</button></div>
     ${os.length ? `<div class="tablewrap mine"><table><thead><tr><th>Order</th>${many ? '<th>Customer</th>' : ''}<th>Required</th><th class="num lines">Lines</th><th>Status</th><th class="acts"></th></tr></thead><tbody>${os.map(o => orderRow(o, { customer: many, acts: true })).join('')}</tbody></table></div>`
-      : `<div class="card empty">You haven’t placed any orders yet. Press <b>New order</b> to start one.</div>`}`;
+      : `<div class="card empty">You haven’t placed any orders ${olderMine ? 'yet' : 'in the last 2 months'}. Press <b>New order</b> to start one.</div>`}
+    ${olderMine ? '' : `<p class="muted" style="margin-top:10px">Showing the last 2 months. <button class="link" onclick="showOlderMine(this)">Show older orders</button></p>`}`;
 }
 function openOrder(id) {
   const o = S.orders.find(x => x.id === id); if (!o) return;
@@ -950,7 +991,7 @@ function viewCustomers() {
   if (!isManager()) S.profiles.filter(u => u.role === 'customer').forEach(u => new Set(loginCustIds(u)).forEach(id => nLogins.set(id, (nLogins.get(id) || 0) + 1)));
   return `<div class="pagehead"><div class="row spread"><div><h1>Customers</h1><p class="sub">The businesses who order from you.${isManager() ? '' : ' Link a login to a customer under <b>Administration › Logins</b>.'}</p></div><div class="row"><button onclick="importCustomers()">Import customers</button><button class="primary" onclick="editCustomer()">Add customer</button></div></div>
   ${cs.length ? `<div class="row"><input class="search" id="csearch" placeholder="Search customers" title="Name, CID, contact, phone or email" value="${esc(custSearch)}" oninput="custSearch=this.value;filterCustomers()"><span class="muted" id="cscount">${custSearch.trim() ? `${cs.filter(custMatch).length} of ${cs.length}` : ''}</span></div>` : ''}</div>
-  ${cs.length ? `<div class="tablewrap stickyhead"><table><thead><tr><th class="num">CID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Type</th>${isManager() ? '' : '<th class="num">Logins</th>'}<th class="num">Orders</th><th></th></tr></thead><tbody>
+  ${cs.length ? `<div class="tablewrap stickyhead"><table><thead><tr><th class="num">CID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Type</th>${isManager() ? '' : '<th class="num">Logins</th>'}<th class="num" title="Unfinished orders and orders from the last 2 weeks">Recent orders</th><th></th></tr></thead><tbody>
     ${cs.map(c => `<tr data-find="${esc(custFindText(c))}" ${custMatch(c) ? '' : 'hidden'}><td class="num mono">${esc(c.cid)}</td><td><b>${esc(c.name)}</b>${c.sunday_delivery ? ' <span class="pill">Sunday delivery</span>' : ''}${c.reminders !== false && GROUPS.some(g => custAllows(c, g) && S.cutSettings?.find(x => x.product_group === g)?.reminder_minutes) ? ' <span class="pill">Reminders</span>' : ''}${c.notes ? `<div class="muted" style="font-size:12px">${esc(c.notes)}</div>` : ''}</td><td>${esc(c.contact)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td><td><span class="pill grp-${custGroup(c).toLowerCase()}">${custGroup(c)}</span></td>${isManager() ? '' : `<td class="num">${nLogins.get(c.id) || 0}</td>`}<td class="num">${nOrders.get(c.id) || 0}</td><td class="num"><button class="ghost" onclick="editCustomer('${c.id}')">Edit</button></td></tr>`).join('')}
   </tbody></table></div>` : `<div class="card empty">No customers yet.</div>`}`;
 }
@@ -1026,7 +1067,8 @@ function viewBatch() {
   return `<h1>Batch Code</h1><p class="sub">Batch codes entered when Conventional orders for No customer are received, by the day they were entered (newest first). Products that need one are ticked Batch Code in Products.</p>
     ${bs.length ? `<div class="tablewrap batchwrap"><table class="batchgrid"><thead><tr><th>Date</th>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${days.map(d =>
       `<tr><th scope="row">${esc(fmtDate(d))}</th>${cols.map(c => `<td class="mono">${(grid[d][c] || []).map(esc).join('<br>')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`
-      : `<div class="card empty">No batch codes yet. They appear here once a Receiver saves a Conventional, No customer order with Batch Code products ticked Received.</div>`}`;
+      : `<div class="card empty">No batch codes ${batchAll ? 'yet' : 'in the last 90 days'}. They appear here once a Receiver saves a Conventional, No customer order with Batch Code products ticked Received.</div>`}
+    ${batchAll ? '' : `<p class="muted" style="margin-top:10px">Showing the last 90 days. <button class="link" onclick="batchAll=true;loadAll().then(render)">Show all</button></p>`}`;
 }
 // Settings: where the system copies CSV files. Browsers only let a page save into a folder the user picks,
 // so each folder is chosen once on each computer and remembered in that browser.
@@ -1688,7 +1730,11 @@ function editCustomer(id) {
       const clash = S.customers.find(x => x.id !== id && x.cid === row.cid); if (clash) { toast(`CID ${row.cid} is already used by ${clash.name}. Next free CID is ${nextCid()}.`); return false; }
       return run(id ? sb.from('customers').update(row).eq('id', id) : sb.from('customers').insert(row), 'Customer saved');
     },
-    id && !S.orders.some(o => o.customer_id === id) ? () => run(sb.from('customers').delete().eq('id', id), 'Customer deleted') : null);
+    id && !S.orders.some(o => o.customer_id === id) ? async () => {
+      const { count } = await sb.from('orders').select('id', { count: 'exact', head: true }).eq('customer_id', id); // older orders aren't loaded
+      if (count) { toast(`${c.name} has ${count} older order${count > 1 ? 's' : ''}, so it can’t be deleted.`); return false; }
+      return run(sb.from('customers').delete().eq('id', id), 'Customer deleted');
+    } : null);
 }
 function editSupplier(id) {
   const s = id ? S.suppliers.find(x => x.id === id) : {};
