@@ -532,7 +532,7 @@ function viewInbox() {
 // Some buyers send one PDF listing several stores side by side: product descriptions down the left, a quantity column
 // per store, then Total. The app reads the text with PDF.js, splits it into one order per store (and per product
 // location), and asks once which customer each store column is and which product/pack each description is
-// (remembered in po_stores / po_items, migration 034). The orders go into the Inbox for checking.
+// (remembered in po_stores / po_items, migration 034). Conventional orders go straight to the Received tab.
 const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
 let po = null;
 const poKey = t => String(t || '').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -588,7 +588,7 @@ async function importPo(input) {
   const packOpts = sel => `<option value="">Choose the product</option><option value="skip" ${sel === 'skip' ? 'selected' : ''}>Skip this line</option>${packList.map(k => `<option value="${k.id}" ${k.id === sel ? 'selected' : ''}>${esc(k.t)}</option>`).join('')}`;
   const dlg = $('#dlg');
   dlg.innerHTML = `<form class="grid" id="poform"><h2>Purchase order${po.no ? ' ' + esc(po.no) : ''}</h2>
-    <p class="muted" style="margin:0">${esc(po.file)}${po.date ? ' · dated ' + esc(po.date) : ''}. One order is made for each store below and goes into the Inbox for checking.</p>
+    <p class="muted" style="margin:0">${esc(po.file)}${po.date ? ' · dated ' + esc(po.date) : ''}. One order is made for each store below.</p>
     <label class="f" style="max-width:220px">Date required<input type="date" id="po-date" required min="${today()}"></label>
     <h3 style="margin:6px 0 0">Stores</h3>
     <div class="tablewrap"><table><thead><tr><th>Store on the PO</th><th class="num">Lines</th><th>Customer</th></tr></thead><tbody>
@@ -598,6 +598,7 @@ async function importPo(input) {
     <div class="tablewrap"><table><thead><tr><th>Product on the PO</th>${po.cols.map(c => `<th class="num">${esc(c.label)}</th>`).join('')}<th>Our product</th></tr></thead><tbody>
       ${po.lines.map((l, i) => `<tr><td>${esc(l.desc)}</td>${po.cols.map(c => `<td class="num">${l.qty[c.label] || ''}</td>`).join('')}<td style="min-width:300px"><select data-item="${i}" style="width:100%">${packOpts(packs[poKey(l.desc)] === 'skip' || packOf(packs[poKey(l.desc)]) ? packs[poKey(l.desc)] : '')}</select></td></tr>`).join('')}
     </tbody></table></div>
+    <p class="banner" style="margin:0">These orders go straight to the Received tab and their CSV is saved straight away. Any Organic products become a separate order in the Inbox.</p>
     <div class="row" style="justify-content:flex-end"><button type="button" onclick="document.getElementById('dlg').close()">Cancel</button><button type="submit" class="primary" id="pogo">Create orders</button></div></form>`;
   dlg.querySelector('#poform').onsubmit = e => { e.preventDefault(); createPoOrders(e.submitter); };
   dlg.classList.add('wide'); dlg.addEventListener('close', () => dlg.classList.remove('wide'), { once: true });
@@ -620,8 +621,11 @@ async function createPoOrders(btn) {
       const ls = (byGroup[groupOf(f.p)] ||= []), had = ls.find(x => x.pack_id === f.k.id);
       if (had) had.qty += q; else ls.push({ pack_id: f.k.id, product_id: f.p.id, sid: f.k.sid, code: f.p.code || '', product_name: f.p.name, pack_name: f.k.name, outer: outerOf(f.k), qty: q });
     });
-    // An order holds one product location, so a store with both gets an Organic and a Conventional order.
-    Object.values(byGroup).forEach(lines => rows.push({ customer_id: cust[i], order_date: today(), required_date: date, special, status: 'submitted', source: 'admin', lines }));
+    // An order holds one product location, so a store with both gets an Organic and a Conventional order. Conventional
+    // orders follow the Received tab rules (direct: no Inbox, no Receiver, Condition 2 CSV saved on its own); Organic
+    // ones go to the Inbox as usual.
+    Object.entries(byGroup).forEach(([g, lines]) => rows.push({ customer_id: cust[i], order_date: today(), required_date: date, special, source: 'admin', lines,
+      status: g === 'Conventional' ? 'complete' : 'submitted', direct: g === 'Conventional' }));
   });
   if (!rows.length) return toast('Nothing to import: every store or line is skipped.');
   const dup = rows.filter(r => S.orders.some(o => o.special === special && o.customer_id === r.customer_id));
@@ -634,8 +638,10 @@ async function createPoOrders(btn) {
     sb.from('po_stores').upsert(po.cols.map((c, i) => ({ label: poKey(c.label), customer_id: cust[i] === 'skip' ? null : cust[i], updated_at: new Date().toISOString() }))),
     sb.from('po_items').upsert(po.lines.map((l, j) => ({ description: poKey(l.desc), pack_id: pk[j] === 'skip' ? null : pk[j], updated_at: new Date().toISOString() })))]);
   $('#dlg').close(); po = null;
-  await reloadOrders(); go('inbox', false);
-  toast(`${rows.length} order${rows.length > 1 ? 's' : ''} from ${special} added to the Inbox`, true);
+  const nd = rows.filter(r => r.direct).length, ni = rows.length - nd;
+  await reloadOrders(); if (nd) { listFilter = 'received'; go('orders', false); } else go('inbox', false);
+  toast(`${special}: ${[nd && `${nd} order${nd > 1 ? 's' : ''} on the Received tab`, ni && `${ni} Organic order${ni > 1 ? 's' : ''} in the Inbox`].filter(Boolean).join(' and ')}`, true);
+  autoCsv2();
 }
 const finished = o => o.status === 'complete' && !!o.emailed_at && !!o.received_at && !!o.csv_at;
 // Rule: a Complete-tab order whose required date has passed can't be emailed or uploaded again.
