@@ -72,7 +72,7 @@ const orderNo = n => n == null ? '' : 'SO-' + String(n).padStart(4, '0');
 // Admins and Managers share the office dashboard; only Admins see Suppliers and Administration (migrations/012).
 const isAdmin = () => ['admin', 'manager'].includes(profile?.role) && profile?.approved;
 const isManager = () => profile?.role === 'manager' && profile?.approved;
-const ADMIN_ONLY = ['suppliers', 'emails', 'users', 'sms', 'cutoffs', 'settings'];
+const ADMIN_ONLY = ['suppliers', 'emails', 'users', 'sms', 'cutoffs', 'settings', 'recv'];
 // The Administration tab holds Emails, Logins, SMS and Cut-offs; it opens on whichever was used last.
 const ADMIN_TABS = [['customers', 'Customers'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['emails', 'Emails'], ['users', 'Logins'], ['sms', 'SMS'], ['cutoffs', 'Cut-offs'], ['settings', 'Settings']];
 // The top bar's height, so sticky bits (the Administration switch) sit just under it.
@@ -372,7 +372,7 @@ const homeView = () => isAdmin() ? 'inbox' : isReceiver() ? 'recv' : 'mine';
 function navItems() {
   if (isReceiver()) return [['recv', 'Orders']];
   return isAdmin()
-    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['batch', 'Batch Code'], ['admin', 'Administration']].filter(([v]) => !isManager() || !ADMIN_ONLY.includes(v))
+    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['batch', 'Batch Code'], ['recv', 'Receiver'], ['admin', 'Administration']].filter(([v]) => !isManager() || !ADMIN_ONLY.includes(v))
     : [['mine', 'My orders'], ['entry', 'New order']];
 }
 function inboxCount() { return S.orders.filter(o => o.status === 'submitted').length; }
@@ -403,10 +403,11 @@ function render() {
   const nav = $('#nav');
   // A customer looking at an order they can't change uses Close to leave it; the tabs wait until then.
   const locked = !isAdmin() && !isReceiver() && view === 'entry' && !!draft?.id && !canEditDraft();
-  nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" ${locked ? 'disabled title="Press Close to leave this order"' : ''} aria-current="${(v === view || v === 'admin' && adminTabs().some(([t]) => t === view)) && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
+  nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" ${locked ? 'disabled title="Press Close to leave this order"' : ''} aria-current="${(v === view || v === 'recv' && view === 'recvorder' || v === 'admin' && adminTabs().some(([t]) => t === view)) && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
   const views = { recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, batch: viewBatch, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers, sms: viewSms, cutoffs: viewCutoffs, settings: viewSettings };
   const allowed = isManager() ? Object.keys(views).filter(v => !ADMIN_ONLY.includes(v) && !v.startsWith('recv')) : isAdmin() ? null : isReceiver() ? ['recv', 'recvorder'] : ['mine', 'entry'];
-  if (!views[view] || ['recv', 'recvorder'].includes(view) && !isReceiver() || (allowed && !allowed.includes(view))) view = homeView();
+  // The Receiver screens are for Receivers, and for an Admin through the Receiver tab (not Managers).
+  if (!views[view] || ['recv', 'recvorder'].includes(view) && !isReceiver() && !(isAdmin() && !isManager()) || (allowed && !allowed.includes(view))) view = homeView();
   if (view === 'entry' && !draft) draft = blankOrder();
   const keep = view === 'recvorder' ? $('.recvscroll')?.scrollTop : 0; // ticking a line re-draws the screen; stay where you were
   const sub = adminTabs().some(([t]) => t === view) ? `<div class="adminbar"><div class="grpswitch" role="tablist" aria-label="Administration">${adminTabs().map(([t, l]) => `<button type="button" role="tab" aria-selected="${t === view}" class="${t === view ? 'on' : ''}" onclick="go('${t}');refreshInBackground()">${l}</button>`).join('')}</div></div>` : '';
