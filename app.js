@@ -747,7 +747,7 @@ function viewMine() {
 }
 function openOrder(id) {
   const o = S.orders.find(x => x.id === id); if (!o) return;
-  draft = { id, number: o.number, customer_id: o.customer_id, order_date: o.order_date, required_date: o.required_date || '', special: o.special || '', special_order: !!o.special_order, status: o.status, source: o.source, submitted_at: o.submitted_at, qty: {} };
+  draft = { id, number: o.number, direct: !!o.direct, customer_id: o.customer_id, order_date: o.order_date, required_date: o.required_date || '', special: o.special || '', special_order: !!o.special_order, status: o.status, source: o.source, submitted_at: o.submitted_at, qty: {} };
   (o.lines || []).forEach(l => { if (l.pack_id) draft.qty[l.pack_id] = l.qty; });
   // Keep what a Receiver recorded (ordered_qty, undelivered) when an admin re-saves the order.
   draft.receipt = Object.fromEntries((o.lines || []).filter(l => l.pack_id && (l.ordered_qty != null || l.undelivered || l.received)).map(l => [l.pack_id, { ordered_qty: l.ordered_qty, undelivered: !!l.undelivered, received: !!l.received }]));
@@ -903,7 +903,7 @@ function manageFavs() {
     });
 }
 function canEditDraft() {
-  if (isAdmin()) return draft.status !== 'complete';
+  if (isAdmin()) return draft.status !== 'complete' || !!draft.direct; // Received-tab orders stay editable
   return draft.status === 'draft';
 }
 function viewEntry() {
@@ -979,7 +979,9 @@ function summaryHtml() {
   let btns = '';
   if (admin) {
     // Already transmitted: Close goes back to Orders untouched; once reopened, Close gives way to Save / Transmit Order.
-    if (d.status === 'complete') btns = `<button onclick="reopenOrder()">Reopen to edit</button><button class="primary" onclick="draft=null;go('orders',false)">Close</button>`;
+    // A Received-tab order (imported PO or a customer's Conventional order) is edited in place; saving re-saves its CSV.
+    if (d.status === 'complete' && d.direct) btns = `<button onclick="draft=null;go('orders',false)">Close</button><button class="primary" onclick="saveOrder('complete')">Save changes</button>`;
+    else if (d.status === 'complete') btns = `<button onclick="reopenOrder()">Reopen to edit</button><button class="primary" onclick="draft=null;go('orders',false)">Close</button>`;
     else btns = `<button onclick="saveOrder('${d.status === 'submitted' ? 'submitted' : 'draft'}')">${d.status === 'submitted' ? 'Save changes' : 'Save draft'}</button><button class="primary" onclick="saveOrder('complete')">Transmit Order</button>`;
   } else if (d.status === 'draft') btns = `<button onclick="cancelOrder()">Cancel</button><button onclick="saveOrder('draft')">Save draft</button><button class="primary" onclick="saveOrder('submitted')">Send order</button>`;
   else btns = `<button class="primary" onclick="draft=null;go('mine',false)">Close</button>`;
@@ -1071,16 +1073,19 @@ async function saveOrder(status) {
   // Today's date is fixed: an order is dated the day it's saved, and keeps that date once it's sent.
   const row = { customer_id: draft.customer_id || null, order_date: draft.status === 'draft' ? today() : draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
   if (isAdmin()) row.special_order = draft.group === 'Conventional' && !!draft.special_order;
+  if (draft.direct) row.csv_at = null; // its Condition 2 CSV is saved again (same file name) to match the change
   saving = true;
   const q = draft.id ? sb.from('orders').update(row).eq('id', draft.id).select().single() : sb.from('orders').insert({ ...row, source: isAdmin() ? 'admin' : 'customer' }).select().single();
   const { data, error } = await q;
   saving = false;
   if (error) return toast(friendly(error));
   if (!data) return toast('This order can no longer be changed.');
-  const msg = status === 'complete' ? `Order ${orderNo(data.number)} completed` : status === 'submitted' ? (isAdmin() ? `Order ${orderNo(data.number)} saved` : `Order ${orderNo(data.number)} sent to SMFW`) : `Draft ${orderNo(data.number)} saved`;
+  const msg = draft.direct ? `Order ${orderNo(data.number)} saved. Its CSV will be saved again.` : status === 'complete' ? `Order ${orderNo(data.number)} completed` : status === 'submitted' ? (isAdmin() ? `Order ${orderNo(data.number)} saved` : `Order ${orderNo(data.number)} sent to SMFW`) : `Draft ${orderNo(data.number)} saved`;
   toast(msg, true);
   await reloadOrders();
+  const wasDirect = draft.direct;
   draft = null; go(isAdmin() ? (status === 'complete' ? 'orders' : view === 'entry' && data.source === 'customer' ? 'inbox' : 'orders') : 'mine', false);
+  if (wasDirect) autoCsv2();
 }
 async function reopenOrder() {
   const o = S.orders.find(x => x.id === draft.id); if (!o) return;
