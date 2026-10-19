@@ -208,7 +208,7 @@ function listenForOrders() {
       toast(`New order ${orderNo(after.number)} from ${custOf(after.customer_id)?.name || 'a customer'}`, true);
     if (isAdmin() && after?.direct && !before?.direct) toast(`New Conventional order ${orderNo(after.number)} from ${custOf(after.customer_id)?.name || 'a customer'} (Received tab)`, true);
     clearTimeout(timer);
-    timer = setTimeout(async () => { await reloadOrders(); if (canRedraw()) render(); else updateNavBadge(); autoCsv2(); }, 300);
+    timer = setTimeout(async () => { await reloadOrders(); if (canRedraw()) render(); else updateNavBadge(); }, 300);
   }).subscribe();
 }
 
@@ -271,7 +271,7 @@ async function checkVersion() {
     versionAt = Date.now();
     try { const v = ((await (await fetch(location.pathname + '?check=' + Date.now(), { cache: 'no-store' })).text()).match(/app\.js\?v=([^"'&]+)/) || [])[1]; newVersion = !!v && v !== APP_V; } catch (e) {}
   }
-  if (newVersion && canRedraw() && view !== 'recvorder' && !saving && !auto2Busy && !picked.size && !upPicked.size) location.reload();
+  if (newVersion && canRedraw() && view !== 'recvorder' && !saving && !picked.size && !upPicked.size) location.reload();
 }
 async function enter() {
   if (!session) {
@@ -291,7 +291,7 @@ async function enter() {
   $('#contact').hidden = isAdmin() || isReceiver(); // customers see who to call or email
   $('#whoami').textContent = (profile.full_name || profile.email) + (isManager() ? ' · Manager' : isAdmin() ? ' · Admin' : isReceiver() ? ' · Receiver' : '');
   await loadAll();
-  if (isAdmin()) { await loadCsvDir(1); await loadCsvDir(2); autoCsv2(); }
+  if (isAdmin()) { await loadCsvDir(1); await loadCsvDir(2); }
   listenForOrders();
   // Admin dashboards and receiver tablets refresh themselves every 30 seconds (skipped while the tab is hidden; no
   // redraw mid-edit): changed orders each time, everything else every 5 minutes.
@@ -391,7 +391,6 @@ function refreshInBackground(all = true) {
   const v = view, snap = () => JSON.stringify([S.customers, S.suppliers, S.products, S.orders, S.profiles, S.emails, S.sections, S.links]);
   const before = snap();
   return refreshing = (all ? loadAll() : reloadOrders()).then(() => {
-    autoCsv2();
     if (view === v && canRedraw() && snap() !== before) render(); else updateNavBadge();
   }).finally(() => { refreshing = null; });
 }
@@ -435,7 +434,7 @@ function orderRow(o, opts = {}) {
       : `<span class="pill ${esc(o.status)}">${esc(statusText(o.status))}</span>`}</td>
     ${opts.acts ? `<td class="num acts c-acts" onclick="event.stopPropagation()"><button class="ghost" onclick="openOrder('${o.id}')">View</button><button class="ghost" onclick="printOrder('${o.id}', this)">Print<span class="long"> Order</span></button></td>`
       : `<td class="num openc"><button class="ghost" onclick="event.stopPropagation();openOrder('${o.id}')">Open</button></td>`}
-    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${pastDone(o) ? `disabled title="${o.direct ? 'CSV is saved automatically (Condition 2)' : 'Required date has passed'}"` : upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
+    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${noUpload(o) ? 'disabled title="Required date has passed"' : upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${pastDone(o) ? `disabled title="${o.direct ? 'Not emailed: CSV only' : 'Required date has passed'}"` : picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
 }
 // Receiver: completed orders not yet received.
@@ -601,7 +600,7 @@ async function importPo(input) {
     </tbody></table></div>
     ${(() => { const n = po.cols.filter(c => stores[poKey(c.label)] === 'skip' || custOf(stores[poKey(c.label)])).length + po.lines.filter(l => packs[poKey(l.desc)] === 'skip' || packOf(packs[poKey(l.desc)])).length;
       return n ? `<p class="muted" style="margin:0">${n} store${n > 1 ? 's and products are' : ' or product is'} already matched and hidden above. <button type="button" class="link" onclick="document.querySelectorAll('#poform tr.pomatched').forEach(r => r.hidden = false);this.parentElement.remove()">Show them</button> · Change matches any time in Administration › PO Matching.</p>` : ''; })()}
-    <p class="banner" style="margin:0">These orders go straight to the Received tab and their CSV is saved straight away. Any Organic products become a separate order in the Inbox.</p>
+    <p class="banner" style="margin:0">These orders go straight to the Received tab. Create their CSV there with Create upload CSV. Any Organic products become a separate order in the Inbox.</p>
     <div class="row" style="justify-content:flex-end"><button type="button" onclick="document.getElementById('dlg').close()">Cancel</button><button type="submit" class="primary" id="pogo">Create orders</button></div></form>`;
   dlg.querySelector('#poform').onsubmit = e => { e.preventDefault(); createPoOrders(e.submitter); };
   dlg.classList.add('wide'); dlg.addEventListener('close', () => dlg.classList.remove('wide'), { once: true });
@@ -625,7 +624,7 @@ async function createPoOrders(btn) {
       if (had) had.qty += q; else ls.push({ pack_id: f.k.id, product_id: f.p.id, sid: f.k.sid, code: f.p.code || '', product_name: f.p.name, pack_name: f.k.name, outer: outerOf(f.k), qty: q });
     });
     // An order holds one product location, so a store with both gets an Organic and a Conventional order. Conventional
-    // orders follow the Received tab rules (direct: no Inbox, no Receiver, Condition 2 CSV saved on its own); Organic
+    // orders follow the Received tab rules (direct: no Inbox, no Receiver, CSV created by hand into the Condition 2 folder); Organic
     // ones go to the Inbox as usual.
     Object.entries(byGroup).forEach(([g, lines]) => rows.push({ customer_id: cust[i], order_date: today(), required_date: date, special, source: 'admin', lines,
       status: g === 'Conventional' ? 'complete' : 'submitted', direct: g === 'Conventional' }));
@@ -644,7 +643,6 @@ async function createPoOrders(btn) {
   const nd = rows.filter(r => r.direct).length, ni = rows.length - nd;
   await reloadOrders(); if (nd) { listFilter = 'received'; go('orders', false); } else go('inbox', false);
   toast(`${special}: ${[nd && `${nd} order${nd > 1 ? 's' : ''} on the Received tab`, ni && `${ni} Organic order${ni > 1 ? 's' : ''} in the Inbox`].filter(Boolean).join(' and ')}`, true);
-  autoCsv2();
 }
 // Administration › PO Matching: the remembered store and product matches used by Import purchase order.
 async function loadPoMatch() {
@@ -681,13 +679,15 @@ async function delPoMatch(kind, i) {
 }
 const finished = o => o.status === 'complete' && !!o.emailed_at && !!o.received_at && !!o.csv_at;
 // Rule: a Complete-tab order whose required date has passed can't be emailed or uploaded again.
-const pastDone = o => o.direct || (finished(o) && !!o.required_date && o.required_date < today()); // direct: Condition 2 handles the CSV, no email
+const pastDate = o => !!o.required_date && o.required_date < today();
+const pastDone = o => o.direct || (finished(o) && pastDate(o)); // Email column: direct orders are never emailed
+const noUpload = o => o.direct ? !!o.csv_at && pastDate(o) : finished(o) && pastDate(o); // Upload column: direct orders get their CSV here (Condition 2 folder)
 function viewOrders() {
   // Pending holds every transmitted order until it is Complete, Emailed, Received and has its CSV; then it moves to Complete.
   // Orders still in the Inbox (sent by a customer, not yet transmitted) stay out of Pending.
   // Pending holds every order (Sent ones included) until it is Complete, Emailed, Received and has its CSV; then it
   // moves to Complete. Received holds the Conventional orders customers send (they skip the Inbox); they stay there,
-  // showing CSV once Condition 2 has saved it.
+  // showing CSV once someone has created it with Create upload CSV.
   // Direct orders sit on Received until they are Complete with their CSV saved, then move to Complete.
   const inTab = (o, f) => o.direct ? f === (o.status === 'complete' && o.csv_at ? 'complete' : 'received') : f === 'pending' ? !finished(o) : f === 'complete' ? finished(o) : f !== 'received' && o.status === f;
   dropPastDone();
@@ -702,9 +702,8 @@ function viewOrders() {
       ${['pending', 'draft', 'received', 'complete'].map(f => `<button class="${listFilter === f ? 'primary' : ''}" onclick="listFilter='${f}';render()">${f === 'pending' ? 'Pending' : f === 'draft' ? 'Drafts' : f === 'received' ? 'Received' : 'Complete'} (${count(f)})</button>`).join('')}
       <input class="search" id="osearch" placeholder="Search order no., customer or CID" value="${esc(search)}">
     </div>
-    ${auto2Banner()}
-    ${os.length ? `<div class="pickbar row spread"><span id="pickcount">${pickText()}</span><div class="row"><button id="pickclear" ${picked.size || upPicked.size ? '' : 'hidden'} onclick="picked.clear();upPicked.clear();render()">Clear</button><button class="primary" id="pickup" ${upPicked.size ? '' : 'disabled'} onclick="uploadCsvs()">Create upload CSV</button><button class="primary" id="pickmail" ${picked.size ? '' : 'disabled'} onclick="emailPicked()">Email selected</button></div></div>
-      <div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num lines">Lines</th><th><div class="stgrid"><span>Status</span><span>Emailed</span><span>Received</span><span>CSV</span></div></th><th class="openc"></th><th class="pick"><span class="picklbl">Upload</span><input type="checkbox" id="upall" aria-label="Select all orders shown for upload" ${bulk.some(o => !pastDone(o)) && bulk.every(o => pastDone(o) || upPicked.has(o.id)) ? 'checked' : ''} ${bulk.every(pastDone) ? 'disabled' : ''}></th><th class="pick"><span class="picklbl">Email</span><input type="checkbox" id="pickall" aria-label="Select all orders shown for emailing" ${bulk.some(o => !pastDone(o)) && bulk.every(o => pastDone(o) || picked.has(o.id)) ? 'checked' : ''} ${bulk.every(pastDone) ? 'disabled' : ''}></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true, pick: true, later: isLater(o) })).join('')}</tbody></table></div>`
+        ${os.length ? `<div class="pickbar row spread"><span id="pickcount">${pickText()}</span><div class="row"><button id="pickclear" ${picked.size || upPicked.size ? '' : 'hidden'} onclick="picked.clear();upPicked.clear();render()">Clear</button><button class="primary" id="pickup" ${upPicked.size ? '' : 'disabled'} onclick="uploadCsvs()">Create upload CSV</button><button class="primary" id="pickmail" ${picked.size ? '' : 'disabled'} onclick="emailPicked()">Email selected</button></div></div>
+      <div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num lines">Lines</th><th><div class="stgrid"><span>Status</span><span>Emailed</span><span>Received</span><span>CSV</span></div></th><th class="openc"></th><th class="pick"><span class="picklbl">Upload</span><input type="checkbox" id="upall" aria-label="Select all orders shown for upload" ${bulk.some(o => !noUpload(o)) && bulk.every(o => noUpload(o) || upPicked.has(o.id)) ? 'checked' : ''} ${bulk.every(noUpload) ? 'disabled' : ''}></th><th class="pick"><span class="picklbl">Email</span><input type="checkbox" id="pickall" aria-label="Select all orders shown for emailing" ${bulk.some(o => !pastDone(o)) && bulk.every(o => pastDone(o) || picked.has(o.id)) ? 'checked' : ''} ${bulk.every(pastDone) ? 'disabled' : ''}></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true, pick: true, later: isLater(o) })).join('')}</tbody></table></div>`
       : `<div class="card empty">${S.orders.length ? 'No orders match this filter.' : 'No orders yet.'}</div>`}
     <p class="muted" style="margin-top:10px">Showing unfinished orders and the last ${recentDays()} days. ${q ? `<button class="link" onclick="searchOlder(this)">Search older orders for “${esc(search.trim())}”</button>` : 'Type an order number, customer or CID in the search box to look further back.'}</p>`;
 }
@@ -1111,19 +1110,17 @@ async function saveOrder(status) {
   // Today's date is fixed: an order is dated the day it's saved, and keeps that date once it's sent.
   const row = { customer_id: draft.customer_id || null, order_date: draft.status === 'draft' ? today() : draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
   if (isAdmin()) row.special_order = draft.group === 'Conventional' && !!draft.special_order;
-  if (draft.direct) row.csv_at = null; // its Condition 2 CSV is saved again (same file name) to match the change
+  if (draft.direct) row.csv_at = null; // back on the Received tab until its CSV is created again (same file name)
   saving = true;
   const q = draft.id ? sb.from('orders').update(row).eq('id', draft.id).select().single() : sb.from('orders').insert({ ...row, source: isAdmin() ? 'admin' : 'customer' }).select().single();
   const { data, error } = await q;
   saving = false;
   if (error) return toast(friendly(error));
   if (!data) return toast('This order can no longer be changed.');
-  const msg = draft.direct ? `Order ${orderNo(data.number)} saved. Its CSV will be saved again.` : status === 'complete' ? `Order ${orderNo(data.number)} completed` : status === 'submitted' ? (isAdmin() ? `Order ${orderNo(data.number)} saved` : `Order ${orderNo(data.number)} sent to SMFW`) : `Draft ${orderNo(data.number)} saved`;
+  const msg = draft.direct ? `Order ${orderNo(data.number)} saved. Create its CSV again on the Received tab.` : status === 'complete' ? `Order ${orderNo(data.number)} completed` : status === 'submitted' ? (isAdmin() ? `Order ${orderNo(data.number)} saved` : `Order ${orderNo(data.number)} sent to SMFW`) : `Draft ${orderNo(data.number)} saved`;
   toast(msg, true);
   await reloadOrders();
-  const wasDirect = draft.direct;
   draft = null; go(isAdmin() ? (status === 'complete' ? 'orders' : view === 'entry' && data.source === 'customer' ? 'inbox' : 'orders') : 'mine', false);
-  if (wasDirect) autoCsv2();
 }
 async function reopenOrder() {
   const o = S.orders.find(x => x.id === draft.id); if (!o) return;
@@ -1253,7 +1250,7 @@ function viewSettings() {
   };
   return `<h1>Settings</h1><p class="sub">Where the system copies CSV files.</p>
     ${card(1, 'Condition 1: Upload CSV', 'Created from the Orders tab with <b>Create upload CSV</b>. One file per order, as now.')}
-    ${card(2, 'Condition 2: Upload CSV', 'Saved automatically, with no one pressing anything, for Conventional orders sent from customer logins (Received tab). It happens on any Admin or Manager PC that has this app open and is connected to this folder.')}`;
+    ${card(2, 'Condition 2: Upload CSV', 'Created from the Received tab with <b>Create upload CSV</b>, for Conventional orders sent from customer logins and imported purchase orders.')}`;
 }
 function hSample(tpl) {
   const o = S.orders.find(x => x.customer_id && x.required_date) || { number: 13, required_date: '2026-10-15', special_order: false };
@@ -1587,7 +1584,7 @@ function pickedBySupplier() {
 }
 // Suppliers already emailed from the open dialog, so "Try again" only sends to the ones that failed.
 const sentSuppliers = new Set();
-function dropPastDone() { S.orders.filter(pastDone).forEach(o => { picked.delete(o.id); upPicked.delete(o.id); }); }
+function dropPastDone() { S.orders.forEach(o => { if (pastDone(o)) picked.delete(o.id); if (noUpload(o)) upPicked.delete(o.id); }); }
 function emailPicked() {
   dropPastDone(); if (!picked.size) return toast('Those orders’ required date has passed, so they can’t be emailed.');
   sentSuppliers.clear();
@@ -1700,7 +1697,7 @@ async function chooseCsvFolder(n = 1) {
     if (!error) S.settings = { ...S.settings, ['csv_folder_' + n]: dir.name };
   }
   toast(`Condition ${n} CSV files will be saved in ${dir.name}.`, true);
-  render(); if (n === 2) autoCsv2(); return dir;
+  render(); return dir;
 }
 async function csvFolder(n = 1) {
   if (!canPickFolder()) return null;
@@ -1710,64 +1707,29 @@ async function csvFolder(n = 1) {
   try { if (await ok('queryPermission') || await ok('requestPermission')) return dirs[n]; } catch {}
   return chooseCsvFolder(n); // folder moved, renamed or access refused: pick it again
 }
-// Condition 2: Conventional orders sent from customer logins (marked "direct" by the database) skip the Inbox and
-// sit on the Received tab. Any Admin/Manager PC with this app open and the Condition 2 folder connected saves their
-// CSV on its own. Each order is claimed first, so two open PCs never both save it.
-let auto2Busy = false, auto2Issue = '';
+// Condition 2: Conventional orders sent from customer logins and imported purchase orders (marked "direct") skip the
+// Inbox and sit on the Received tab. Create upload CSV saves their files in the Condition 2 folder.
 const csvName = o => safeName(`${orderNo(o.number)} ${custOf(o.customer_id)?.name || ''}`) + '.csv';
-const auto2Due = () => S.orders.filter(o => o.direct && !o.csv_at);
-function setAuto2(msg) { if (msg === auto2Issue) return; auto2Issue = msg; if (view === 'orders' && canRedraw()) render(); }
-async function autoCsv2() {
-  if (!isAdmin() || !canPickFolder() || auto2Busy || !auto2Due().length) return auto2Due().length || setAuto2('');
-  auto2Busy = true;
-  try {
-    if (!dirs[2]) await loadCsvDir(2);
-    const dir = dirs[2];
-    if (!csvTarget(2)) return setAuto2('no-folder');
-    if (!dir || !sameName(dir.name, csvTarget(2))) return setAuto2('connect');
-    let perm = 'denied'; try { perm = await dir.queryPermission({ mode: 'readwrite' }); } catch {}
-    if (perm !== 'granted') return setAuto2('connect');
-    const problems = []; let saved = 0;
-    for (const o of auto2Due()) {
-      const { text, missing, lines } = orderCsv(o, 2);
-      if (missing.length) { problems.push(`${orderNo(o.number)}: no Ref for ${missing.join(', ')}`); continue; }
-      if (!lines) continue;
-      const { data, error } = await sb.from('orders').update({ csv_at: new Date().toISOString() }).eq('id', o.id).is('csv_at', null).select('id');
-      if (error || !data?.length) continue; // another PC got it first
-      try { const w = await (await dir.getFileHandle(csvName(o), { create: true })).createWritable(); await w.write(text); await w.close(); saved++; }
-      catch (e) { await sb.from('orders').update({ csv_at: null }).eq('id', o.id); problems.push(`${orderNo(o.number)}: couldn’t save to ${dir.name} (${e.message})`); }
-    }
-    setAuto2(problems.length ? 'problems:' + problems.join('\n') : '');
-    if (saved) { await reloadOrders(); if (canRedraw()) render(); toast(`${saved} Condition 2 CSV file${saved > 1 ? 's' : ''} saved to ${dir.name}`, true); }
-  } finally { auto2Busy = false; }
-}
-async function reconnectCsv2() {
-  const dir = dirs[2] || await loadCsvDir(2);
-  if (dir && sameName(dir.name, csvTarget(2))) { try { if (await dir.requestPermission({ mode: 'readwrite' }) === 'granted') { auto2Issue = ''; return autoCsv2(); } } catch {} }
-  await chooseCsvFolder(2);
-}
-function auto2Banner() {
-  const n = auto2Due().length; if (!n || !auto2Issue) return '';
-  const what = `${n} order${n > 1 ? 's are' : ' is'} waiting for a Condition 2 CSV.`;
-  if (!canPickFolder()) return `<div class="banner">${what} Open this app in Chrome or Edge on a PC to save them.</div>`;
-  if (auto2Issue === 'no-folder') return `<div class="banner">${what} Choose the Condition 2 folder in Administration › Settings.</div>`;
-  if (auto2Issue === 'connect') return `<div class="banner">${what} This PC isn’t connected to the ${esc(csvTarget(2))} folder. <button class="link" onclick="reconnectCsv2()">Connect</button></div>`;
-  return `<div class="banner">${what} Fix these, then they save on their own:<br>${esc(auto2Issue.slice(9)).replace(/\n/g, '<br>')}</div>`;
-}
 async function uploadCsvs() {
   dropPastDone(); if (!upPicked.size) { render(); return toast('Those orders’ required date has passed, so no CSV can be created.'); }
-  const dir = await csvFolder();
-  if (canPickFolder() && !dir) return toast(`Choose the ${csvTarget()} folder so the CSV files can be saved there.`);
-  const os = S.orders.filter(o => upPicked.has(o.id)).sort((a, b) => a.number - b.number);
-  const bad = [], made = [];
+  // Direct (Received tab) orders go to the Condition 2 folder, everything else to Condition 1.
+  const os = S.orders.filter(o => upPicked.has(o.id)).sort((a, b) => a.number - b.number), folders = {};
+  for (const n of [...new Set(os.map(o => o.direct ? 2 : 1))]) {
+    if (n === 2 && canPickFolder() && !csvTarget(2)) return toast('Choose the Condition 2 folder in Administration › Settings first.');
+    folders[n] = await csvFolder(n);
+    if (canPickFolder() && !folders[n]) return toast(`Choose the ${csvTarget(n)} folder so the CSV files can be saved there.`);
+  }
+  const bad = [], made = [], used = new Set();
   for (const o of os) {
-    const { text, missing, lines } = orderCsv(o);
+    const n = o.direct ? 2 : 1, dir = folders[n];
+    const { text, missing, lines } = orderCsv(o, n);
     if (missing.length) { bad.push(`${orderNo(o.number)}: no Ref for ${missing.join(', ')}`); continue; }
     if (!lines) { bad.push(`${orderNo(o.number)} has nothing delivered on it`); continue; }
     const name = csvName(o);
     if (dir) {
       try { const w = await (await dir.getFileHandle(name, { create: true })).createWritable(); await w.write(text); await w.close(); }
       catch (e) { bad.push(`${orderNo(o.number)}: couldn’t save to ${dir.name} (${e.message})`); continue; }
+      used.add(dir.name);
     } else {
       if (made.length) await new Promise(r => setTimeout(r, 400));
       const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
@@ -1790,7 +1752,7 @@ async function uploadCsvs() {
       <ul class="sumlist">${bad.map(b => `<li>${esc(b)}</li>`).join('')}</ul>
       <div class="row" style="justify-content:flex-end"><button type="button" class="primary" onclick="document.getElementById('dlg').close()">OK</button></div></div>`;
     dlg.showModal();
-  } else toast(`${made.length} CSV file${made.length > 1 ? 's' : ''} ${dir ? 'saved to ' + dir.name : 'created'}`, true);
+  } else toast(`${made.length} CSV file${made.length > 1 ? 's' : ''} ${used.size ? 'saved to ' + [...used].join(' and ') : 'created'}`, true);
 }
 // Sends each supplier's email from orders@csorders.org (replies go to sales@cssydney.com.au) with the order form PDFs attached,
 // then marks as emailed every order whose suppliers were all sent to.
