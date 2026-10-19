@@ -784,7 +784,7 @@ function viewMine() {
 }
 function openOrder(id) {
   const o = S.orders.find(x => x.id === id); if (!o) return;
-  draft = { id, number: o.number, direct: !!o.direct, customer_id: o.customer_id, order_date: o.order_date, required_date: o.required_date || '', special: o.special || '', special_order: !!o.special_order, status: o.status, source: o.source, submitted_at: o.submitted_at, qty: {} };
+  draft = { id, number: o.number, direct: !!o.direct, customer_id: o.customer_id, order_date: o.order_date, required_date: o.required_date || '', special: o.special || '', special_order: !!o.special_order, status: o.status, source: o.source, submitted_at: o.submitted_at, updated_at: o.updated_at, qty: {} };
   (o.lines || []).forEach(l => { if (l.pack_id) draft.qty[l.pack_id] = l.qty; });
   // Keep what a Receiver recorded (ordered_qty, undelivered) when an admin re-saves the order.
   draft.receipt = Object.fromEntries((o.lines || []).filter(l => l.pack_id && (l.ordered_qty != null || l.undelivered || l.received)).map(l => [l.pack_id, { ordered_qty: l.ordered_qty, undelivered: !!l.undelivered, received: !!l.received }]));
@@ -1112,11 +1112,19 @@ async function saveOrder(status) {
   if (isAdmin()) row.special_order = draft.group === 'Conventional' && !!draft.special_order;
   if (draft.direct) row.csv_at = null; // back on the Received tab until its CSV is created again (same file name)
   saving = true;
-  const q = draft.id ? sb.from('orders').update(row).eq('id', draft.id).select().single() : sb.from('orders').insert({ ...row, source: isAdmin() ? 'admin' : 'customer' }).select().single();
-  const { data, error } = await q;
+  // An existing order only saves if no one else (another PC, a Receiver) has changed it since it was opened.
+  let q = draft.id ? sb.from('orders').update(row).eq('id', draft.id) : null;
+  if (q && draft.updated_at) q = q.eq('updated_at', draft.updated_at);
+  const { data, error } = await (q ? q.select().maybeSingle() : sb.from('orders').insert({ ...row, source: isAdmin() ? 'admin' : 'customer' }).select().single());
   saving = false;
   if (error) return toast(friendly(error));
-  if (!data) return toast('This order can no longer be changed.');
+  if (!data) {
+    const { data: now } = await sb.from('orders').select('id,updated_at').eq('id', draft.id).maybeSingle();
+    if (!now || now.updated_at === draft.updated_at) return toast('This order can no longer be changed.');
+    const id = draft.id, no = orderNo(draft.number);
+    await reloadOrders(); openOrder(id);
+    return toast(`Order ${no} was changed by someone else while you had it open, so your changes weren’t saved. It now shows their changes; make yours again and save.`);
+  }
   const msg = draft.direct ? `Order ${orderNo(data.number)} saved. Create its CSV again on the Received tab.` : status === 'complete' ? `Order ${orderNo(data.number)} completed` : status === 'submitted' ? (isAdmin() ? `Order ${orderNo(data.number)} saved` : `Order ${orderNo(data.number)} sent to SMFW`) : `Draft ${orderNo(data.number)} saved`;
   toast(msg, true);
   await reloadOrders();
@@ -1726,9 +1734,16 @@ async function uploadCsvs() {
     if (missing.length) { bad.push(`${orderNo(o.number)}: no Ref for ${missing.join(', ')}`); continue; }
     if (!lines) { bad.push(`${orderNo(o.number)} has nothing delivered on it`); continue; }
     const name = csvName(o);
+    // Claim the order first: if another PC has created its CSV since this screen loaded, skip it.
+    const was = o.csv_at || null;
+    let claim = sb.from('orders').update({ csv_at: new Date().toISOString() }).eq('id', o.id);
+    claim = was ? claim.eq('csv_at', was) : claim.is('csv_at', null);
+    const { data: got, error: cerr } = await claim.select('id');
+    if (cerr) { bad.push(`${orderNo(o.number)}: ${friendly(cerr)}`); continue; }
+    if (!got?.length) { bad.push(`${orderNo(o.number)}: its CSV was just created on another PC, so it was skipped`); continue; }
     if (dir) {
       try { const w = await (await dir.getFileHandle(name, { create: true })).createWritable(); await w.write(text); await w.close(); }
-      catch (e) { bad.push(`${orderNo(o.number)}: couldn’t save to ${dir.name} (${e.message})`); continue; }
+      catch (e) { await sb.from('orders').update({ csv_at: was }).eq('id', o.id); bad.push(`${orderNo(o.number)}: couldn’t save to ${dir.name} (${e.message})`); continue; }
       used.add(dir.name);
     } else {
       if (made.length) await new Promise(r => setTimeout(r, 400));
@@ -1738,17 +1753,12 @@ async function uploadCsvs() {
     made.push(o.id);
   }
   made.forEach(id => upPicked.delete(id));
-  // Stamp the orders so they show a CSV tag.
-  if (made.length) {
-    const { error } = await sb.from('orders').update({ csv_at: new Date().toISOString() }).in('id', made);
-    if (error) toast(friendly(error));
-    else await reloadOrders();
-  }
+  if (made.length || bad.length) await reloadOrders();
   render();
   if (bad.length) {
     const dlg = $('#dlg');
     dlg.innerHTML = `<div class="grid"><h2>${made.length ? `${made.length} CSV file${made.length > 1 ? 's' : ''} created` : 'No CSV files created'}</h2>
-      <p style="margin:0">These orders were skipped. Fix the problems below, then try again:</p>
+      <p style="margin:0">These orders were skipped:</p>
       <ul class="sumlist">${bad.map(b => `<li>${esc(b)}</li>`).join('')}</ul>
       <div class="row" style="justify-content:flex-end"><button type="button" class="primary" onclick="document.getElementById('dlg').close()">OK</button></div></div>`;
     dlg.showModal();
