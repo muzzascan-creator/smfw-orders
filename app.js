@@ -451,7 +451,7 @@ function viewRecv() {
       const c = custOf(o.customer_id);
       return `<tr><td class="mono">${esc(orderNo(o.number))}${orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conventional</span>' : ''}</td>
         <td class="rcust">${c ? esc(c.name) : '<span class="muted">No customer</span>'}</td>
-        <td>${esc(fmtDate(o.required_date))}</td><td><span class="${tickedCount(o) < (o.lines || []).length ? 'ndtxt' : 'okgreen'}">${tickedCount(o)}/${(o.lines || []).length}</span></td>
+        <td>${(o.required_date || '') > today() ? `<strong>${esc(fmtDate(o.required_date))}</strong>` : esc(fmtDate(o.required_date))}</td><td><span class="${tickedCount(o) < (o.lines || []).length ? 'ndtxt' : 'okgreen'}">${tickedCount(o)}/${(o.lines || []).length}</span></td>
         <td class="num acts recvacts"><button class="ghost ropen" onclick="openReceipt('${o.id}')">Open</button><button class="ghost rmark" onclick="markReceived('${o.id}', this)">Mark received</button></td></tr>`;
     }).join('')}</tbody></table></div>` : `<div class="card empty">${S.orders.some(o => o.status === 'complete' && !o.received_at && !o.direct) ? 'No orders match this search.' : 'Nothing waiting. Every order has been received.'}</div>`}`;
 }
