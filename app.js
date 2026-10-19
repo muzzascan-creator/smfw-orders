@@ -695,6 +695,7 @@ function viewOrders() {
   const q = search.trim().toLowerCase();
   if (q) os = os.filter(o => [orderNo(o.number), custOf(o.customer_id)?.name, custOf(o.customer_id)?.cid].join(' ').toLowerCase().includes(q));
   if (listFilter === 'pending' || listFilter === 'received') os = [...os].sort((x, y) => (x.required_date || '9999').localeCompare(y.required_date || '9999') || x.number - y.number); // earliest required date on top
+  const isLater = o => listFilter === 'pending' && (o.required_date || '') > tomorrow(), bulk = os.filter(o => !isLater(o)); // shaded rows aren't group-selected
   const count = f => S.orders.filter(o => inTab(o, f)).length;
   return `<div class="row spread"><div><h1>Orders</h1><p class="sub">Every order, whether a customer sent it or you entered it.</p></div><button class="primary" onclick="go('entry')">New order</button></div>
     <div class="row" style="margin-bottom:12px">
@@ -703,7 +704,7 @@ function viewOrders() {
     </div>
     ${auto2Banner()}
     ${os.length ? `<div class="pickbar row spread"><span id="pickcount">${pickText()}</span><div class="row"><button id="pickclear" ${picked.size || upPicked.size ? '' : 'hidden'} onclick="picked.clear();upPicked.clear();render()">Clear</button><button class="primary" id="pickup" ${upPicked.size ? '' : 'disabled'} onclick="uploadCsvs()">Create upload CSV</button><button class="primary" id="pickmail" ${picked.size ? '' : 'disabled'} onclick="emailPicked()">Email selected</button></div></div>
-      <div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num lines">Lines</th><th><div class="stgrid"><span>Status</span><span>Emailed</span><span>Received</span><span>CSV</span></div></th><th class="openc"></th><th class="pick"><span class="picklbl">Upload</span><input type="checkbox" id="upall" aria-label="Select all orders shown for upload" ${os.some(o => !pastDone(o)) && os.every(o => pastDone(o) || upPicked.has(o.id)) ? 'checked' : ''} ${os.every(pastDone) ? 'disabled' : ''}></th><th class="pick"><span class="picklbl">Email</span><input type="checkbox" id="pickall" aria-label="Select all orders shown for emailing" ${os.some(o => !pastDone(o)) && os.every(o => pastDone(o) || picked.has(o.id)) ? 'checked' : ''} ${os.every(pastDone) ? 'disabled' : ''}></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true, pick: true, later: listFilter === 'pending' && (o.required_date || '') > tomorrow() })).join('')}</tbody></table></div>`
+      <div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num lines">Lines</th><th><div class="stgrid"><span>Status</span><span>Emailed</span><span>Received</span><span>CSV</span></div></th><th class="openc"></th><th class="pick"><span class="picklbl">Upload</span><input type="checkbox" id="upall" aria-label="Select all orders shown for upload" ${bulk.some(o => !pastDone(o)) && bulk.every(o => pastDone(o) || upPicked.has(o.id)) ? 'checked' : ''} ${bulk.every(pastDone) ? 'disabled' : ''}></th><th class="pick"><span class="picklbl">Email</span><input type="checkbox" id="pickall" aria-label="Select all orders shown for emailing" ${bulk.some(o => !pastDone(o)) && bulk.every(o => pastDone(o) || picked.has(o.id)) ? 'checked' : ''} ${bulk.every(pastDone) ? 'disabled' : ''}></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true, pick: true, later: isLater(o) })).join('')}</tbody></table></div>`
       : `<div class="card empty">${S.orders.length ? 'No orders match this filter.' : 'No orders yet.'}</div>`}
     <p class="muted" style="margin-top:10px">Showing unfinished orders and the last ${recentDays()} days. ${q ? `<button class="link" onclick="searchOlder(this)">Search older orders for “${esc(search.trim())}”</button>` : 'Type an order number, customer or CID in the search box to look further back.'}</p>`;
 }
@@ -735,10 +736,11 @@ function wireOrderSearch() {
   // Two tick columns: Upload (CSV) and Email, each with its own select-all box.
   const sync = () => { $('#pickcount').textContent = pickText(); $('#pickmail').disabled = !picked.size; $('#pickup').disabled = !upPicked.size; $('#pickclear').hidden = !picked.size && !upPicked.size; };
   [['pick', picked, 'pickall'], ['up', upPicked, 'upall']].forEach(([key, set, allId]) => {
-    const boxes = [...document.querySelectorAll(`input[data-${key}]:not(:disabled)`)], all = $('#' + allId);
-    const syncAll = () => { if (all) all.checked = boxes.length && boxes.every(b => b.checked); sync(); };
+    // Select-all skips shaded (later) rows; those are ticked by hand. Unticking select-all clears every box.
+    const boxes = [...document.querySelectorAll(`input[data-${key}]:not(:disabled)`)], bulk = boxes.filter(b => !b.closest('tr.later')), all = $('#' + allId);
+    const syncAll = () => { if (all) all.checked = bulk.length && bulk.every(b => b.checked); sync(); };
     boxes.forEach(b => b.onchange = () => { b.checked ? set.add(b.dataset[key]) : set.delete(b.dataset[key]); syncAll(); });
-    if (all) all.onchange = () => { boxes.forEach(b => { b.checked = all.checked; all.checked ? set.add(b.dataset[key]) : set.delete(b.dataset[key]); }); sync(); };
+    if (all) all.onchange = () => { (all.checked ? bulk : boxes).forEach(b => { b.checked = all.checked; all.checked ? set.add(b.dataset[key]) : set.delete(b.dataset[key]); }); sync(); };
   });
 }
 const pickText = () => picked.size || upPicked.size ? [upPicked.size && `${upPicked.size} for upload`, picked.size && `${picked.size} to email`].filter(Boolean).join(' · ') : 'Tick orders on the right to create an upload CSV or email them to the supplier.';
