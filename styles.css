@@ -130,6 +130,8 @@ body{padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inse
   .tablewrap .lines,.tablewrap .openc{display:none}
 }
 tr.rowlink{cursor:pointer}tr.rowlink:hover td{background:var(--sunk)}
+/* Pending orders required after tomorrow: shaded so today's and tomorrow's work stands out. */
+tr.later td{background:#e8eef8}tr.later:hover td{background:#dbe4f3}
 .pill.grp-organic{background:var(--accent-soft);color:var(--accent)}
 .pill.grp-conventional{background:var(--sunk);color:var(--fg)}
 .pill.grp-both{background:#ede7f6;color:#4a2c82}
