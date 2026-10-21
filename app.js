@@ -278,7 +278,7 @@ async function enter() {
     // Nothing from the last person carries over to whoever signs in next on this device.
     if ($('#dlg').open) $('#dlg').close();
     Object.assign(S, { customers: [], suppliers: [], products: [], orders: [], profiles: [], emails: [], links: [], sections: [], cutRules: [], cutSettings: [], favs: [], batches: [], settings: {} });
-    draft = null; receipt = null; ordersMark = 0; S.poMatch = null; older.clear(); noDirect = false; batchAll = false; olderMine = false; search = ''; custSearch = ''; listFilter = 'pending'; groupFilter = 'all'; adminTab = 'customers'; picked.clear(); upPicked.clear();
+    draft = null; receipt = null; ordersMark = 0; S.poMatch = null; older.clear(); noDirect = false; batchAll = false; olderMine = false; search = ''; custSearch = ''; userSearch = ''; listFilter = 'pending'; groupFilter = 'all'; adminTab = 'customers'; picked.clear(); upPicked.clear();
     clearInterval(deviceTimer); deviceTimer = null; clearInterval(autoRefresh); autoRefresh = null; profile = null; view = null; smsCfg = null; $('#top').hidden = true; if (ordersChannel) { sb.removeChannel(ordersChannel); ordersChannel = null; } renderAuth(); return; }
   if (authMode === 'newpass') return renderAuth();
   if (!(await stillMyDevice())) return;
@@ -1185,13 +1185,23 @@ function viewProducts() {
   ${S.products.length ? filters : ''}</div>
   ${blocks || `<div class="card empty">${S.products.length ? 'No products in this group yet.' : `No products yet.${S.suppliers.length ? '' : ' Add a supplier first.'}`}</div>`}`;
 }
+// Logins search: name, email, mobile, business, role or linked customer.
+let userSearch = '';
+const userFindText = u => [u.full_name, u.email, u.mobile, String(u.mobile || '').replace(/\s/g, ''), u.business, u.role, ...loginCustIds(u).map(id => custOf(id)?.name)].filter(Boolean).join(' ').toLowerCase();
+const userMatch = u => !userSearch.trim() || userSearch.toLowerCase().trim().split(/\s+/).every(w => userFindText(u).includes(w));
+function filterUsers() {
+  const ws = userSearch.toLowerCase().trim().split(/\s+/).filter(Boolean); let n = 0;
+  document.querySelectorAll('tr[data-ufind]').forEach(r => { r.hidden = !ws.every(w => r.dataset.ufind.includes(w)); if (!r.hidden) n++; });
+  const cc = $('#uscount'); if (cc) cc.textContent = ws.length ? `${n} of ${S.profiles.length}` : '';
+}
 function viewUsers() {
   const us = S.profiles.slice().sort((a, b) => (a.approved - b.approved) || (a.email || '').localeCompare(b.email || ''));
   const waiting = us.filter(u => !u.approved).length;
   const link = location.origin + location.pathname;
-  return `<div class="pagehead"><h1>Logins</h1><p class="sub">Customers create their own account at <span class="mono">${esc(link)}</span>. Link each new account to its customer so they can start ordering.${waiting ? ` <b>${waiting} waiting.</b>` : ''}</p></div>
+  return `<div class="pagehead"><h1>Logins</h1><p class="sub">Customers create their own account at <span class="mono">${esc(link)}</span>. Link each new account to its customer so they can start ordering.${waiting ? ` <b>${waiting} waiting.</b>` : ''}</p>
+  <div class="row"><input class="search" id="usearch" placeholder="Search logins" title="Name, email, mobile, business, role or linked customer" value="${esc(userSearch)}" oninput="userSearch=this.value;filterUsers()"><span class="muted" id="uscount">${userSearch.trim() ? `${us.filter(userMatch).length} of ${us.length}` : ''}</span></div></div>
   <div class="tablewrap stickyhead"><table><thead><tr><th>Name</th><th>Email</th><th>Mobile</th><th>Business they gave</th><th>Role</th><th>Linked customer</th><th>Access</th><th></th></tr></thead><tbody>
-  ${us.map(u => `<tr><td>${esc(u.full_name)}</td><td class="mono">${esc(u.email)}</td><td style="white-space:nowrap">${esc(u.mobile || '')}</td><td>${esc(u.business || '')}</td><td>${u.role === 'admin' ? 'Admin' : u.role === 'manager' ? 'Manager' : u.role === 'receiver' ? 'Receiver' : 'Customer'}</td>
+  ${us.map(u => `<tr data-ufind="${esc(userFindText(u))}" ${userMatch(u) ? '' : 'hidden'}><td>${esc(u.full_name)}</td><td class="mono">${esc(u.email)}</td><td style="white-space:nowrap">${esc(u.mobile || '')}</td><td>${esc(u.business || '')}</td><td>${u.role === 'admin' ? 'Admin' : u.role === 'manager' ? 'Manager' : u.role === 'receiver' ? 'Receiver' : 'Customer'}</td>
     <td>${['admin', 'manager'].includes(u.role) ? '<span class="muted">All customers</span>' : u.role === 'receiver' ? '<span class="muted">All orders, view only</span>' : loginCustIds(u).map(id => esc(custOf(id)?.name || '')).sort().join('<br>')}</td>
     <td>${u.approved ? '<span class="pill complete">Active</span>' : '<span class="pill draft">Waiting</span>'}</td>
     <td class="num">${u.id === profile.id ? '<span class="muted">You</span>' : `<button class="ghost" onclick="editLogin('${u.id}')">${u.approved ? 'Edit' : 'Approve'}</button>`}</td></tr>`).join('')}
