@@ -952,7 +952,8 @@ function viewEntry() {
     // Admins enter one group at a time: the form shows only the Organic or only the Conventional products.
     const g = d.group || 'Organic';
     // SMFW's own Conventional orders (No customer, CID 1183) leave out the Vegetables & Drinks section, apart from lines already on the order.
-    const smfwHide = p => g === 'Conventional' && !d.customer_id && (p.section || '').trim().toLowerCase() === SMFW_HIDDEN_SECTION && !(p.product_packs || []).some(k => +d.qty?.[k.id] > 0);
+    const smfwCust = !d.customer_id || String(custOf(d.customer_id)?.cid) === String(CONVENTIONAL_CID);
+    const smfwHide = p => g === 'Conventional' && smfwCust && smfwSection(p.section) && !(p.product_packs || []).some(k => +d.qty?.[k.id] > 0);
     blocks = S.suppliers.slice().sort(byName).map(s => {
       const ps = S.products.filter(p => p.supplier_id === s.id && groupOf(p) === g && !smfwHide(p)), secs = sectionsFor(ps); if (!secs.length) return '';
       return `<section class="supplier-block"><div class="supplier-head"><h2>${esc(s.name)}</h2><span>${esc(s.cutoff || '')}</span></div><div class="sections">${g === 'Conventional' ? flatHtml(ps, dis) : gridHtml(secs, dis)}</div></section>`;
@@ -1059,8 +1060,8 @@ async function emailCustomer(btn, resend = false) {
 function wireEntry() {
   const sync = () => { $('#summary').innerHTML = summaryHtml(); };
   $('#e-cust')?.addEventListener('change', e => {
-    const had = !!draft.customer_id; draft.customer_id = e.target.value; $('#e-phone').value = custOf(draft.customer_id)?.phone || ''; sync();
-    if (isAdmin() && draft.group === 'Conventional' && had !== !!draft.customer_id) render(); // Vegetables & Drinks shows only with a customer
+    draft.customer_id = e.target.value; $('#e-phone').value = custOf(draft.customer_id)?.phone || ''; sync();
+    if (isAdmin() && draft.group === 'Conventional') render(); // Vegetables & Drinks shows only for real customers
   });
   $('#e-req')?.addEventListener('change', e => { draft.required_date = e.target.value; sync(); });
   $('#e-special')?.addEventListener('input', e => draft.special = e.target.value);
@@ -1670,7 +1671,8 @@ async function outlookEmail(i, btn) {
 //   H,<CID>,<date required as YYYYMMDD>[,S]   (S only when Special Order is ticked)
 //   D,<Ref>,<order qty × outer multiple>   (one line per order line)
 const CONVENTIONAL_CID = 1183;
-const SMFW_HIDDEN_SECTION = 'vegetables & drinks'; // not offered on SMFW's own (No customer) Conventional orders
+// Vegetables & Drinks (or "Vegetables and Drinks") isn't offered on SMFW's own Conventional orders (No customer, or a customer with CID 1183).
+const smfwSection = sec => /^vegetables?\s*(&|and|\+)\s*drinks?$/.test(String(sec || '').toLowerCase().replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim());
 const ymd = d => (d || '').replace(/-/g, '');
 const csvCell = v => /[",\r\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? '');
 // The H line follows the template set in Administration > Settings (Condition 1). Each comma-separated field
