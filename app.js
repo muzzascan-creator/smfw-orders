@@ -1671,8 +1671,8 @@ async function outlookEmail(i, btn) {
 //   H,<CID>,<date required as YYYYMMDD>[,S]   (S only when Special Order is ticked)
 //   D,<Ref>,<order qty × outer multiple>   (one line per order line)
 const CONVENTIONAL_CID = 1183;
-// Vegetables & Drinks (or "Vegetables and Drinks") isn't offered on SMFW's own Conventional orders (No customer, or a customer with CID 1183).
-const smfwSection = sec => /^vegetables?\s*(&|and|\+)\s*drinks?$/.test(String(sec || '').toLowerCase().replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim());
+// The Vegetables and Drinks sections aren't offered on SMFW's own Conventional orders (No customer, or a customer with CID 1183).
+const smfwSection = sec => /^(vegetables?|drinks?|vegetables?\s*(&|and|\+)\s*drinks?)$/.test(String(sec || '').toLowerCase().replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim());
 const ymd = d => (d || '').replace(/-/g, '');
 const csvCell = v => /[",\r\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? '');
 // The H line follows the template set in Administration > Settings (Condition 1). Each comma-separated field
