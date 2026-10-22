@@ -951,8 +951,8 @@ function viewEntry() {
   if (admin) {
     // Admins enter one group at a time: the form shows only the Organic or only the Conventional products.
     const g = d.group || 'Organic';
-    // SMFW's own Conventional orders (No customer, CID 1183) leave out the Vegetables & Drinks section, apart from lines already on the order.
-    const smfwCust = !d.customer_id || String(custOf(d.customer_id)?.cid) === String(CONVENTIONAL_CID);
+    // SMFW's own Conventional orders (No customer, CID 1183) and Special Orders leave out the Vegetables and Drinks sections, apart from lines already on the order.
+    const smfwCust = !d.customer_id || String(custOf(d.customer_id)?.cid) === String(CONVENTIONAL_CID) || !!d.special_order;
     const smfwHide = p => g === 'Conventional' && smfwCust && smfwSection(p.section) && !(p.product_packs || []).some(k => +d.qty?.[k.id] > 0);
     blocks = S.suppliers.slice().sort(byName).map(s => {
       const ps = S.products.filter(p => p.supplier_id === s.id && groupOf(p) === g && !smfwHide(p)), secs = sectionsFor(ps); if (!secs.length) return '';
@@ -1065,7 +1065,7 @@ function wireEntry() {
   });
   $('#e-req')?.addEventListener('change', e => { draft.required_date = e.target.value; sync(); });
   $('#e-special')?.addEventListener('input', e => draft.special = e.target.value);
-  $('#e-spo')?.addEventListener('change', e => draft.special_order = e.target.checked);
+  $('#e-spo')?.addEventListener('change', e => { draft.special_order = e.target.checked; render(); }); // Special Orders hide Vegetables and Drinks
   document.querySelectorAll('input[data-k]').forEach(inp => inp.addEventListener('input', () => {
     const v = inp.value.replace(/[^\d]/g, ''); if (v !== inp.value) inp.value = v;
     if (+v > 0) draft.qty[inp.dataset.k] = +v; else delete draft.qty[inp.dataset.k];
