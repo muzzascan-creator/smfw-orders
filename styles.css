@@ -329,10 +329,13 @@ dialog:has(.packrow.withref){width:min(880px,calc(100vw - 32px))}
 .rlater{display:inline-block;font-weight:800;font-size:16px;color:#12306e;background:#dbe4f3;border:1px solid #9fb4dc;border-radius:6px;padding:3px 8px}
 /* Orders tab: the title, filter buttons and tick bar stay frozen on a PC; on narrow screens they scroll away. */
 @media (max-width:899px){.ordhead{position:static}}
-/* Orders tab: Auto CSV on/off switch next to Create upload CSV. */
-.autosw{display:inline-flex;align-items:center;gap:8px;font-weight:600}
-.autosw .knob{position:relative;width:34px;height:18px;border-radius:9px;background:#c9cfc9;transition:background .15s}
+/* Orders tab: Auto CSV on/off switch next to Create upload CSV. Solid colours so its state is obvious: green On, red Off. */
+.autosw{display:inline-flex;align-items:center;gap:8px;font-weight:700;color:#fff;background:#c62828;border:2px solid #c62828}
+.autosw:hover:not(:disabled){background:#a51f1f;border-color:#a51f1f}
+.autosw .knob{position:relative;width:34px;height:18px;border-radius:9px;background:rgba(255,255,255,.45);transition:background .15s}
 .autosw .knob::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s}
-.autosw.on{border-color:var(--accent);color:var(--accent)}
-.autosw.on .knob{background:var(--accent)}
+.autosw.on{background:#1e8e3e;border-color:#1e8e3e}
+.autosw.on:hover:not(:disabled){background:#17722f;border-color:#17722f}
+.autosw.on .knob{background:rgba(255,255,255,.6)}
 .autosw.on .knob::after{left:18px}
+.autosw:disabled{opacity:.85;color:#fff}
