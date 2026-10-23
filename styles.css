@@ -329,3 +329,10 @@ dialog:has(.packrow.withref){width:min(880px,calc(100vw - 32px))}
 .rlater{display:inline-block;font-weight:800;font-size:16px;color:#12306e;background:#dbe4f3;border:1px solid #9fb4dc;border-radius:6px;padding:3px 8px}
 /* Orders tab: the title, filter buttons and tick bar stay frozen on a PC; on narrow screens they scroll away. */
 @media (max-width:899px){.ordhead{position:static}}
+/* Orders tab: Auto CSV on/off switch next to Create upload CSV. */
+.autosw{display:inline-flex;align-items:center;gap:8px;font-weight:600}
+.autosw .knob{position:relative;width:34px;height:18px;border-radius:9px;background:#c9cfc9;transition:background .15s}
+.autosw .knob::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s}
+.autosw.on{border-color:var(--accent);color:var(--accent)}
+.autosw.on .knob{background:var(--accent)}
+.autosw.on .knob::after{left:18px}
