@@ -995,6 +995,7 @@ function viewEntry() {
       </div>
       ${editable ? `<div class="row" style="margin-top:16px"><input class="search" id="e-find" placeholder="Find a product by name or code"></div>` : ''}
       ${blocks || '<div class="card empty" style="margin-top:16px">No products are set up yet.</div>'}
+      ${admin ? '' : `<label class="card f custnotes">Notes<span class="muted" style="font-size:12px;font-weight:400">Anything SMFW should know about this order.</span><textarea id="e-special" maxlength="500" rows="3" placeholder="e.g. deliver to the back door" ${dis}>${esc(d.special)}</textarea></label>`}
     </div>
     <aside class="card summary" id="summary">${summaryHtml()}</aside></div>`;
 }
