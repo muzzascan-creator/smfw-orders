@@ -1294,13 +1294,14 @@ function viewSettings() {
     ${card(2, 'Condition 2: Upload CSV', 'Created from the Received tab with <b>Create upload CSV</b>, for Conventional orders sent from customer logins and imported purchase orders. With <b>Auto CSV</b> On (Orders tab), they are saved straight away by any Admin or Manager PC that has this app open and is connected to this folder.')}`;
 }
 function hSample(tpl) {
-  const o = S.orders.find(x => x.customer_id && x.required_date) || { number: 13, required_date: '2026-10-15', special_order: false };
+  const f = S.orders.find(x => x.customer_id && x.required_date) || { number: 13, required_date: '2026-10-15', special_order: false };
+  const o = { ...f, customer_notes: f.customer_notes || 'Deliver to back door' };
   const cust = o.customer_id ? custOf(o.customer_id)?.cid ?? '' : CONVENTIONAL_CID;
   return hLine(o, cust, tpl).map(csvCell).join(',');
 }
-function hPreview(n) { $('#h-prev-' + n).textContent = hSample($('#h-tpl-' + n).value.trim() || H_DEFAULT); }
+function hPreview(n) { $('#h-prev-' + n).textContent = hSample(withNotes($('#h-tpl-' + n).value.trim() || H_DEFAULT)); }
 async function saveHLine(btn, n) {
-  const v = $('#h-tpl-' + n).value.trim() || H_DEFAULT;
+  const v = withNotes($('#h-tpl-' + n).value.trim() || H_DEFAULT);
   btn.disabled = true;
   const { error } = await sb.from('staff_settings').upsert({ key: `csv${n}_h`, value: v, updated_at: new Date().toISOString() });
   btn.disabled = false;
@@ -1693,12 +1694,14 @@ const ymd = d => (d || '').replace(/-/g, '');
 const csvCell = v => /[",\r\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? '');
 // The H line follows the template set in Administration > Settings (Condition 1). Each comma-separated field
 // can hold fixed text and these codes; empty fields at the end are left off (so no S means no trailing comma).
-const H_DEFAULT = 'H,{CID},{DATE},{S}';
-const H_CODES = [['{CID}', 'Customer CID'], ['{DATE}', 'Date required, YYYYMMDD'], ['{S}', 'S when Special Order is ticked, otherwise blank'], ['{ORDER}', 'Order number, e.g. SO-0013'], ['{CUSTOMER}', 'Customer name']];
-const hTemplate = (n = 1) => S.settings?.[`csv${n}_h`] || H_DEFAULT;
+const H_DEFAULT = 'H,{CID},{DATE},{NOTES},{S}';
+const H_CODES = [['{CID}', 'Customer CID'], ['{DATE}', 'Date required, YYYYMMDD'], ['{NOTES}', 'The buyer’s Special Requirements (commas and quotes removed), otherwise blank. Always the 4th field'], ['{S}', 'S when Special Order is ticked, otherwise blank'], ['{ORDER}', 'Order number, e.g. SO-0013'], ['{CUSTOMER}', 'Customer name']];
+// The buyer's Special Requirements are always the 4th H field: a saved H line without {NOTES} gets it put there.
+const withNotes = t => /\{NOTES\}/i.test(t) ? t : (f => (f.splice(3, 0, '{NOTES}'), f.join(',')))(t.split(','));
+const hTemplate = (n = 1) => withNotes(S.settings?.[`csv${n}_h`] || H_DEFAULT);
 function hLine(o, cust, tpl = hTemplate()) {
-  const vals = { CID: cust, DATE: ymd(o.required_date || o.order_date), S: o.special_order ? 'S' : '', ORDER: orderNo(o.number), CUSTOMER: custOf(o.customer_id)?.name || '' };
-  const f = tpl.split(',').map(x => x.replace(/\{(CID|DATE|S|ORDER|CUSTOMER)\}/gi, (_, k) => vals[k.toUpperCase()] ?? '').trim());
+  const vals = { CID: cust, DATE: ymd(o.required_date || o.order_date), NOTES: (o.customer_notes || '').replace(/[,"\r\n]+/g, ' ').replace(/\s+/g, ' ').trim(), S: o.special_order ? 'S' : '', ORDER: orderNo(o.number), CUSTOMER: custOf(o.customer_id)?.name || '' };
+  const f = tpl.split(',').map(x => x.replace(/\{(CID|DATE|NOTES|S|ORDER|CUSTOMER)\}/gi, (_, k) => vals[k.toUpperCase()] ?? '').trim());
   while (f.length > 1 && f[f.length - 1] === '') f.pop();
   return f;
 }
