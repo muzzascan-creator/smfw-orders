@@ -1694,10 +1694,11 @@ const ymd = d => (d || '').replace(/-/g, '');
 const csvCell = v => /[",\r\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? '');
 // The H line follows the template set in Administration > Settings (Condition 1). Each comma-separated field
 // can hold fixed text and these codes; empty fields at the end are left off (so no S means no trailing comma).
-const H_DEFAULT = 'H,{CID},{DATE},{NOTES},{S}';
-const H_CODES = [['{CID}', 'Customer CID'], ['{DATE}', 'Date required, YYYYMMDD'], ['{NOTES}', 'The buyer’s Special Requirements (commas and quotes removed), otherwise blank. Always the 4th field'], ['{S}', 'S when Special Order is ticked, otherwise blank'], ['{ORDER}', 'Order number, e.g. SO-0013'], ['{CUSTOMER}', 'Customer name']];
-// The buyer's Special Requirements are always the 4th H field: a saved H line without {NOTES} gets it put there.
-const withNotes = t => /\{NOTES\}/i.test(t) ? t : (f => (f.splice(3, 0, '{NOTES}'), f.join(',')))(t.split(','));
+const H_DEFAULT = 'H,{CID},{DATE},{S},{NOTES}';
+const H_CODES = [['{CID}', 'Customer CID'], ['{DATE}', 'Date required, YYYYMMDD'], ['{S}', 'S when Special Order is ticked, otherwise blank'], ['{NOTES}', 'The buyer’s Special Requirements (commas and quotes removed), otherwise blank. Always straight after the S field'], ['{ORDER}', 'Order number, e.g. SO-0013'], ['{CUSTOMER}', 'Customer name']];
+// The buyer's Special Requirements always follow the S field (H, CID, date, S, notes): a saved H line without {NOTES}
+// gets it put there, with a blank S field where the line has none.
+const withNotes = t => /\{NOTES\}/i.test(t) ? t : (f => { while (f.length < 4) f.push(''); f.splice(4, 0, '{NOTES}'); return f.join(','); })(t.split(','));
 const hTemplate = (n = 1) => withNotes(S.settings?.[`csv${n}_h`] || H_DEFAULT);
 function hLine(o, cust, tpl = hTemplate()) {
   const vals = { CID: cust, DATE: ymd(o.required_date || o.order_date), NOTES: (o.customer_notes || '').replace(/[,"\r\n]+/g, ' ').replace(/\s+/g, ' ').trim(), S: o.special_order ? 'S' : '', ORDER: orderNo(o.number), CUSTOMER: custOf(o.customer_id)?.name || '' };
