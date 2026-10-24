@@ -125,6 +125,7 @@ async function run(promise, okMsg) { const { data, error } = await promise; if (
 // ---------- data ----------
 // Buyers' Special Requirements need migration 035 (orders.customer_notes); until it's run the box stays hidden.
 let hasCustNotes = false;
+const CUST_NOTES_MAX = 50; // characters; the database holds it to the same (migration 035)
 async function loadAll() {
   if (!hasCustNotes) sb.from('orders').select('customer_notes').limit(1).then(({ error }) => { if (!error && !hasCustNotes) { hasCustNotes = true; if (view === 'entry' && !isAdmin()) render(); } });
   const prods = sb.from('products').select('id,supplier_id,code,name,section,sort,active,product_group,product_packs(*)');
@@ -999,7 +1000,7 @@ function viewEntry() {
       </div>
       ${editable ? `<div class="row" style="margin-top:16px"><input class="search" id="e-find" placeholder="Find a product by name or code"></div>` : ''}
       ${blocks || '<div class="card empty" style="margin-top:16px">No products are set up yet.</div>'}
-      ${admin || !hasCustNotes ? '' : `<label class="card f custnotes">Special Requirements<textarea id="e-cnotes" maxlength="500" rows="3" placeholder="e.g. deliver to the back door" ${dis}>${esc(d.customer_notes || '')}</textarea></label>`}
+      ${admin || !hasCustNotes ? '' : `<label class="card f custnotes"><span class="row spread">Special Requirements<span class="muted" id="e-cncount" style="font-size:12px;font-weight:400">${(d.customer_notes || '').length}/${CUST_NOTES_MAX}</span></span><textarea id="e-cnotes" maxlength="${CUST_NOTES_MAX}" rows="2" placeholder="e.g. deliver to the back door" ${dis}>${esc(d.customer_notes || '')}</textarea></label>`}
     </div>
     <aside class="card summary" id="summary">${summaryHtml()}</aside></div>`;
 }
@@ -1076,7 +1077,7 @@ function wireEntry() {
   });
   $('#e-req')?.addEventListener('change', e => { draft.required_date = e.target.value; sync(); });
   $('#e-special')?.addEventListener('input', e => draft.special = e.target.value);
-  $('#e-cnotes')?.addEventListener('input', e => draft.customer_notes = e.target.value);
+  $('#e-cnotes')?.addEventListener('input', e => { draft.customer_notes = e.target.value.slice(0, CUST_NOTES_MAX); $('#e-cncount').textContent = `${draft.customer_notes.length}/${CUST_NOTES_MAX}`; });
   $('#e-spo')?.addEventListener('change', e => { draft.special_order = e.target.checked; render(); }); // Special Orders hide Vegetables and Drinks
   document.querySelectorAll('input[data-k]').forEach(inp => inp.addEventListener('input', () => {
     const v = inp.value.replace(/[^\d]/g, ''); if (v !== inp.value) inp.value = v;
@@ -1129,7 +1130,7 @@ async function saveOrder(status) {
   // Today's date is fixed: an order is dated the day it's saved, and keeps that date once it's sent.
   const row = { customer_id: draft.customer_id || null, order_date: draft.status === 'draft' ? today() : draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
   if (isAdmin()) row.special_order = draft.group === 'Conventional' && !!draft.special_order;
-  else if (hasCustNotes) row.customer_notes = (draft.customer_notes || '').trim().slice(0, 500) || null; // buyers' Special Requirements: never on the supplier form
+  else if (hasCustNotes) row.customer_notes = (draft.customer_notes || '').trim().slice(0, CUST_NOTES_MAX) || null; // buyers' Special Requirements: never on the supplier form
   if (draft.direct) row.csv_at = null; // back on the Received tab until its CSV is created again (same file name)
   saving = true;
   // An existing order only saves if no one else (another PC, a Receiver) has changed it since it was opened.
