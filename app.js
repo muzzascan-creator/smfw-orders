@@ -58,6 +58,9 @@ function earliestReq(g, cust) {
   return r && r.days_before === 0 && now.minutes < toMins(r.cutoff_time) && (r.delivers === 'all' || (r.delivers === 'sunday' && cust?.sunday_delivery)) ? now.date : tomorrow();
 }
 // The rules in words, for the customer's order form.
+// Customers' Conventional order form shows one fixed cut-off line instead of a line per delivery day.
+const CONV_CUTOFF_TEXT = 'Conventional Order time Cut Off Mon - Fri 7:30am, Sat 5:00am';
+const custHint = (g, cust) => g === 'Conventional' ? CONV_CUTOFF_TEXT : orderHint(g, cust);
 function orderHint(g, cust) {
   const rs = cutRules(g).filter(r => r.delivers === 'all' || (r.delivers === 'sunday' && cust?.sunday_delivery));
   const closes = rs.filter(r => r.days_before != null).map(r => `${fmtTime(r.cutoff_time)} ${r.days_before ? DAYS[(r.dow - 1 - r.days_before + 7) % 7] : 'the same day'} for ${DAYS[r.dow - 1]}`);
@@ -987,7 +990,7 @@ function viewEntry() {
       <div class="card grid g2">
         ${admin ? '' : '<div class="grid datecol">'}${custField}${locField}${admin ? '' : favPicker(d) + '</div><div class="grid datecol">'}
         ${admin ? `<label class="f">Today’s date<input type="date" id="e-date" disabled title="Set automatically" value="${esc(d.status === 'draft' ? today() : d.order_date)}"></label>` : `<div class="f datebox"><span class="dl">Today’s date</span><span class="dv">${esc(fmtDate(d.status === 'draft' ? today() : d.order_date))}</span>`}
-        ${admin ? '<div class="f">' : ''}<label for="e-req">Day / date required</label><div class="reqrow"><input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${earliestReq(d.group || 'Organic', custOf(d.customer_id))}"` : ''} max="${latestReq()}" value="${esc(d.required_date)}">${spoBox(d, dis)}</div>${!admin && d.status === 'draft' && orderHint(d.group || 'Organic', custOf(d.customer_id)) ? `<span class="muted" style="font-size:12px;font-weight:400">${orderHint(d.group || 'Organic', custOf(d.customer_id))}</span>` : ''}</div>${admin ? '' : '</div>'}
+        ${admin ? '<div class="f">' : ''}<label for="e-req">Day / date required</label><div class="reqrow"><input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${earliestReq(d.group || 'Organic', custOf(d.customer_id))}"` : ''} max="${latestReq()}" value="${esc(d.required_date)}">${spoBox(d, dis)}</div>${!admin && d.status === 'draft' && custHint(d.group || 'Organic', custOf(d.customer_id)) ? `<span class="muted" style="font-size:12px;font-weight:400">${custHint(d.group || 'Organic', custOf(d.customer_id))}</span>` : ''}</div>${admin ? '' : '</div>'}
         ${admin ? `<label class="f" style="grid-column:1/-1">Special requirements<span class="muted" style="font-size:12px;font-weight:400">Printed on the supplier order form.</span><textarea id="e-special" ${dis}>${esc(d.special)}</textarea></label>` : ''}
       </div>
       ${editable ? `<div class="row" style="margin-top:16px"><input class="search" id="e-find" placeholder="Find a product by name or code"></div>` : ''}
