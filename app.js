@@ -1284,7 +1284,7 @@ function viewSettings() {
     return `<div class="card setcard"><h2>${title}</h2><p class="sub" style="margin-top:4px">${about}</p>${folder}
       <h3 class="seth">H line</h3>
       <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap"><input id="h-tpl-${n}" class="mono" style="flex:1;min-width:240px" value="${esc(hTemplate(n))}" oninput="hPreview(${n})" aria-label="Condition ${n} H line">
-        <button onclick="$('#h-tpl-${n}').value=H_DEFAULT;hPreview(${n})">Reset</button><button class="primary" onclick="saveHLine(this, ${n})">Save</button></div>
+        <button onclick="$('#h-tpl-${n}').value=noS(H_DEFAULT, ${n});hPreview(${n})">Reset</button><button class="primary" onclick="saveHLine(this, ${n})">Save</button></div>
       <p class="muted" style="margin:8px 0 4px;font-size:13px">Separate fields with commas. Codes you can use:</p>
       <ul class="hcodes">${H_CODES.map(([c, d]) => `<li><code>${c}</code> ${esc(d)}</li>`).join('')}</ul>
       <div class="muted" style="font-size:13px">Example: <code id="h-prev-${n}">${esc(hSample(hTemplate(n)))}</code></div></div>`;
@@ -1299,9 +1299,9 @@ function hSample(tpl) {
   const cust = o.customer_id ? custOf(o.customer_id)?.cid ?? '' : CONVENTIONAL_CID;
   return hLine(o, cust, tpl).map(csvCell).join(',');
 }
-function hPreview(n) { $('#h-prev-' + n).textContent = hSample(withNotes($('#h-tpl-' + n).value.trim() || H_DEFAULT)); }
+function hPreview(n) { $('#h-prev-' + n).textContent = hSample(noS(withNotes($('#h-tpl-' + n).value.trim() || H_DEFAULT), n)); }
 async function saveHLine(btn, n) {
-  const v = withNotes($('#h-tpl-' + n).value.trim() || H_DEFAULT);
+  const v = noS(withNotes($('#h-tpl-' + n).value.trim() || H_DEFAULT), n);
   btn.disabled = true;
   const { error } = await sb.from('staff_settings').upsert({ key: `csv${n}_h`, value: v, updated_at: new Date().toISOString() });
   btn.disabled = false;
@@ -1699,7 +1699,9 @@ const H_CODES = [['{CID}', 'Customer CID'], ['{DATE}', 'Date required, YYYYMMDD'
 // The buyer's Special Requirements always follow the S field (H, CID, date, S, notes): a saved H line without {NOTES}
 // gets it put there, with a blank S field where the line has none.
 const withNotes = t => /\{NOTES\}/i.test(t) ? t : (f => { while (f.length < 4) f.push(''); f.splice(4, 0, '{NOTES}'); return f.join(','); })(t.split(','));
-const hTemplate = (n = 1) => withNotes(S.settings?.[`csv${n}_h`] || H_DEFAULT);
+// Condition 2 never carries an S: that field is always left empty (H, CID, date, , notes).
+const noS = (t, n) => n === 2 ? t.replace(/\{S\}/gi, '') : t;
+const hTemplate = (n = 1) => noS(withNotes(S.settings?.[`csv${n}_h`] || H_DEFAULT), n);
 function hLine(o, cust, tpl = hTemplate()) {
   const vals = { CID: cust, DATE: ymd(o.required_date || o.order_date), NOTES: (o.customer_notes || '').replace(/[,"\r\n]+/g, ' ').replace(/\s+/g, ' ').trim(), S: o.special_order ? 'S' : '', ORDER: orderNo(o.number), CUSTOMER: custOf(o.customer_id)?.name || '' };
   const f = tpl.split(',').map(x => x.replace(/\{(CID|DATE|NOTES|S|ORDER|CUSTOMER)\}/gi, (_, k) => vals[k.toUpperCase()] ?? '').trim());
