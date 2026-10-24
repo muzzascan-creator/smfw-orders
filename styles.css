@@ -339,6 +339,6 @@ dialog:has(.packrow.withref){width:min(880px,calc(100vw - 32px))}
 .autosw.on .knob{background:rgba(255,255,255,.6)}
 .autosw.on .knob::after{left:18px}
 .autosw:disabled{opacity:.85;color:#fff}
-/* Buyers' order form: Notes box after the products (on a phone it sits just above the Order summary). */
+/* Buyers' order form: Special Requirements box after the products (on a phone it sits just above the Order summary). */
 .custnotes{margin-top:16px;display:grid;gap:6px}
 .custnotes textarea{width:100%;min-height:80px;font:inherit}
