@@ -342,3 +342,6 @@ dialog:has(.packrow.withref){width:min(880px,calc(100vw - 32px))}
 /* Buyers' order form: Special Requirements box after the products (on a phone it sits just above the Order summary). */
 .custnotes{margin-top:16px;display:grid;gap:6px}
 .custnotes textarea{width:100%;min-height:80px;font:inherit}
+/* Admin: a buyer's Special Requirements, shown read only on the order, and flagged on order rows. */
+.custnote-view .notebox{background:#fff8e1;border:1px solid #f0d27a;border-radius:8px;padding:8px 10px;white-space:pre-wrap;font-weight:600}
+.pill.bnote{background:#fff3cd;color:#7a5a00}

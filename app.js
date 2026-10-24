@@ -123,7 +123,10 @@ function friendly(err) {
 async function run(promise, okMsg) { const { data, error } = await promise; if (error) { toast(friendly(error)); return null; } if (okMsg) toast(okMsg, true); return data ?? true; }
 
 // ---------- data ----------
+// Buyers' Special Requirements need migration 035 (orders.customer_notes); until it's run the box stays hidden.
+let hasCustNotes = false;
 async function loadAll() {
+  if (!hasCustNotes) sb.from('orders').select('customer_notes').limit(1).then(({ error }) => { if (!error && !hasCustNotes) { hasCustNotes = true; if (view === 'entry' && !isAdmin()) render(); } });
   const prods = sb.from('products').select('id,supplier_id,code,name,section,sort,active,product_group,product_packs(*)');
   const orders = reloadOrders();
   // Cut-off rules: receivers don't need them. If they can't be fetched, the last ones fetched stay in use.
@@ -428,7 +431,7 @@ function render() {
 function orderRow(o, opts = {}) {
   const c = custOf(o.customer_id);
   return `<tr class="rowlink${opts.later ? ' later' : ''}" onclick="openOrder('${o.id}')">
-    <td class="mono c-no">${esc(orderNo(o.number))}${orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conventional</span>' : ''}${o.special_order && isAdmin() ? ' <span class="pill spo">Special Order</span>' : ''}</td>
+    <td class="mono c-no">${esc(orderNo(o.number))}${orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conventional</span>' : ''}${o.special_order && isAdmin() ? ' <span class="pill spo">Special Order</span>' : ''}${o.customer_notes && isAdmin() ? ` <span class="pill bnote" title="${esc(o.customer_notes)}">Buyer note</span>` : ''}</td>
     ${opts.customer === false ? '' : `<td class="c-cust">${c ? esc(c.name) : o.customer_id ? 'Unknown customer' : '<span class="muted">No customer</span>'}</td>`}
     <td class="c-date">${o.required_date ? `<span class="c-lbl">Required </span>${esc(fmtDate(o.required_date))}` : '<span class="c-lbl muted">No date yet</span>'}</td>
     ${opts.sent ? `<td>${esc(fmtWhen(o.submitted_at))}</td>` : ''}
@@ -791,7 +794,7 @@ function viewMine() {
 }
 function openOrder(id) {
   const o = S.orders.find(x => x.id === id); if (!o) return;
-  draft = { id, number: o.number, direct: !!o.direct, customer_id: o.customer_id, order_date: o.order_date, required_date: o.required_date || '', special: o.special || '', special_order: !!o.special_order, status: o.status, source: o.source, submitted_at: o.submitted_at, updated_at: o.updated_at, qty: {} };
+  draft = { id, number: o.number, direct: !!o.direct, customer_id: o.customer_id, order_date: o.order_date, required_date: o.required_date || '', special: o.special || '', customer_notes: o.customer_notes || '', special_order: !!o.special_order, status: o.status, source: o.source, submitted_at: o.submitted_at, updated_at: o.updated_at, qty: {} };
   (o.lines || []).forEach(l => { if (l.pack_id) draft.qty[l.pack_id] = l.qty; });
   // Keep what a Receiver recorded (ordered_qty, undelivered) when an admin re-saves the order.
   draft.receipt = Object.fromEntries((o.lines || []).filter(l => l.pack_id && (l.ordered_qty != null || l.undelivered || l.received)).map(l => [l.pack_id, { ordered_qty: l.ordered_qty, undelivered: !!l.undelivered, received: !!l.received }]));
@@ -991,11 +994,12 @@ function viewEntry() {
         ${admin ? '' : '<div class="grid datecol">'}${custField}${locField}${admin ? '' : favPicker(d) + '</div><div class="grid datecol">'}
         ${admin ? `<label class="f">Today’s date<input type="date" id="e-date" disabled title="Set automatically" value="${esc(d.status === 'draft' ? today() : d.order_date)}"></label>` : `<div class="f datebox"><span class="dl">Today’s date</span><span class="dv">${esc(fmtDate(d.status === 'draft' ? today() : d.order_date))}</span>`}
         ${admin ? '<div class="f">' : ''}<label for="e-req">Day / date required</label><div class="reqrow"><input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${earliestReq(d.group || 'Organic', custOf(d.customer_id))}"` : ''} max="${latestReq()}" value="${esc(d.required_date)}">${spoBox(d, dis)}</div>${!admin && d.status === 'draft' && custHint(d.group || 'Organic', custOf(d.customer_id)) ? `<span class="muted" style="font-size:12px;font-weight:400">${custHint(d.group || 'Organic', custOf(d.customer_id))}</span>` : ''}</div>${admin ? '' : '</div>'}
+        ${admin && d.customer_notes ? `<div class="f custnote-view" style="grid-column:1/-1"><span>Buyer’s Special Requirements <span class="muted" style="font-size:12px;font-weight:400">From the customer. Not printed on the supplier order form.</span></span><div class="notebox">${esc(d.customer_notes)}</div></div>` : ''}
         ${admin ? `<label class="f" style="grid-column:1/-1">Special requirements<span class="muted" style="font-size:12px;font-weight:400">Printed on the supplier order form.</span><textarea id="e-special" ${dis}>${esc(d.special)}</textarea></label>` : ''}
       </div>
       ${editable ? `<div class="row" style="margin-top:16px"><input class="search" id="e-find" placeholder="Find a product by name or code"></div>` : ''}
       ${blocks || '<div class="card empty" style="margin-top:16px">No products are set up yet.</div>'}
-      ${admin ? '' : `<label class="card f custnotes">Special Requirements<textarea id="e-special" maxlength="500" rows="3" placeholder="e.g. deliver to the back door" ${dis}>${esc(d.special)}</textarea></label>`}
+      ${admin || !hasCustNotes ? '' : `<label class="card f custnotes">Special Requirements<textarea id="e-cnotes" maxlength="500" rows="3" placeholder="e.g. deliver to the back door" ${dis}>${esc(d.customer_notes || '')}</textarea></label>`}
     </div>
     <aside class="card summary" id="summary">${summaryHtml()}</aside></div>`;
 }
@@ -1072,6 +1076,7 @@ function wireEntry() {
   });
   $('#e-req')?.addEventListener('change', e => { draft.required_date = e.target.value; sync(); });
   $('#e-special')?.addEventListener('input', e => draft.special = e.target.value);
+  $('#e-cnotes')?.addEventListener('input', e => draft.customer_notes = e.target.value);
   $('#e-spo')?.addEventListener('change', e => { draft.special_order = e.target.checked; render(); }); // Special Orders hide Vegetables and Drinks
   document.querySelectorAll('input[data-k]').forEach(inp => inp.addEventListener('input', () => {
     const v = inp.value.replace(/[^\d]/g, ''); if (v !== inp.value) inp.value = v;
@@ -1124,6 +1129,7 @@ async function saveOrder(status) {
   // Today's date is fixed: an order is dated the day it's saved, and keeps that date once it's sent.
   const row = { customer_id: draft.customer_id || null, order_date: draft.status === 'draft' ? today() : draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
   if (isAdmin()) row.special_order = draft.group === 'Conventional' && !!draft.special_order;
+  else if (hasCustNotes) row.customer_notes = (draft.customer_notes || '').trim().slice(0, 500) || null; // buyers' Special Requirements: never on the supplier form
   if (draft.direct) row.csv_at = null; // back on the Received tab until its CSV is created again (same file name)
   saving = true;
   // An existing order only saves if no one else (another PC, a Receiver) has changed it since it was opened.
