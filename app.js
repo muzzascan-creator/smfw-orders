@@ -128,7 +128,7 @@ let hasCustNotes = false;
 const CUST_NOTES_MAX = 50; // characters; the database holds it to the same (migration 035)
 async function loadAll() {
   if (!hasCustNotes) sb.from('orders').select('customer_notes').limit(1).then(({ error }) => { if (!error && !hasCustNotes) { hasCustNotes = true; if (view === 'entry' && !isAdmin()) render(); } });
-  const prods = sb.from('products').select('id,supplier_id,code,name,section,sort,active,product_group,product_packs(*)');
+  const prods = fetchProducts(!isAdmin() && !isReceiver());
   const orders = reloadOrders();
   // Cut-off rules: receivers don't need them. If they can't be fetched, the last ones fetched stay in use.
   const cuts = isReceiver() ? [] : [sb.from('cutoff_rules').select('*'), sb.from('cutoff_settings').select('*')];
@@ -145,7 +145,7 @@ async function loadAll() {
     S.settings = Object.fromEntries((st.data || []).map(r => [r.key, r.value])); // empty until 031 is run
   } else {
     let c, p, o;
-    [c, p, o, cr, cs] = await Promise.all([sb.from('customers').select('id,cid,name,product_group,sunday_delivery'), prods.eq('active', true), orders, ...cuts]);
+    [c, p, o, cr, cs] = await Promise.all([sb.from('customers').select('id,cid,name,product_group,sunday_delivery'), prods, orders, ...cuts]);
     base = [c, p, o];
     S.customers = c.data || []; S.suppliers = []; S.products = p.data || [];
     await loadFavs();
@@ -172,6 +172,19 @@ function inPlay(q) {
   // Not finished: not Complete, no CSV yet, or (for orders that aren't direct) not yet emailed or received.
   return q.or(noDirect ? `status.neq.complete,csv_at.is.null,emailed_at.is.null,received_at.is.null,updated_at.gte.${d},required_date.gte.${d}`
     : `status.neq.complete,csv_at.is.null,and(direct.is.false,or(emailed_at.is.null,received_at.is.null)),updated_at.gte.${d},required_date.gte.${d}`);
+}
+// Products in pages: the server hands back at most 1000 rows per ask, so a long list would be cut short.
+const PROD_PAGE = 1000;
+async function fetchProducts(activeOnly) {
+  const out = [];
+  for (let from = 0; ; from += PROD_PAGE) {
+    let q = sb.from('products').select('id,supplier_id,code,name,section,sort,active,product_group,product_packs(*)').order('id').range(from, from + PROD_PAGE - 1);
+    if (activeOnly) q = q.eq('active', true);
+    const { data, error } = await q;
+    if (error) return { error };
+    out.push(...data);
+    if (data.length < PROD_PAGE) return { data: out };
+  }
 }
 async function fetchOrders(since) {
   const out = new Map();
@@ -1948,8 +1961,11 @@ function openDialog(title, fieldsHtml, onSave, onDelete) {
 }
 const fld = (name, label, val, type = 'text', extra = '') => `<label class="f">${label}<input name="${name}" id="f-${name}" type="${type}" value="${esc(val ?? '')}" ${extra}></label>`;
 const nextCid = () => S.customers.reduce((m, c) => Math.max(m, c.cid || 0), 0) + 1;
+// SIDs at or above SID_PARK are temporary values used while swapping SIDs, never real ones.
+const SID_PARK = 1000000000;
+let maxSidDb = 0; // highest SID in the database, asked for when a product is opened
 const allSids = () => S.products.flatMap(p => (p.product_packs || []).map(k => k.sid));
-const nextSid = (extra = []) => Math.max(0, ...allSids(), ...extra) + 1;
+const nextSid = (extra = []) => Math.max(0, maxSidDb, ...[...allSids(), ...extra].map(Number).filter(n => n > 0 && n < SID_PARK)) + 1;
 
 function editCustomer(id) {
   const c = id ? custOf(id) : {};
@@ -1986,7 +2002,7 @@ function editSupplier(id) {
 }
 function packRow(k = {}) {
   const key = k.id || 'new-' + Math.random().toString(36).slice(2, 8);
-  return `<div class="packrow withref" data-row="${esc(key)}"><input name="psid" type="number" min="1" step="1" placeholder="SID" aria-label="SID" value="${esc(k.sid ?? '')}">
+  return `<div class="packrow withref" data-row="${esc(key)}"><input name="psid" type="number" min="1" step="1" placeholder="SID" aria-label="SID" value="${esc(k.sid ?? '')}" oninput="this.dataset.typed=1">
     <input name="pref" placeholder="Ref" aria-label="Ref" value="${esc(k.ref ?? '')}">
     <label class="pbatch" title="Receivers must enter a batch code for this on Conventional, No customer orders"><input type="checkbox" ${k.batch_code ? 'checked' : ''} onchange="this.nextElementSibling.value=this.checked?'1':'0'"><input type="hidden" name="pbatch" value="${k.batch_code ? '1' : '0'}">Batch</label>
     <input name="pname" placeholder="Pack type, e.g. BOX of 10 BUNCHES" aria-label="Pack type" value="${esc(k.name ?? '')}">
@@ -2036,6 +2052,14 @@ function editProduct(id) {
   const p = id ? { ...prodOf(id), product_packs: [...(prodOf(id).product_packs || [])] } : { supplier_id: S.suppliers[0]?.id, product_packs: [] };
   const secs = allSections();
   const packs = p.product_packs?.length ? p.product_packs : [{ sid: nextSid() }];
+  // Check the database for the highest SID, in case this PC's list is behind; move up any suggested SID nobody has typed over.
+  sb.from('product_packs').select('sid').lt('sid', SID_PARK).order('sid', { ascending: false }).limit(1).then(({ data }) => {
+    const top = data?.[0]?.sid; if (!top || top <= maxSidDb) return;
+    maxSidDb = top;
+    const box = $('#packrows'); if (!box) return;
+    let n = nextSid();
+    box.querySelectorAll('.packrow').forEach(r => { const x = r.querySelector('input[name=psid]'); if (!r.querySelector('input[name=pid]').value && !x.dataset.typed) x.value = n++; });
+  });
   openDialog(id ? 'Edit product' : 'Add product',
     `<label class="f">Supplier<select name="supplier_id" id="f-supplier_id">${S.suppliers.slice().sort(byName).map(s => `<option value="${s.id}" ${s.id === p.supplier_id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label>
     <div class="grid g2">${fld('code', 'Supplier code', p.code)}${fld('name', 'Product name', p.name, 'text', 'required')}</div>
