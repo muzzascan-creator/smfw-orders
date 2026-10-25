@@ -25,5 +25,13 @@ select item, case when ok then 'OK' else 'NOT DONE' end as status from (values
   ('026 cut-off rules', to_regclass('public.cutoff_rules') is not null),
   ('026 reminders every 10 minutes', case when to_regclass('cron.job') is not null then
       (xpath('//row/c/text()', query_to_xml('select count(*) as c from cron.job where jobname = ''order-reminders'' and schedule = ''*/10 * * * *''', false, false, '')))[1]::text::int > 0 else false end),
-  ('027 review fixes', exists (select 1 from pg_proc where proname = 'keep_an_admin'))
+  ('027 review fixes', exists (select 1 from pg_proc where proname = 'keep_an_admin')),
+  ('028 login mobile numbers', exists (select 1 from information_schema.columns where table_name = 'profiles' and column_name = 'mobile')),
+  ('029 favourites', to_regclass('public.favourites') is not null),
+  ('030 batch codes', to_regclass('public.batch_codes') is not null),
+  ('031 CSV folder settings', to_regclass('public.staff_settings') is not null),
+  ('032 Conventional orders straight to Received', exists (select 1 from information_schema.columns where table_name = 'orders' and column_name = 'direct')),
+  ('033 more speed-ups', to_regclass('public.orders_updated_idx') is not null),
+  ('034 purchase order import', to_regclass('public.po_items') is not null),
+  ('035 buyer Special Requirements', exists (select 1 from information_schema.columns where table_name = 'orders' and column_name = 'customer_notes'))
 ) as t(item, ok);
