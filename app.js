@@ -1210,7 +1210,7 @@ function viewProducts() {
     const ps = S.products.filter(p => p.supplier_id === s.id && (groupFilter === 'all' || groupOf(p) === groupFilter)).sort(bySort); if (!ps.length) return '';
     return `<section class="supblock"><h2>${esc(s.name)}</h2><div class="tablewrap stickyhead"><table><thead><tr><th>Code</th><th>Product</th><th>Group</th><th>Section</th><th>Pack types · SID · outer</th><th></th></tr></thead><tbody>
     ${ps.map(p => `<tr${p.active === false ? ' class="muted"' : ''}><td class="mono">${esc(p.code)}</td><td>${esc(p.name)}${p.active === false ? ' <span class="pill">Hidden</span>' : ''}</td><td><span class="pill grp-${groupOf(p).toLowerCase()}">${groupOf(p)}</span></td><td>${esc(p.section)}</td>
-      <td class="packs">${(p.product_packs || []).map(k => `<div><span class="mono muted">SID ${esc(k.sid)}</span>${k.ref ? ` <span class="mono muted">· Ref ${esc(k.ref)}</span>` : ''} ${esc(k.name)} <span class="mono muted">· outer ${outerOf(k)}</span>${k.batch_code ? ' <span class="pill">Batch Code</span>' : ''}${k.available ? '' : ' <span class="pill">Not available</span>'}</div>`).join('')}</td>
+      <td class="packs">${(p.product_packs || []).map(k => `<div><span class="mono muted">SID ${esc(k.sid)}</span>${k.ref ? ` <span class="mono muted">· Ref ${esc(k.ref)}</span>` : ''} ${esc(k.name)} <span class="mono muted">· outer ${outerOf(k)}</span>${k.batch_code ? ' <span class="pill">Batch Code</span>' : ''}${k.promo ? ' <span class="pill promo">Promo</span>' : ''}${k.available ? '' : ' <span class="pill">Not available</span>'}</div>`).join('')}</td>
       <td class="num"><button class="ghost" onclick="editProduct('${p.id}')">Edit</button></td></tr>`).join('')}
     </tbody></table></div></section>`;
   }).join('');
@@ -2005,6 +2005,7 @@ function packRow(k = {}) {
   return `<div class="packrow withref" data-row="${esc(key)}"><input name="psid" type="number" min="1" step="1" placeholder="SID" aria-label="SID" value="${esc(k.sid ?? '')}" oninput="this.dataset.typed=1">
     <input name="pref" placeholder="Ref" aria-label="Ref" value="${esc(k.ref ?? '')}">
     <label class="pbatch" title="Receivers must enter a batch code for this on Conventional, No customer orders"><input type="checkbox" ${k.batch_code ? 'checked' : ''} onchange="this.nextElementSibling.value=this.checked?'1':'0'"><input type="hidden" name="pbatch" value="${k.batch_code ? '1' : '0'}">Batch</label>
+    <label class="pbatch" title="Promo product"><input type="checkbox" ${k.promo ? 'checked' : ''} onchange="this.nextElementSibling.value=this.checked?'1':'0'"><input type="hidden" name="ppromo" value="${k.promo ? '1' : '0'}">Promo</label>
     <input name="pname" placeholder="Pack type, e.g. BOX of 10 BUNCHES" aria-label="Pack type" value="${esc(k.name ?? '')}">
     <input name="pouter" type="number" min="1" step="1" aria-label="Outer multiple" title="Outer multiple" value="${esc(k.outer_multiple ?? 1)}">
     <select name="pavail" aria-label="Availability"><option value="1" ${k.available === false ? '' : 'selected'}>Available</option><option value="0" ${k.available === false ? 'selected' : ''}>Not available</option></select>
@@ -2065,14 +2066,14 @@ function editProduct(id) {
     <div class="grid g2">${fld('code', 'Supplier code', p.code)}${fld('name', 'Product name', p.name, 'text', 'required')}</div>
     <label class="f">Product group<select name="product_group" id="f-product_group">${GROUPS.map(g => `<option ${groupOf(p) === g ? 'selected' : ''}>${g}</option>`).join('')}</select></label>
     <label class="f">Section on the form<select name="section" id="f-section"><option value="">No section</option>${secs.map(x => `<option ${x === p.section ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select><span class="muted" style="font-size:12px">Add or rename sections with the <b>Sections</b> button on the Products page.</span></label>
-    <div class="grid" style="gap:6px"><div class="packrow packhead withref"><span>SID</span><span>Ref</span><span>Pack type (match the form’s column heading)</span><span>Outer</span><span>Availability</span><span></span></div>
+    <div class="grid" style="gap:6px"><div class="packrow packhead withref"><span>SID</span><span>Ref</span><span></span><span></span><span>Pack type (match the form’s column heading)</span><span>Outer</span><span>Availability</span><span></span></div>
       <div class="grid" style="gap:6px" id="packrows">${packs.map(packRow).join('')}</div>
       <div><button type="button" class="ghost" onclick="addPackRow()">+ Add pack type</button></div></div>
     <div class="grid g2">${fld('sort', 'Position on the form', p.sort ?? '', 'number')}
     <label class="f">Show on order forms<select name="active" id="f-active"><option value="1" ${p.active !== false ? 'selected' : ''}>Yes</option><option value="0" ${p.active === false ? 'selected' : ''}>No, hide it</option></select></label></div>`,
     async f => {
       const name = f.get('name').trim(); if (!name) { toast('Enter a product name.'); return false; }
-      const names = f.getAll('pname').map(x => x.trim()), sids = f.getAll('psid'), refs = f.getAll('pref').map(x => x.trim()), outs = f.getAll('pouter'), avail = f.getAll('pavail'), batches = f.getAll('pbatch'), pids = f.getAll('pid');
+      const names = f.getAll('pname').map(x => x.trim()), sids = f.getAll('psid'), refs = f.getAll('pref').map(x => x.trim()), outs = f.getAll('pouter'), avail = f.getAll('pavail'), batches = f.getAll('pbatch'), promos = f.getAll('ppromo'), pids = f.getAll('pid');
       const rows = []; const others = S.products.filter(x => x.id !== id).flatMap(x => (x.product_packs || []).map(k => ({ sid: k.sid, ref: (k.ref || '').trim().toUpperCase(), label: `${x.name} (${k.name})` })));
       for (let i = 0; i < names.length; i++) {
         if (!names[i]) continue;
@@ -2086,7 +2087,7 @@ function editProduct(id) {
         const ref = refs[i] || '', REF = ref.toUpperCase();
         if (REF && rows.some(r => (r.ref || '').toUpperCase() === REF)) { toast(`Ref ${ref} is used twice on this product.`); return false; }
         const refClash = REF && others.find(o => o.ref === REF); if (refClash) { toast(`Ref ${ref} is already used by ${refClash.label}.`); return false; }
-        rows.push({ i, id: pids[i] || undefined, name: names[i], sid, ref: ref || null, outer_multiple: outer, available: avail[i] === '1', batch: batches[i] === '1', sort: rows.length });
+        rows.push({ i, id: pids[i] || undefined, name: names[i], sid, ref: ref || null, outer_multiple: outer, available: avail[i] === '1', batch: batches[i] === '1', promo: promos[i] === '1', sort: rows.length });
       }
       if (!rows.length) { toast('Add at least one pack type.'); return false; }
       const prow = { supplier_id: f.get('supplier_id'), code: f.get('code').trim(), name, section: f.get('section').trim(), sort: f.get('sort') === '' ? 999 : +f.get('sort'), active: f.get('active') === '1' };
@@ -2108,6 +2109,7 @@ function editProduct(id) {
         const body = { product_id: pid, name: r.name, sid: r.sid, outer_multiple: r.outer_multiple, available: r.available, sort: r.sort };
         body.ref = r.ref;
         if (r.batch || (p.product_packs || []).find(k => k.id === r.id)?.batch_code) body.batch_code = r.batch; // only sent when used, so saving works before 030 is run
+        if (r.promo || (p.product_packs || []).find(k => k.id === r.id)?.promo) body.promo = r.promo; // likewise before 036
         const k = await run(r.id ? sb.from('product_packs').update(body).eq('id', r.id).select().single() : sb.from('product_packs').insert(body).select().single());
         if (!k) return false;
         p.product_packs = [...p.product_packs.filter(x => x.id !== k.id), k];
