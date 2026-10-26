@@ -145,9 +145,13 @@ async function loadAll() {
     S.settings = Object.fromEntries((st.data || []).map(r => [r.key, r.value])); // empty until 031 is run
   } else {
     let c, p, o;
-    [c, p, o, cr, cs] = await Promise.all([sb.from('customers').select('id,cid,name,product_group,sunday_delivery'), prods, orders, ...cuts]);
+    // promo needs migration 037 and the Promo setting 038; until then the plain list is used and Condition 3 stays off.
+    const custs = sb.from('customers').select('id,cid,name,product_group,sunday_delivery,promo').then(r => r.error ? sb.from('customers').select('id,cid,name,product_group,sunday_delivery') : r);
+    let ps;
+    [c, p, o, ps, cr, cs] = await Promise.all([custs, prods, orders, sb.from('staff_settings').select('key,value').eq('key', 'promo_hide_refs'), ...cuts]);
     base = [c, p, o];
     S.customers = c.data || []; S.suppliers = []; S.products = p.data || [];
+    if (!ps.error && ps.data?.[0]) S.settings = { ...S.settings, promo_hide_refs: ps.data[0].value };
     await loadFavs();
   }
   const bad = [...base, cr, cs].find(r => r?.error);
@@ -865,6 +869,15 @@ function gridHtml(secs, dis) {
     }).join('')}</tr>`).join('')}
   </tbody></table></div>`).join('');
 }
+// Condition 3 (Promo), set in Administration › Settings: pack types ticked Promo show only to customers ticked Promo,
+// and Promo customers don't see the Stock Refs listed there. Lines already on an order always stay.
+const PROMO_HIDE_DEFAULT = '1010, 1011';
+const promoRefs = () => String(S.settings?.promo_hide_refs ?? PROMO_HIDE_DEFAULT).split(/[,\s]+/).map(x => x.trim().toUpperCase()).filter(Boolean);
+const promoShown = (k, cust) => k.promo ? !!cust?.promo : !(cust?.promo && promoRefs().includes(String(k.ref || '').trim().toUpperCase()));
+const forCustomer = (products, cust) => products.map(p => {
+  const all = p.product_packs || [], ks = all.filter(k => promoShown(k, cust) || +draft?.qty?.[k.id] > 0);
+  return ks.length === all.length ? p : ks.length ? { ...p, product_packs: ks } : null;
+}).filter(Boolean);
 // Flat view: one list per pack type, holding only the products available in that pack.
 function flatHtml(products, dis) {
   // Pack types follow the order form's column order.
@@ -978,12 +991,12 @@ function viewEntry() {
     const smfwCust = !d.customer_id || String(custOf(d.customer_id)?.cid) === String(CONVENTIONAL_CID) || !!d.special_order;
     const smfwHide = p => g === 'Conventional' && smfwCust && smfwSection(p.section) && !(p.product_packs || []).some(k => +d.qty?.[k.id] > 0);
     blocks = S.suppliers.slice().sort(byName).map(s => {
-      const ps = S.products.filter(p => p.supplier_id === s.id && groupOf(p) === g && !smfwHide(p)), secs = sectionsFor(ps); if (!secs.length) return '';
+      const ps = forCustomer(S.products.filter(p => p.supplier_id === s.id && groupOf(p) === g && !smfwHide(p)), custOf(d.customer_id)), secs = sectionsFor(ps); if (!secs.length) return '';
       return `<section class="supplier-block"><div class="supplier-head"><h2>${esc(s.name)}</h2><span>${esc(s.cutoff || '')}</span></div><div class="sections">${g === 'Conventional' ? flatHtml(ps, dis) : gridHtml(secs, dis)}</div></section>`;
     }).join('') || `<div class="card empty" style="margin-top:16px">No ${g} products are set up yet. Add them under <b>Products</b>.</div>`;
   } else {
     // Customers order their own group only (set on the customer), or pick one if set to Both; Conventional uses the same flat list as the admin app.
-    const g = custGroup(custOf(d.customer_id)) === 'Both' ? (d.group || 'Organic') : custGroup(custOf(d.customer_id)), mine = S.products.filter(p => groupOf(p) === g), secs = sectionsFor(mine);
+    const g = custGroup(custOf(d.customer_id)) === 'Both' ? (d.group || 'Organic') : custGroup(custOf(d.customer_id)), mine = forCustomer(S.products.filter(p => groupOf(p) === g), custOf(d.customer_id)), secs = sectionsFor(mine);
     blocks = secs.length ? `<section class="supplier-block"><div class="supplier-head"><h2>${g}</h2><span>${g === 'Conventional' ? 'Fill in the quantities you need.' : 'Fill in the boxes you need. Grey boxes aren’t available.'}</span></div><div class="sections">${g === 'Conventional' ? flatHtml(mine, dis) : gridHtml(secs, dis)}</div></section>` : '';
   }
   // Show mode (an order that can't be changed): just what was ordered, not the whole product list.
@@ -1302,9 +1315,24 @@ function viewSettings() {
       <ul class="hcodes">${H_CODES.map(([c, d]) => `<li><code>${c}</code> ${esc(d)}</li>`).join('')}</ul>
       <div class="muted" style="font-size:13px">Example: <code id="h-prev-${n}">${esc(hSample(hTemplate(n)))}</code></div></div>`;
   };
-  return `<h1>Settings</h1><p class="sub">Where the system copies CSV files.</p>
+  const promo = `<div class="card setcard"><h2>Condition 3: Promo</h2>
+      <p class="sub" style="margin-top:4px">Customers ticked <b>Promo</b> (Customers › Edit customer) see the pack types ticked <b>Promo</b> (Products › Edit product) on their order form. Other customers don’t see Promo pack types.</p>
+      <h3 class="seth">Stock Refs Promo customers don’t see</h3>
+      <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap"><input id="promo-refs" class="mono" style="flex:1;min-width:240px" value="${esc(promoRefs().join(', '))}" aria-label="Stock Refs Promo customers don't see">
+        <button class="primary" onclick="savePromoRefs(this)">Save</button></div>
+      <p class="muted" style="margin:8px 0 0;font-size:13px">Separate Refs with commas. Lines already on an order stay on it.</p></div>`;
+  return `<h1>Settings</h1><p class="sub">Where the system copies CSV files, and who sees Promo products.</p>
     ${card(1, 'Condition 1: Upload CSV', 'Created from the Orders tab with <b>Create upload CSV</b>. One file per order, as now.')}
-    ${card(2, 'Condition 2: Upload CSV', 'Created from the Received tab with <b>Create upload CSV</b>, for Conventional orders sent from customer logins and imported purchase orders. With <b>Auto CSV</b> On (Orders tab), they are saved straight away by any Admin or Manager PC that has this app open and is connected to this folder.')}`;
+    ${card(2, 'Condition 2: Upload CSV', 'Created from the Received tab with <b>Create upload CSV</b>, for Conventional orders sent from customer logins and imported purchase orders. With <b>Auto CSV</b> On (Orders tab), they are saved straight away by any Admin or Manager PC that has this app open and is connected to this folder.')}
+    ${promo}`;
+}
+async function savePromoRefs(btn) {
+  const v = $('#promo-refs').value.split(/[,\s]+/).map(x => x.trim()).filter(Boolean).join(', ');
+  btn.disabled = true;
+  const { error } = await sb.from('staff_settings').upsert({ key: 'promo_hide_refs', value: v, updated_at: new Date().toISOString() });
+  btn.disabled = false;
+  if (error) return toast(friendly(error));
+  S.settings = { ...S.settings, promo_hide_refs: v }; $('#promo-refs').value = v; toast('Promo Stock Refs saved.', true);
 }
 function hSample(tpl) {
   const f = S.orders.find(x => x.customer_id && x.required_date) || { number: 13, required_date: '2026-10-15', special_order: false };
