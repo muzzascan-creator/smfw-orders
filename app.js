@@ -869,8 +869,9 @@ function gridHtml(secs, dis) {
     }).join('')}</tr>`).join('')}
   </tbody></table></div>`).join('');
 }
-// Condition 3 (Promo), set in Administration › Settings: pack types ticked Promo show only to customers ticked Promo,
-// and Promo customers don't see the Stock Refs listed there. Lines already on an order always stay.
+// Condition 3 (Promo), set in Administration › Settings, applies to the Buyers app only (orders a customer enters
+// themselves): pack types ticked Promo show only to customers ticked Promo, and Promo customers don't see the Stock
+// Refs listed there. Lines already on an order always stay. The Admin app always shows every product.
 const PROMO_HIDE_DEFAULT = '1010, 1011';
 const promoRefs = () => String(S.settings?.promo_hide_refs ?? PROMO_HIDE_DEFAULT).split(/[,\s]+/).map(x => x.trim().toUpperCase()).filter(Boolean);
 const promoShown = (k, cust) => k.promo ? !!cust?.promo : !(cust?.promo && promoRefs().includes(String(k.ref || '').trim().toUpperCase()));
@@ -991,7 +992,7 @@ function viewEntry() {
     const smfwCust = !d.customer_id || String(custOf(d.customer_id)?.cid) === String(CONVENTIONAL_CID) || !!d.special_order;
     const smfwHide = p => g === 'Conventional' && smfwCust && smfwSection(p.section) && !(p.product_packs || []).some(k => +d.qty?.[k.id] > 0);
     blocks = S.suppliers.slice().sort(byName).map(s => {
-      const ps = forCustomer(S.products.filter(p => p.supplier_id === s.id && groupOf(p) === g && !smfwHide(p)), custOf(d.customer_id)), secs = sectionsFor(ps); if (!secs.length) return '';
+      const ps = S.products.filter(p => p.supplier_id === s.id && groupOf(p) === g && !smfwHide(p)), secs = sectionsFor(ps); if (!secs.length) return '';
       return `<section class="supplier-block"><div class="supplier-head"><h2>${esc(s.name)}</h2><span>${esc(s.cutoff || '')}</span></div><div class="sections">${g === 'Conventional' ? flatHtml(ps, dis) : gridHtml(secs, dis)}</div></section>`;
     }).join('') || `<div class="card empty" style="margin-top:16px">No ${g} products are set up yet. Add them under <b>Products</b>.</div>`;
   } else {
@@ -1316,7 +1317,7 @@ function viewSettings() {
       <div class="muted" style="font-size:13px">Example: <code id="h-prev-${n}">${esc(hSample(hTemplate(n)))}</code></div></div>`;
   };
   const promo = `<div class="card setcard"><h2>Condition 3: Promo</h2>
-      <p class="sub" style="margin-top:4px">Customers ticked <b>Promo</b> (Customers › Edit customer) see the pack types ticked <b>Promo</b> (Products › Edit product) on their order form. Other customers don’t see Promo pack types.</p>
+      <p class="sub" style="margin-top:4px">Customers ticked <b>Promo</b> (Customers › Edit customer) see the pack types ticked <b>Promo</b> (Products › Edit product) on their order form in the Buyers app. Other customers don’t see Promo pack types. Orders entered in the Admin app show every product.</p>
       <h3 class="seth">Stock Refs Promo customers don’t see</h3>
       <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap"><input id="promo-refs" class="mono" style="flex:1;min-width:240px" value="${esc(promoRefs().join(', '))}" aria-label="Stock Refs Promo customers don't see">
         <button class="primary" onclick="savePromoRefs(this)">Save</button></div>
