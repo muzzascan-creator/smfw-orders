@@ -414,7 +414,11 @@ function refreshInBackground(all = true) {
   if (refreshing) return refreshing;
   const v = view, snap = () => JSON.stringify([S.customers, S.suppliers, S.products, S.orders, S.profiles, S.emails, S.sections, S.links]);
   const before = snap();
-  return refreshing = (all ? loadAll() : reloadOrders()).then(() => {
+  const sw = isAdmin() && S.settings?.auto_csv_2;
+  return refreshing = (all ? loadAll() : reloadOrders()).then(async () => {
+    // Auto CSV may have been switched on another PC, or Off by the Conventional cut-off.
+    if (isAdmin()) { const { data } = await sb.from('staff_settings').select('value').eq('key', 'auto_csv_2').maybeSingle(); if (data) S.settings = { ...S.settings, auto_csv_2: data.value }; }
+    if (isAdmin() && S.settings?.auto_csv_2 !== sw && view === 'orders' && canRedraw()) render();
     autoCsv2();
     if (view === v && canRedraw() && snap() !== before) render(); else updateNavBadge();
   }).finally(() => { refreshing = null; });
@@ -1805,9 +1809,16 @@ const csvName = o => safeName(`${orderNo(o.number)} ${custOf(o.customer_id)?.nam
 // tab has its CSV saved in the Condition 2 folder straight away by any Admin or Manager PC that has this app open and is connected
 // to that folder. Each order is claimed first, so two open PCs never both save it.
 const autoOn = () => S.settings?.auto_csv_2 === 'on';
+// Auto CSV switches itself Off when the day's Conventional cut-off arrives (Administration › Cut-offs; Supabase Cron, migration 039).
+function autoOffAt() {
+  const now = sydNow(), ts = cutRules('Conventional').filter(r => r.delivers !== 'none' && r.days_before != null && r.cutoff_time && r.dow === (isoDow(now.date) - 1 + r.days_before) % 7 + 1)
+    .map(r => toMins(r.cutoff_time)).filter(m => m > now.minutes);
+  return ts.length ? Math.min(...ts) : null;
+}
+const autoOffNote = () => { const m = autoOn() ? autoOffAt() : null; return m == null ? '' : `<span class="autonote">Turns Off at ${fmtTime(`${Math.floor(m / 60)}:${m % 60}`)} (Conventional cut-off)</span>`; };
 let auto2Busy = false, auto2Issue = '';
 const auto2Due = () => autoOn() ? S.orders.filter(o => o.direct && !o.csv_at && !nothingDelivered(o)) : [];
-const autoSwitch = () => `<button type="button" class="autosw${autoOn() ? ' on' : ''}" role="switch" aria-checked="${autoOn()}" ${isManager() ? 'disabled title="Only an Admin can switch this"' : `title="When On, orders arriving on the Received tab get their CSV saved in the ${esc(csvTarget(2) || 'Condition 2')} folder straight away" onclick="toggleAutoCsv(this)"`}><span class="knob"></span>Auto CSV ${autoOn() ? 'On' : 'Off'}</button>`;
+const autoSwitch = () => `<button type="button" class="autosw${autoOn() ? ' on' : ''}" role="switch" aria-checked="${autoOn()}" ${isManager() ? 'disabled title="Only an Admin can switch this"' : `title="When On, orders arriving on the Received tab get their CSV saved in the ${esc(csvTarget(2) || 'Condition 2')} folder straight away" onclick="toggleAutoCsv(this)"`}><span class="knob"></span>Auto CSV ${autoOn() ? 'On' : 'Off'}</button>${autoOffNote()}`;
 async function toggleAutoCsv(btn) {
   const v = autoOn() ? 'off' : 'on';
   if (v === 'on' && !csvTarget(2)) return toast('Choose the Condition 2 folder in Administration › Settings first.');

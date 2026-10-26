@@ -352,3 +352,4 @@ dialog:has(.packrow.withref){width:min(960px,calc(100vw - 32px))}
 /* Admin: a buyer's Special Requirements, shown read only on the order, and flagged on order rows. */
 .custnote-view .notebox{background:#fff8e1;border:1px solid #f0d27a;border-radius:8px;padding:8px 10px;white-space:pre-wrap;font-weight:600}
 .pill.bnote{background:#fff3cd;color:#7a5a00}
+.autonote{font-size:12px;color:var(--muted);margin-left:6px;white-space:nowrap}

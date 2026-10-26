@@ -36,5 +36,7 @@ select item, case when ok then 'OK' else 'NOT DONE' end as status from (values
   ('035 buyer Special Requirements', exists (select 1 from information_schema.columns where table_name = 'orders' and column_name = 'customer_notes')),
   ('036 Promo tick box', exists (select 1 from information_schema.columns where table_name = 'product_packs' and column_name = 'promo')),
   ('037 customer Promo tick box', exists (select 1 from information_schema.columns where table_name = 'customers' and column_name = 'promo')),
-  ('038 Condition 3 Promo', exists (select 1 from pg_policies where tablename = 'staff_settings' and policyname = 'promo_read'))
+  ('038 Condition 3 Promo', exists (select 1 from pg_policies where tablename = 'staff_settings' and policyname = 'promo_read')),
+  ('039 Auto CSV Off at Conventional cut-off', case when to_regclass('cron.job') is not null then
+      (xpath('//row/c/text()', query_to_xml('select count(*) as c from cron.job where jobname = ''auto-csv-cutoff''', false, false, '')))[1]::text::int > 0 else false end)
 ) as t(item, ok);
