@@ -1810,15 +1810,9 @@ const csvName = o => safeName(`${orderNo(o.number)} ${custOf(o.customer_id)?.nam
 // to that folder. Each order is claimed first, so two open PCs never both save it.
 const autoOn = () => S.settings?.auto_csv_2 === 'on';
 // Auto CSV switches itself Off when the day's Conventional cut-off arrives (Administration › Cut-offs; Supabase Cron, migration 039).
-function autoOffAt() {
-  const now = sydNow(), ts = cutRules('Conventional').filter(r => r.delivers !== 'none' && r.days_before != null && r.cutoff_time && r.dow === (isoDow(now.date) - 1 + r.days_before) % 7 + 1)
-    .map(r => toMins(r.cutoff_time)).filter(m => m > now.minutes);
-  return ts.length ? Math.min(...ts) : null;
-}
-const autoOffNote = () => { const m = autoOn() ? autoOffAt() : null; return m == null ? '' : `<span class="autonote">Turns Off at ${fmtTime(`${Math.floor(m / 60)}:${m % 60}`)} (Conventional cut-off)</span>`; };
 let auto2Busy = false, auto2Issue = '';
 const auto2Due = () => autoOn() ? S.orders.filter(o => o.direct && !o.csv_at && !nothingDelivered(o)) : [];
-const autoSwitch = () => `<button type="button" class="autosw${autoOn() ? ' on' : ''}" role="switch" aria-checked="${autoOn()}" ${isManager() ? 'disabled title="Only an Admin can switch this"' : `title="When On, orders arriving on the Received tab get their CSV saved in the ${esc(csvTarget(2) || 'Condition 2')} folder straight away" onclick="toggleAutoCsv(this)"`}><span class="knob"></span>Auto CSV ${autoOn() ? 'On' : 'Off'}</button>${autoOffNote()}`;
+const autoSwitch = () => `<button type="button" class="autosw${autoOn() ? ' on' : ''}" role="switch" aria-checked="${autoOn()}" ${isManager() ? 'disabled title="Only an Admin can switch this"' : `title="When On, orders arriving on the Received tab get their CSV saved in the ${esc(csvTarget(2) || 'Condition 2')} folder straight away" onclick="toggleAutoCsv(this)"`}><span class="knob"></span>Auto CSV ${autoOn() ? 'On' : 'Off'}</button>`;
 async function toggleAutoCsv(btn) {
   const v = autoOn() ? 'off' : 'on';
   if (v === 'on' && !csvTarget(2)) return toast('Choose the Condition 2 folder in Administration › Settings first.');
