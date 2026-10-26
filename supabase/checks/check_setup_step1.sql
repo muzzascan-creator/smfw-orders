@@ -34,5 +34,6 @@ select item, case when ok then 'OK' else 'NOT DONE' end as status from (values
   ('033 more speed-ups', to_regclass('public.orders_updated_idx') is not null),
   ('034 purchase order import', to_regclass('public.po_items') is not null),
   ('035 buyer Special Requirements', exists (select 1 from information_schema.columns where table_name = 'orders' and column_name = 'customer_notes')),
-  ('036 Promo tick box', exists (select 1 from information_schema.columns where table_name = 'product_packs' and column_name = 'promo'))
+  ('036 Promo tick box', exists (select 1 from information_schema.columns where table_name = 'product_packs' and column_name = 'promo')),
+  ('037 customer Promo tick box', exists (select 1 from information_schema.columns where table_name = 'customers' and column_name = 'promo'))
 ) as t(item, ok);
