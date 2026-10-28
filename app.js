@@ -75,6 +75,8 @@ const orderNo = n => n == null ? '' : 'SO-' + String(n).padStart(4, '0');
 // Admins and Managers share the office dashboard; only Admins see Suppliers and Administration (migrations/012).
 const isAdmin = () => ['admin', 'manager'].includes(profile?.role) && profile?.approved;
 const isManager = () => profile?.role === 'manager' && profile?.approved;
+// Only Admin logins create upload CSV files (by hand or with Auto CSV); Managers see the CSV status only.
+const canCsv = () => isAdmin() && !isManager();
 const ADMIN_ONLY = ['suppliers', 'emails', 'users', 'sms', 'cutoffs', 'settings', 'recv'];
 // The Administration tab holds Emails, Logins, SMS and Cut-offs; it opens on whichever was used last.
 const ADMIN_TABS = [['customers', 'Customers'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['emails', 'Emails'], ['users', 'Logins'], ['sms', 'SMS'], ['cutoffs', 'Cut-offs'], ['pomatch', 'PO Matching'], ['settings', 'Settings']];
@@ -463,7 +465,7 @@ function orderRow(o, opts = {}) {
       : `<span class="pill ${esc(o.status)}">${esc(statusText(o.status))}</span>`}</td>
     ${opts.acts ? `<td class="num acts c-acts" onclick="event.stopPropagation()"><button class="ghost" onclick="openOrder('${o.id}')">View</button><button class="ghost" onclick="printOrder('${o.id}', this)">Print<span class="long"> Order</span></button></td>`
       : `<td class="num openc"><button class="ghost" onclick="event.stopPropagation();openOrder('${o.id}')">Open</button></td>`}
-    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${noUpload(o) ? `disabled title="${nothingDelivered(o) ? 'Nothing was delivered, so no CSV can be created' : 'Required date has passed'}"` : upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
+    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${!canCsv() ? 'disabled title="Only an Admin can create CSV files"' : noUpload(o) ? `disabled title="${nothingDelivered(o) ? 'Nothing was delivered, so no CSV can be created' : 'Required date has passed'}"` : upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${pastDone(o) ? `disabled title="${o.direct ? 'Not emailed: CSV only' : 'Required date has passed'}"` : picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
 }
 // Receiver: completed orders not yet received.
@@ -733,9 +735,9 @@ function viewOrders() {
       ${['pending', 'draft', 'received', 'complete'].map(f => `<button class="${listFilter === f ? 'primary' : ''}" onclick="listFilter='${f}';render()">${f === 'pending' ? 'Pending' : f === 'draft' ? 'Drafts' : f === 'received' ? 'Received' : 'Complete'} (${count(f)})</button>`).join('')}
       <input class="search" id="osearch" placeholder="Search order no., customer or CID" value="${esc(search)}">
     </div>
-        <div class="pickbar row spread"><span id="pickcount">${pickText()}</span><div class="row"><button id="pickclear" ${picked.size || upPicked.size ? '' : 'hidden'} onclick="picked.clear();upPicked.clear();render()">Clear</button>${autoSwitch()}<button class="primary" id="pickup" ${upPicked.size ? '' : 'disabled'} onclick="uploadCsvs()">Create upload CSV</button><button class="primary" id="pickmail" ${picked.size ? '' : 'disabled'} onclick="emailPicked()">Email selected</button></div></div></div>
+        <div class="pickbar row spread"><span id="pickcount">${pickText()}</span><div class="row"><button id="pickclear" ${picked.size || upPicked.size ? '' : 'hidden'} onclick="picked.clear();upPicked.clear();render()">Clear</button>${autoSwitch()}<button class="primary" id="pickup" ${upPicked.size ? '' : 'disabled'} ${canCsv() ? '' : 'hidden'} onclick="uploadCsvs()">Create upload CSV</button><button class="primary" id="pickmail" ${picked.size ? '' : 'disabled'} onclick="emailPicked()">Email selected</button></div></div></div>
     ${auto2Banner()}
-    ${os.length ? `<div class="tablewrap stickyhead"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num lines">Lines</th><th><div class="stgrid"><span>Status</span><span>Emailed</span><span>Received</span><span>CSV</span></div></th><th class="openc"></th><th class="pick"><span class="picklbl">Upload</span><input type="checkbox" id="upall" aria-label="Select all orders shown for upload" ${bulk.some(o => !noUpload(o)) && bulk.every(o => noUpload(o) || upPicked.has(o.id)) ? 'checked' : ''} ${bulk.every(noUpload) ? 'disabled' : ''}></th><th class="pick"><span class="picklbl">Email</span><input type="checkbox" id="pickall" aria-label="Select all orders shown for emailing" ${bulk.some(o => !pastDone(o)) && bulk.every(o => pastDone(o) || picked.has(o.id)) ? 'checked' : ''} ${bulk.every(pastDone) ? 'disabled' : ''}></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true, pick: true, later: isLater(o) })).join('')}</tbody></table></div>`
+    ${os.length ? `<div class="tablewrap stickyhead"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>From</th><th class="num lines">Lines</th><th><div class="stgrid"><span>Status</span><span>Emailed</span><span>Received</span><span>CSV</span></div></th><th class="openc"></th><th class="pick"><span class="picklbl">Upload</span><input type="checkbox" id="upall" aria-label="Select all orders shown for upload" ${canCsv() ? '' : 'disabled title="Only an Admin can create CSV files"'} ${bulk.some(o => !noUpload(o)) && bulk.every(o => noUpload(o) || upPicked.has(o.id)) ? 'checked' : ''} ${bulk.every(noUpload) ? 'disabled' : ''}></th><th class="pick"><span class="picklbl">Email</span><input type="checkbox" id="pickall" aria-label="Select all orders shown for emailing" ${bulk.some(o => !pastDone(o)) && bulk.every(o => pastDone(o) || picked.has(o.id)) ? 'checked' : ''} ${bulk.every(pastDone) ? 'disabled' : ''}></th></tr></thead><tbody>${os.map(o => orderRow(o, { source: true, pick: true, later: isLater(o) })).join('')}</tbody></table></div>`
       : `<div class="card empty">${S.orders.length ? 'No orders match this filter.' : 'No orders yet.'}</div>`}
     <p class="muted" style="margin-top:10px">Showing unfinished orders and the last ${recentDays()} days. ${q ? `<button class="link" onclick="searchOlder(this)">Search older orders for “${esc(search.trim())}”</button>` : 'Type an order number, customer or CID in the search box to look further back.'}</p>`;
 }
@@ -774,7 +776,7 @@ function wireOrderSearch() {
     if (all) all.onchange = () => { (all.checked ? bulk : boxes).forEach(b => { b.checked = all.checked; all.checked ? set.add(b.dataset[key]) : set.delete(b.dataset[key]); }); sync(); };
   });
 }
-const pickText = () => picked.size || upPicked.size ? [upPicked.size && `${upPicked.size} for upload`, picked.size && `${picked.size} to email`].filter(Boolean).join(' · ') : 'Tick orders on the right to create an upload CSV or email them to the supplier.';
+const pickText = () => picked.size || upPicked.size ? [upPicked.size && `${upPicked.size} for upload`, picked.size && `${picked.size} to email`].filter(Boolean).join(' · ') : canCsv() ? 'Tick orders on the right to create an upload CSV or email them to the supplier.' : 'Tick orders on the right to email them to the supplier.';
 // On a phone or tablet (iPhone, iPad or Android), suggest adding the site to the home screen so it opens like an app.
 const isIos = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isAndroid = () => /Android/i.test(navigator.userAgent);
@@ -1825,7 +1827,7 @@ async function toggleAutoCsv(btn) {
 }
 function setAuto2(msg) { if (msg === auto2Issue) return; auto2Issue = msg; if (view === 'orders' && canRedraw()) render(); }
 async function autoCsv2() {
-  if (!isAdmin() || !canPickFolder() || auto2Busy || !auto2Due().length) return auto2Due().length || setAuto2('');
+  if (!canCsv() || !canPickFolder() || auto2Busy || !auto2Due().length) return auto2Due().length || setAuto2('');
   auto2Busy = true;
   try {
     // Another PC may have just switched it Off.
@@ -1857,7 +1859,7 @@ async function reconnectCsv2() {
   await chooseCsvFolder(2);
 }
 function auto2Banner() {
-  const n = auto2Due().length; if (!n || !auto2Issue) return '';
+  const n = auto2Due().length; if (!n || !auto2Issue || !canCsv()) return '';
   const what = `Auto CSV is On, and ${n} order${n > 1 ? 's are' : ' is'} waiting for a CSV.`;
   if (!canPickFolder()) return `<div class="banner">${what} Open this app in Chrome or Edge on a PC to save them.</div>`;
   if (auto2Issue === 'no-folder') return `<div class="banner">${what} Choose the Condition 2 folder in Administration › Settings.</div>`;
@@ -1865,6 +1867,7 @@ function auto2Banner() {
   return `<div class="banner">${what} Fix these, then they save on their own:<br>${esc(auto2Issue.slice(9)).replace(/\n/g, '<br>')}</div>`;
 }
 async function uploadCsvs() {
+  if (!canCsv()) return toast('Only an Admin can create CSV files.');
   dropPastDone(); if (!upPicked.size) { render(); return toast('No CSV can be created for those orders: nothing was delivered, or their required date has passed.'); }
   // Direct (Received tab) orders go to the Condition 2 folder, everything else to Condition 1.
   const os = S.orders.filter(o => upPicked.has(o.id)).sort((a, b) => a.number - b.number), folders = {};
