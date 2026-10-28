@@ -995,8 +995,7 @@ function viewEntry() {
     // Admins enter one group at a time: the form shows only the Organic or only the Conventional products.
     const g = d.group || 'Organic';
     // SMFW's own Conventional orders (No customer, CID 1183) and Special Orders leave out the Vegetables and Drinks sections, apart from lines already on the order.
-    const smfwCust = !d.customer_id || String(custOf(d.customer_id)?.cid) === String(CONVENTIONAL_CID) || !!d.special_order;
-    const smfwHide = p => g === 'Conventional' && smfwCust && smfwSection(p.section) && !(p.product_packs || []).some(k => +d.qty?.[k.id] > 0);
+    const smfwHide = p => g === 'Conventional' && smfwOrder(d) && smfwSection(p.section) && !(p.product_packs || []).some(k => +d.qty?.[k.id] > 0);
     blocks = S.suppliers.slice().sort(byName).map(s => {
       const ps = S.products.filter(p => p.supplier_id === s.id && groupOf(p) === g && !smfwHide(p)), secs = sectionsFor(ps); if (!secs.length) return '';
       return `<section class="supplier-block"><div class="supplier-head"><h2>${esc(s.name)}</h2><span>${esc(s.cutoff || '')}</span></div><div class="sections">${g === 'Conventional' ? flatHtml(ps, dis) : gridHtml(secs, dis)}</div></section>`;
@@ -1577,7 +1576,9 @@ async function formPdf(o, s) {
   const mine = p => s.id === '*' || p.supplier_id === s.id;
   // A product switched off since the order was taken still prints when the order has it.
   const onOrder = new Set((o.lines || []).map(l => l.product_id));
-  const own = S.products.filter(mine).map(p => p.active === false && onOrder.has(p.id) ? { ...p, active: true } : p);
+  // Rule 1: SMFW's own Conventional orders and Special Orders leave out the Vegetables and Drinks sections, apart from products on the order.
+  const smfwHide = p => groupOf(p) === 'Conventional' && smfwOrder(o) && smfwSection(p.section) && !onOrder.has(p.id);
+  const own = S.products.filter(p => mine(p) && !smfwHide(p)).map(p => p.active === false && onOrder.has(p.id) ? { ...p, active: true } : p);
   const used = new Set((o.lines || []).map(l => prodOf(l.product_id)).filter(p => p && mine(p)).map(groupOf));
   const gs = GROUPS.filter(g => used.has(g)), mixed = gs.length > 1;
   const secs = gs.flatMap(g => sectionsFor(own.filter(p => groupOf(p) === g)).map(x => mixed && !x.name.toLowerCase().startsWith(g.toLowerCase()) ? { ...x, name: `${g} ${x.name}` } : x));
@@ -1736,6 +1737,8 @@ async function outlookEmail(i, btn) {
 //   H,<CID>,<date required as YYYYMMDD>[,S]   (S only when Special Order is ticked)
 //   D,<Ref>,<order qty × outer multiple>   (one line per order line)
 const CONVENTIONAL_CID = 1183;
+// SMFW's own Conventional orders (No customer, or CID 1183) and Special Orders: no Vegetables or Drinks sections on the form or the emailed sheet.
+const smfwOrder = o => !o.customer_id || String(custOf(o.customer_id)?.cid) === String(CONVENTIONAL_CID) || !!o.special_order;
 // The Vegetables and Drinks sections aren't offered on SMFW's own Conventional orders (No customer, or a customer with CID 1183).
 const smfwSection = sec => /^(vegetables?|drinks?|vegetables?\s*(&|and|\+)\s*drinks?)$/.test(String(sec || '').toLowerCase().replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim());
 const ymd = d => (d || '').replace(/-/g, '');
