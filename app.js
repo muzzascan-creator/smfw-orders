@@ -136,11 +136,11 @@ async function loadAll() {
   const cuts = isReceiver() ? [] : [sb.from('cutoff_rules').select('*'), sb.from('cutoff_settings').select('*')];
   let base, cr, cs;
   if (isReceiver()) {
-    const [c, s, p, o] = base = await Promise.all([sb.from('customers').select('id,cid,name,phone'), sb.from('suppliers').select('*'), prods, orders]);
+    const [c, s, p, o] = base = await Promise.all([allRows(() => sb.from('customers').select('id,cid,name,phone').order('id')), sb.from('suppliers').select('*'), prods, orders]);
     S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || [];
   } else if (isAdmin()) {
     let c, s, p, o, u, m, sec, lk, bc, st;
-    [c, s, p, o, u, m, sec, lk, bc, st, cr, cs] = await Promise.all([sb.from('customers').select('*'), sb.from('suppliers').select('*'), prods, orders, sb.from('profiles').select('*').order('created_at'), sb.from('supplier_emails').select('*').order('sort'), sb.from('product_sections').select('name'), sb.from('profile_customers').select('*'), (batchAll ? sb.from('batch_codes').select('*') : sb.from('batch_codes').select('*').gte('entered_at', shiftDate(today(), -90))).order('entered_at', { ascending: false }), sb.from('staff_settings').select('key,value'), ...cuts]);
+    [c, s, p, o, u, m, sec, lk, bc, st, cr, cs] = await Promise.all([allRows(() => sb.from('customers').select('*').order('id')), sb.from('suppliers').select('*'), prods, orders, allRows(() => sb.from('profiles').select('*').order('created_at').order('id')), allRows(() => sb.from('supplier_emails').select('*').order('sort').order('id')), sb.from('product_sections').select('name'), allRows(() => sb.from('profile_customers').select('*').order('profile_id').order('customer_id')), allRows(() => (batchAll ? sb.from('batch_codes').select('*') : sb.from('batch_codes').select('*').gte('entered_at', shiftDate(today(), -90))).order('entered_at', { ascending: false }).order('id')), sb.from('staff_settings').select('key,value'), ...cuts]);
     base = [c, s, p, o, u, m, sec, lk];
     S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || []; S.profiles = u.data || [];
     S.emails = m.data || []; S.sections = (sec.data || []).map(r => r.name); S.links = lk.data || []; S.batches = bc.data || []; // batch codes: empty until 030 is run
@@ -178,6 +178,17 @@ function inPlay(q) {
   // Not finished: not Complete, no CSV yet, or (for orders that aren't direct) not yet emailed or received.
   return q.or(noDirect ? `status.neq.complete,csv_at.is.null,emailed_at.is.null,received_at.is.null,updated_at.gte.${d},required_date.gte.${d}`
     : `status.neq.complete,csv_at.is.null,and(direct.is.false,or(emailed_at.is.null,received_at.is.null)),updated_at.gte.${d},required_date.gte.${d}`);
+}
+// Every row of a list, in pages: the server hands back at most 1000 rows per ask, so a long list would be cut short.
+// make() builds the query, with an order so the pages don't overlap.
+async function allRows(make) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await make().range(from, from + 999);
+    if (error) return { error };
+    out.push(...data);
+    if (data.length < 1000) return { data: out };
+  }
 }
 // Products in pages: the server hands back at most 1000 rows per ask, so a long list would be cut short.
 const PROD_PAGE = 1000;
@@ -608,7 +619,7 @@ async function importPo(input) {
   const file = input.files[0]; input.value = ''; if (!file) return;
   let r; try { r = await readPo(file); } catch (e) { return toast('That PDF couldn’t be read: ' + e.message); }
   if (!r.cols.length || !r.lines.length) return toast('No store columns or product lines were found in that PDF. It needs a Description column with a quantity column per store.');
-  const [st, it] = await Promise.all([sb.from('po_stores').select('*'), sb.from('po_items').select('*')]);
+  const [st, it] = await Promise.all([allRows(() => sb.from('po_stores').select('*').order('label')), allRows(() => sb.from('po_items').select('*').order('description'))]);
   if (st.error || it.error) return toast(friendly(st.error || it.error));
   // A match saved with no customer / product means "Don't import" / "Skip".
   const stores = Object.fromEntries(st.data.map(x => [x.label, x.customer_id || 'skip'])), packs = Object.fromEntries(it.data.map(x => [x.description, x.pack_id || 'skip']));
@@ -678,7 +689,7 @@ async function createPoOrders(btn) {
 }
 // Administration › PO Matching: the remembered store and product matches used by Import purchase order.
 async function loadPoMatch() {
-  const [st, it] = await Promise.all([sb.from('po_stores').select('*').order('label'), sb.from('po_items').select('*').order('description')]);
+  const [st, it] = await Promise.all([allRows(() => sb.from('po_stores').select('*').order('label')), allRows(() => sb.from('po_items').select('*').order('description'))]);
   if (st.error || it.error) { S.poMatch = { error: friendly(st.error || it.error) }; } else S.poMatch = { stores: st.data, items: it.data };
   if (view === 'pomatch') render();
 }
