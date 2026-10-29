@@ -1288,18 +1288,20 @@ function viewSpeed() {
   }
   const lines = Object.entries(sp.qty).filter(([, q]) => +q > 0).map(([id, q]) => ({ id, q: +q, f: packOf(id) })).filter(x => x.f);
   const total = lines.reduce((a, x) => a + x.q, 0);
+  const padcol = `<aside class="sppadcol">
+    <div class="spcustbox"><span class="muted">Customer</span><b>${sp.cust ? esc(spCustName()) : 'Not chosen yet'}</b>${sp.cust ? `<button type="button" onclick="spChangeCust()">Change customer</button>` : ''}</div>
+    <div class="sppadwrap"><div class="sppadlabel">${!sp.cust ? 'Type a CID' : sp.pack && packOf(sp.pack) ? `Quantity for ${esc(packOf(sp.pack).p.name)}, ${esc(packOf(sp.pack).k.name)}` : 'Select a line to change its quantity'}<span class="sppadval">${esc(!sp.cust ? sp.cid : sp.pad)}</span></div>${pad}</div>
+  </aside>`;
   const side = `<aside class="spside">
-    <div class="spcustbar">${sp.cust ? `<div><span class="muted">Customer</span><b>${esc(spCustName())}</b></div><button type="button" onclick="spChangeCust()">Change</button>` : '<div><span class="muted">Customer</span><b>Not chosen yet</b></div>'}</div>
     ${sp.cust ? `<div class="spdays">${spDays().map(d => `<button type="button" class="${d === sp.req ? 'on' : ''}" onclick="sp.req='${d}';render()">${esc(spDayLabel(d))}</button>`).join('')}</div>
       <label class="spspo"><input type="checkbox" ${sp.spo ? 'checked' : ''} onchange="sp.spo=this.checked;render()"> Special Order</label>` : ''}
     <div class="splines">${lines.length ? lines.map(x => `<div class="spline ${x.id === sp.pack ? 'on' : ''}" onclick="spSelLine('${x.id}')"><div class="spl-name"><b>${esc(x.f.p.name)}</b><span>${esc(x.f.k.name)}</span></div>
         <button type="button" class="spq" onclick="event.stopPropagation();spStep('${x.id}',-1)">−</button><span class="spn">${x.q}</span><button type="button" class="spq" onclick="event.stopPropagation();spStep('${x.id}',1)">+</button></div>`).join('') : `<p class="muted spempty">${sp.cust ? 'Tap a product, then its pack, to add it.' : 'Choose a customer to start.'}</p>`}</div>
-    <div class="sppadwrap"><div class="sppadlabel">${!sp.cust ? 'Type a CID' : sp.pack && packOf(sp.pack) ? `Quantity for ${esc(packOf(sp.pack).p.name)}, ${esc(packOf(sp.pack).k.name)}` : 'Select a line to change its quantity'}<span class="sppadval">${esc(!sp.cust ? sp.cid : sp.pad)}</span></div>${pad}</div>
     <div class="spactions"><span class="muted">${lines.length} line${lines.length === 1 ? '' : 's'} · ${total} in total</span>
       <div class="row"><button type="button" onclick="spClear()">Clear</button><button type="button" onclick="spSave('draft')" ${sp.cust && lines.length ? '' : 'disabled'}>Save draft</button><button type="button" class="primary" onclick="spSave('complete')" ${sp.cust && lines.length && sp.req ? '' : 'disabled'}>Transmit Order</button></div></div>
   </aside>`;
   return `<div class="speed"><div class="spbar"><h1>Speed Screen</h1><span class="muted">Conventional orders</span>${SPEED_PAGE ? `<span class="muted">${esc(profile?.full_name || profile?.email || '')}</span><button type="button" class="spexit" onclick="sb.auth.signOut()">Sign out</button>` : `<button type="button" class="spexit" onclick="go('orders')">Exit</button>`}</div>
-    <div class="spbody"><section class="spmainarea">${main}</section>${side}</div></div>`;
+    <div class="spbody"><section class="spmainarea">${main}</section>${padcol}${side}</div></div>`;
 }
 function spPickCust(id) { sp.cust = id; sp.letter = ''; sp.cid = ''; sp.req = ''; sp.spo = false; render(); }
 function spChangeCust() { sp.cust = ''; sp.pack = ''; sp.pad = ''; render(); }

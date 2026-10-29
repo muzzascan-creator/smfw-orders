@@ -359,7 +359,7 @@ body.speedmode .wrap{max-width:none;padding:0}
 .spbar{display:flex;align-items:center;gap:14px;padding:10px 18px;border-bottom:1px solid var(--line);background:var(--surface)}
 .spbar h1{margin:0;font-size:clamp(20px,1.6vw,28px)}
 .spexit{margin-left:auto;font-size:18px;padding:10px 26px}
-.spbody{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) clamp(320px,30vw,520px)}
+.spbody{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) clamp(240px,19vw,360px) clamp(280px,22vw,420px)}
 .spmainarea{min-height:0;overflow:auto;padding:14px 18px;display:flex;flex-direction:column;gap:12px}
 .sphead{display:flex;align-items:baseline;gap:12px}.sphead h2{margin:0;font-size:clamp(17px,1.3vw,22px)}
 .spletters{display:grid;grid-template-columns:repeat(13,1fr);gap:6px}
@@ -374,8 +374,10 @@ body.speedmode .wrap{max-width:none;padding:0}
 .spbtn.spmain{background:var(--accent-soft);border-color:var(--accent)}
 .sppacks{border-top:2px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:10px}
 .spside{min-height:0;display:flex;flex-direction:column;gap:10px;padding:14px;border-left:1px solid var(--line);background:var(--sunk)}
-.spcustbar{display:flex;align-items:center;gap:10px}.spcustbar div{flex:1;display:flex;flex-direction:column}.spcustbar b{font-size:clamp(16px,1.2vw,20px)}
-.spcustbar button{font-size:16px;padding:10px 16px}
+.sppadcol{min-height:0;display:flex;flex-direction:column;gap:12px;padding:14px;border-left:1px solid var(--line);background:var(--sunk)}
+.spcustbox{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:10px;text-align:center;background:var(--surface);border:1.5px solid var(--line);border-radius:12px;padding:14px}
+.spcustbox b{font-size:clamp(22px,2vw,36px);line-height:1.2;overflow-wrap:anywhere}
+.spcustbox button{font-size:16px;padding:10px 16px}
 .spdays{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .spspo{display:flex;align-items:center;gap:8px;font-size:16px}.spspo input{width:24px;height:24px}
 .splines{flex:1;min-height:130px;overflow:auto;display:flex;flex-direction:column;gap:6px}
@@ -392,7 +394,8 @@ body.speedmode .wrap{max-width:none;padding:0}
 .spactions{display:flex;flex-direction:column;gap:8px}
 .spactions .row{display:grid;grid-template-columns:1fr 1fr 1.6fr;gap:8px}
 .spactions button{min-height:clamp(48px,5.6vh,64px);font-size:18px;font-weight:600}
-@media (max-width:1000px){.spbody{grid-template-columns:minmax(0,1fr) 300px}.spletters{grid-template-columns:repeat(9,1fr)}}
-@media (max-width:760px){.speed{height:auto}.spbody{grid-template-columns:1fr}.spside{border-left:0;border-top:1px solid var(--line)}}
-.spcusts{flex:1;min-height:0;overflow:auto;align-content:start}
+@media (max-width:1000px){.spbody{grid-template-columns:minmax(0,1fr) 220px 260px}.spletters{grid-template-columns:repeat(9,1fr)}}
+@media (max-width:760px){.speed{height:auto}.spbody{grid-template-columns:1fr}.spside,.sppadcol{border-left:0;border-top:1px solid var(--line)}}
+.spcusts{flex:1;min-height:0;overflow:auto;align-content:start;grid-template-columns:repeat(5,minmax(0,1fr))}
 .spmainarea:has(.spcusts){overflow:hidden}
+@media (max-width:1500px){.spdays{grid-template-columns:repeat(2,1fr)}}
