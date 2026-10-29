@@ -409,7 +409,7 @@ const homeView = () => isAdmin() ? 'inbox' : isReceiver() ? 'recv' : 'mine';
 function navItems() {
   if (isReceiver()) return [['recv', 'Orders']];
   return isAdmin()
-    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['batch', 'Batch Code'], ['recv', 'Receiver'], ['admin', 'Administration']].filter(([v]) => !isManager() || !ADMIN_ONLY.includes(v))
+    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['speed', 'Speed Screen'], ['batch', 'Batch Code'], ['recv', 'Receiver'], ['admin', 'Administration']].filter(([v]) => !isManager() || !ADMIN_ONLY.includes(v))
     : [['mine', 'My orders'], ['entry', 'New order']];
 }
 function inboxCount() { return S.orders.filter(o => o.status === 'submitted').length; }
@@ -445,13 +445,14 @@ function render() {
   // A customer looking at an order they can't change uses Close to leave it; the tabs wait until then.
   const locked = !isAdmin() && !isReceiver() && view === 'entry' && !!draft?.id && !canEditDraft();
   nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" ${locked ? 'disabled title="Press Close to leave this order"' : ''} aria-current="${(v === view || v === 'recv' && view === 'recvorder' || v === 'admin' && adminTabs().some(([t]) => t === view)) && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
-  const views = { pomatch: viewPoMatch, recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, batch: viewBatch, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers, sms: viewSms, cutoffs: viewCutoffs, settings: viewSettings };
+  const views = { pomatch: viewPoMatch, recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, speed: viewSpeed, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, batch: viewBatch, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers, sms: viewSms, cutoffs: viewCutoffs, settings: viewSettings };
   const allowed = isManager() ? Object.keys(views).filter(v => !ADMIN_ONLY.includes(v) && !v.startsWith('recv')) : isAdmin() ? null : isReceiver() ? ['recv', 'recvorder'] : ['mine', 'entry'];
   // The Receiver screens are for Receivers, and for an Admin through the Receiver tab (not Managers).
   if (!views[view] || ['recv', 'recvorder'].includes(view) && !isReceiver() && !(isAdmin() && !isManager()) || (allowed && !allowed.includes(view))) view = homeView();
   if (view === 'entry' && !draft) draft = blankOrder();
   const keep = view === 'recvorder' ? $('.recvscroll')?.scrollTop : 0; // ticking a line re-draws the screen; stay where you were
   const sub = adminTabs().some(([t]) => t === view) ? `<div class="adminbar"><div class="grpswitch" role="tablist" aria-label="Administration">${adminTabs().map(([t, l]) => `<button type="button" role="tab" aria-selected="${t === view}" class="${t === view ? 'on' : ''}" onclick="go('${t}');refreshInBackground()">${l}</button>`).join('')}</div></div>` : '';
+  document.body.classList.toggle('speedmode', view === 'speed');
   $('#app').innerHTML = sub + views[view]();
   if (view === 'entry') wireEntry();
   if (view === 'orders') wireOrderSearch();
@@ -1204,6 +1205,95 @@ async function reopenOrder() {
 async function deleteOrder(btn) {
   if (!btn.classList.contains('armed')) { btn.classList.add('armed'); btn.textContent = 'Press again to delete'; setTimeout(() => { if (btn.isConnected) { btn.classList.remove('armed'); btn.textContent = 'Delete order'; } }, 4000); return; }
   if (await run(sb.from('orders').delete().eq('id', draft.id), 'Order deleted')) { await reloadOrders(); draft = null; go(isAdmin() ? 'orders' : 'mine', false); }
+}
+
+// ---------- Speed Screen ----------
+// A full-screen, touch-only way for Admins and Managers to enter Conventional orders: big buttons for the customer,
+// the product and its pack, a number pad for quantities, and day buttons for the date required. No keyboard needed.
+// It saves through saveOrder, so the order follows the same rules as New order and lands on the Orders tab.
+const SP_NONE = 'none'; // No customer: SMFW's own Main Conventional Order (CID 1183)
+let sp = null;
+const spReset = () => { sp = { cust: '', letter: '', cid: '', sec: '', prod: '', pack: '', pad: '', qty: {}, req: '', spo: false }; };
+const spCust = () => sp.cust && sp.cust !== SP_NONE ? custOf(sp.cust) : null;
+const spCustName = () => sp.cust === SP_NONE ? 'Main Conventional Order (CID 1183)' : spCust() ? `${spCust().name} (CID ${spCust().cid})` : '';
+const spSmfw = () => smfwOrder({ customer_id: sp.cust === SP_NONE ? null : sp.cust, special_order: sp.spo });
+const spPacks = p => (p.product_packs || []).filter(k => k.available || +sp.qty[k.id] > 0);
+function spProducts() {
+  const hide = p => spSmfw() && smfwSection(p.section) && !(p.product_packs || []).some(k => +sp.qty[k.id] > 0);
+  return S.products.filter(p => groupOf(p) === 'Conventional' && (p.active !== false || (p.product_packs || []).some(k => +sp.qty[k.id] > 0)) && !hide(p) && spPacks(p).length).sort(bySort);
+}
+// Customers who can order Conventional, busiest first (by orders loaded) until a letter or CID is chosen.
+function spCustomers() {
+  const cs = S.customers.filter(c => custAllows(c, 'Conventional'));
+  if (sp.cid) return cs.filter(c => String(c.cid).startsWith(sp.cid)).sort((a, b) => a.cid - b.cid);
+  if (sp.letter) return cs.filter(c => (c.name || '').trim().toUpperCase().startsWith(sp.letter)).sort(byName);
+  const n = {}; S.orders.forEach(o => { if (o.customer_id) n[o.customer_id] = (n[o.customer_id] || 0) + 1; });
+  return cs.sort((a, b) => (n[b.id] || 0) - (n[a.id] || 0) || byName(a, b)).slice(0, 24);
+}
+function spDays() {
+  const first = earliestReq('Conventional', spCust()), out = [];
+  for (let i = 0; out.length < 4 && i < 10; i++) { const d = shiftDate(first, i); if (!orderProblem('Conventional', d, spCust())) out.push(d); }
+  return out;
+}
+const spDayLabel = d => d === today() ? 'Today' : d === tomorrow() ? 'Tomorrow' : new Date(d + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
+function viewSpeed() {
+  if (!sp) spReset();
+  if (sp.cust && (!sp.req || !spDays().includes(sp.req))) sp.req = sp.req || spDays()[0] || '';
+  const pad = `<div class="sppad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map(k => `<button type="button" onclick="spKey('${k}')">${k}</button>`).join('')}</div>`;
+  let main;
+  if (!sp.cust) {
+    const cs = spCustomers();
+    main = `<div class="sphead"><h2>Choose the customer</h2><span class="muted">${sp.cid ? `CID starting ${esc(sp.cid)}` : sp.letter ? `Names starting ${esc(sp.letter)}` : 'Most used'}</span></div>
+      <div class="spletters">${[...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(l => `<button type="button" class="${sp.letter === l ? 'on' : ''}" onclick="sp.letter=sp.letter==='${l}'?'':'${l}';sp.cid='';render()">${l}</button>`).join('')}</div>
+      <div class="spgrid spcusts"><button type="button" class="spbtn spmain" onclick="spPickCust('${SP_NONE}')"><b>Main Conventional Order</b><span>No customer · CID 1183</span></button>
+        ${cs.map(c => `<button type="button" class="spbtn" onclick="spPickCust('${c.id}')"><b>${esc(c.name)}</b><span>CID ${esc(c.cid)}</span></button>`).join('') || '<p class="muted">No customers match.</p>'}</div>`;
+  } else {
+    const ps = spProducts(), secs = [...new Set(ps.map(p => p.section || 'Other'))];
+    if (!secs.includes(sp.sec)) sp.sec = secs[0] || '';
+    const inSec = ps.filter(p => (p.section || 'Other') === sp.sec), prod = ps.find(p => p.id === sp.prod);
+    main = `<div class="sptabs">${secs.map(s => `<button type="button" class="${s === sp.sec ? 'on' : ''}" onclick="sp.sec=${esc(JSON.stringify(s))};sp.prod='';render()">${esc(s)}</button>`).join('')}</div>
+      <div class="spgrid spprods">${inSec.map(p => { const n = spPacks(p).reduce((a, k) => a + (+sp.qty[k.id] || 0), 0); return `<button type="button" class="spbtn ${p.id === sp.prod ? 'on' : ''} ${n ? 'has' : ''}" onclick="spPickProd('${p.id}')"><b>${esc(p.name)}</b><span>${esc(p.code || '')}${n ? ` · ${n} on order` : ''}</span></button>`; }).join('') || '<p class="muted">No products in this section.</p>'}</div>
+      ${prod ? `<div class="sppacks"><div class="sphead"><h2>${esc(prod.name)}: choose the pack</h2></div><div class="spgrid">${spPacks(prod).map(k => `<button type="button" class="spbtn sppack ${k.id === sp.pack ? 'on' : ''} ${+sp.qty[k.id] ? 'has' : ''}" onclick="spPickPack('${k.id}')"><b>${esc(k.name)}</b><span>${+sp.qty[k.id] ? `${sp.qty[k.id]} on order` : 'Tap to add'}</span></button>`).join('')}</div></div>` : ''}`;
+  }
+  const lines = Object.entries(sp.qty).filter(([, q]) => +q > 0).map(([id, q]) => ({ id, q: +q, f: packOf(id) })).filter(x => x.f);
+  const total = lines.reduce((a, x) => a + x.q, 0);
+  const side = `<aside class="spside">
+    <div class="spcustbar">${sp.cust ? `<div><span class="muted">Customer</span><b>${esc(spCustName())}</b></div><button type="button" onclick="spChangeCust()">Change</button>` : '<div><span class="muted">Customer</span><b>Not chosen yet</b></div>'}</div>
+    ${sp.cust ? `<div class="spdays">${spDays().map(d => `<button type="button" class="${d === sp.req ? 'on' : ''}" onclick="sp.req='${d}';render()">${esc(spDayLabel(d))}</button>`).join('')}</div>
+      <label class="spspo"><input type="checkbox" ${sp.spo ? 'checked' : ''} onchange="sp.spo=this.checked;render()"> Special Order</label>` : ''}
+    <div class="splines">${lines.length ? lines.map(x => `<div class="spline ${x.id === sp.pack ? 'on' : ''}" onclick="spSelLine('${x.id}')"><div class="spl-name"><b>${esc(x.f.p.name)}</b><span>${esc(x.f.k.name)}</span></div>
+        <button type="button" class="spq" onclick="event.stopPropagation();spStep('${x.id}',-1)">−</button><span class="spn">${x.q}</span><button type="button" class="spq" onclick="event.stopPropagation();spStep('${x.id}',1)">+</button></div>`).join('') : `<p class="muted spempty">${sp.cust ? 'Tap a product, then its pack, to add it.' : 'Choose a customer to start.'}</p>`}</div>
+    <div class="sppadwrap"><div class="sppadlabel">${!sp.cust ? 'Type a CID' : sp.pack && packOf(sp.pack) ? `Quantity for ${esc(packOf(sp.pack).p.name)}, ${esc(packOf(sp.pack).k.name)}` : 'Select a line to change its quantity'}<span class="sppadval">${esc(!sp.cust ? sp.cid : sp.pad)}</span></div>${pad}</div>
+    <div class="spactions"><span class="muted">${lines.length} line${lines.length === 1 ? '' : 's'} · ${total} in total</span>
+      <div class="row"><button type="button" onclick="spClear()">Clear</button><button type="button" onclick="spSave('draft')" ${sp.cust && lines.length ? '' : 'disabled'}>Save draft</button><button type="button" class="primary" onclick="spSave('complete')" ${sp.cust && lines.length && sp.req ? '' : 'disabled'}>Transmit Order</button></div></div>
+  </aside>`;
+  return `<div class="speed"><div class="spbar"><h1>Speed Screen</h1><span class="muted">Conventional orders</span><button type="button" class="spexit" onclick="go('orders')">Exit</button></div>
+    <div class="spbody"><section class="spmainarea">${main}</section>${side}</div></div>`;
+}
+function spPickCust(id) { sp.cust = id; sp.letter = ''; sp.cid = ''; sp.req = ''; sp.spo = false; render(); }
+function spChangeCust() { sp.cust = ''; sp.prod = ''; sp.pack = ''; sp.pad = ''; render(); }
+function spPickProd(id) {
+  const p = prodOf(id), ks = p ? spPacks(p) : [];
+  sp.prod = sp.prod === id ? '' : id;
+  if (ks.length === 1) return spPickPack(ks[0].id); // one pack: add it straight away
+  render();
+}
+function spPickPack(id) { if (!(+sp.qty[id] > 0)) sp.qty[id] = 1; sp.pack = id; sp.pad = ''; render(); }
+function spSelLine(id) { sp.pack = id; sp.pad = ''; render(); }
+function spStep(id, n) { const q = (+sp.qty[id] || 0) + n; if (q > 0) sp.qty[id] = q; else { delete sp.qty[id]; if (sp.pack === id) sp.pack = ''; } sp.pad = ''; render(); }
+function spKey(k) {
+  if (!sp.cust) { sp.letter = ''; sp.cid = k === 'C' ? '' : k === '⌫' ? sp.cid.slice(0, -1) : (sp.cid + k).slice(0, 6); return render(); }
+  if (!sp.pack) return toast('Tap a line on the right, or a product, first.');
+  sp.pad = k === 'C' ? '' : k === '⌫' ? sp.pad.slice(0, -1) : (sp.pad + k).replace(/^0+/, '').slice(0, 4);
+  if (sp.pad) sp.qty[sp.pack] = +sp.pad; else if (k === 'C') { delete sp.qty[sp.pack]; sp.pack = ''; }
+  render();
+}
+function spClear() { if (Object.keys(sp.qty).length && !confirm('Clear this order and start again?')) return; spReset(); render(); }
+async function spSave(status) {
+  draft = { ...blankOrder(), group: 'Conventional', customer_id: sp.cust === SP_NONE ? '' : sp.cust, required_date: sp.req, special_order: sp.spo, qty: { ...sp.qty } };
+  await saveOrder(status);
+  if (draft) { draft = null; return; } // not saved: saveOrder said why, and the Speed Screen order is kept
+  spReset(); go('speed', false);
 }
 
 // ---------- admin: reference lists ----------

@@ -352,3 +352,45 @@ dialog:has(.packrow.withref){width:min(960px,calc(100vw - 32px))}
 /* Admin: a buyer's Special Requirements, shown read only on the order, and flagged on order rows. */
 .custnote-view .notebox{background:#fff8e1;border:1px solid #f0d27a;border-radius:8px;padding:8px 10px;white-space:pre-wrap;font-weight:600}
 .pill.bnote{background:#fff3cd;color:#7a5a00}
+/* Speed Screen: full screen, touch only. Sized for a 22-inch touch screen and shrinks for smaller ones. */
+body.speedmode header.top{display:none}
+body.speedmode .wrap{max-width:none;padding:0}
+.speed{height:100vh;height:100dvh;display:flex;flex-direction:column;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+.spbar{display:flex;align-items:center;gap:14px;padding:10px 18px;border-bottom:1px solid var(--line);background:var(--surface)}
+.spbar h1{margin:0;font-size:clamp(20px,1.6vw,28px)}
+.spexit{margin-left:auto;font-size:18px;padding:10px 26px}
+.spbody{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) clamp(320px,30vw,520px)}
+.spmainarea{min-height:0;overflow:auto;padding:14px 18px;display:flex;flex-direction:column;gap:12px}
+.sphead{display:flex;align-items:baseline;gap:12px}.sphead h2{margin:0;font-size:clamp(17px,1.3vw,22px)}
+.spletters{display:grid;grid-template-columns:repeat(13,1fr);gap:6px}
+.spletters button,.sptabs button,.spdays button{min-height:clamp(44px,4.4vh,60px);font-size:clamp(16px,1.2vw,20px);font-weight:600;padding:6px 10px}
+.spletters button.on,.sptabs button.on,.spdays button.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.sptabs{display:flex;flex-wrap:wrap;gap:8px}
+.spgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(clamp(150px,11vw,210px),1fr));gap:10px}
+.spbtn{min-height:clamp(78px,9vh,112px);display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:4px;text-align:left;padding:10px 14px;border-radius:12px;background:var(--surface);border:1.5px solid var(--line)}
+.spbtn b{font-size:clamp(16px,1.2vw,21px);line-height:1.2}.spbtn span{font-size:clamp(12px,.9vw,15px);color:var(--muted)}
+.spbtn.has{background:var(--qty);border-color:var(--warn)}
+.spbtn.on{outline:3px solid var(--accent);outline-offset:1px}
+.spbtn.spmain{background:var(--accent-soft);border-color:var(--accent)}
+.sppacks{border-top:2px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:10px}
+.spside{min-height:0;display:flex;flex-direction:column;gap:10px;padding:14px;border-left:1px solid var(--line);background:var(--sunk)}
+.spcustbar{display:flex;align-items:center;gap:10px}.spcustbar div{flex:1;display:flex;flex-direction:column}.spcustbar b{font-size:clamp(16px,1.2vw,20px)}
+.spcustbar button{font-size:16px;padding:10px 16px}
+.spdays{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.spspo{display:flex;align-items:center;gap:8px;font-size:16px}.spspo input{width:24px;height:24px}
+.splines{flex:1;min-height:130px;overflow:auto;display:flex;flex-direction:column;gap:6px}
+.spline{display:grid;grid-template-columns:1fr 52px 52px 52px;align-items:center;gap:6px;background:var(--surface);border:1.5px solid var(--line);border-radius:10px;padding:6px 8px;cursor:pointer}
+.spline.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+.spl-name{display:flex;flex-direction:column;min-width:0}.spl-name b{font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.spl-name span{font-size:13px;color:var(--muted)}
+.spq{height:clamp(40px,4.4vh,50px);font-size:26px;font-weight:700;padding:0}
+.spn{text-align:center;font-size:22px;font-weight:700}
+.spempty{margin:auto;text-align:center}
+.sppadlabel{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:14px;color:var(--muted);margin-bottom:6px}
+.sppadval{font-size:26px;font-weight:700;color:var(--fg);min-width:60px;text-align:right}
+.sppad{display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(5px,.7vh,8px)}
+.sppad button{min-height:clamp(44px,6.2vh,76px);font-size:clamp(22px,1.8vw,30px);font-weight:700}
+.spactions{display:flex;flex-direction:column;gap:8px}
+.spactions .row{display:grid;grid-template-columns:1fr 1fr 1.6fr;gap:8px}
+.spactions button{min-height:clamp(48px,5.6vh,64px);font-size:18px;font-weight:600}
+@media (max-width:1000px){.spbody{grid-template-columns:minmax(0,1fr) 300px}.spletters{grid-template-columns:repeat(9,1fr)}}
+@media (max-width:760px){.speed{height:auto}.spbody{grid-template-columns:1fr}.spside{border-left:0;border-top:1px solid var(--line)}}
