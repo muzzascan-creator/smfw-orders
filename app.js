@@ -1294,8 +1294,7 @@ function viewSpeed() {
     <div class="sppadwrap"><div class="sppadlabel">${!sp.cust ? 'Type a CID' : sp.pack && packOf(sp.pack) ? `Quantity for ${esc(packOf(sp.pack).p.name)}, ${esc(packOf(sp.pack).k.name)}` : 'Select a line to change its quantity'}<span class="sppadval">${esc(!sp.cust ? sp.cid : sp.pad)}</span></div>${pad}</div>
   </aside>`;
   const side = `<aside class="spside">
-    ${sp.cust ? `<div class="spdays">${spDays().map(d => `<button type="button" class="${d === sp.req ? 'on' : ''}" onclick="sp.req='${d}';render()">${esc(spDayLabel(d))}</button>`).join('')}</div>
-      <label class="spspo"><input type="checkbox" ${sp.spo ? 'checked' : ''} onchange="sp.spo=this.checked;render()"> Special Order</label>` : ''}
+    ${sp.cust ? `<div class="spdays">${spDays().map(d => `<button type="button" class="${d === sp.req ? 'on' : ''}" onclick="sp.req='${d}';render()">${esc(spDayLabel(d))}</button>`).join('')}</div>` : ''}
     <div class="splines">${lines.length ? lines.map(x => `<div class="spline ${x.id === sp.pack ? 'on' : ''}" onclick="spSelLine('${x.id}')"><div class="spl-name"><b>${esc(x.f.p.name)}</b><span>${esc(x.f.k.name)}</span></div>
         <span class="spn">${x.q}</span><button type="button" class="spdel" title="Delete this line" aria-label="Delete this line" onclick="event.stopPropagation();spDel('${x.id}')"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg></button></div>`).join('') : `<p class="muted spempty">${sp.cust ? 'Tap a product, then its pack, to add it.' : 'Choose a customer to start.'}</p>`}</div>
     <div class="spactions"><span class="muted">${lines.length} line${lines.length === 1 ? '' : 's'} · ${total} in total</span>
