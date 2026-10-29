@@ -1167,7 +1167,7 @@ async function saveOrder(status) {
     if (!lines.length) return toast('Enter at least one quantity first.');
     if (!draft.required_date) return toast('Add the day/date required first.');
     // Only checked when the order is placed, so older orders can still be processed after their date.
-    const first = earliestReq(draft.group || 'Organic', custOf(draft.customer_id));
+    const first = draft.speed ? today() : earliestReq(draft.group || 'Organic', custOf(draft.customer_id)); // Speed Screen orders may be for today
     if (draft.status === 'draft' && draft.required_date < first) return toast(`The date required must be ${first === sydNow().date ? 'today' : 'tomorrow'} (${fmtDate(first)}) or later.`);
     if (!isAdmin() && draft.status === 'draft' && draft.required_date) { const why = orderProblem(draft.group || 'Organic', draft.required_date, custOf(draft.customer_id)); if (why) return toast(why); }
   } else if (needsCustomer(draft) && !draft.customer_id) return toast('Choose a customer first.');
@@ -1231,8 +1231,9 @@ function spCustomers() {
   return cs.sort((a, b) => (n[b.id] || 0) - (n[a.id] || 0) || byName(a, b)).slice(0, 24);
 }
 function spDays() {
-  const first = earliestReq('Conventional', spCust()), out = [];
-  for (let i = 0; out.length < 4 && i < 10; i++) { const d = shiftDate(first, i); if (!orderProblem('Conventional', d, spCust())) out.push(d); }
+  // Today first and the default (staff can enter orders after the cut-off), then the next delivery days.
+  const out = [today()];
+  for (let i = 1; out.length < 4 && i < 10; i++) { const d = shiftDate(today(), i); if (!orderProblem('Conventional', d, spCust())) out.push(d); }
   return out;
 }
 const spDayLabel = d => d === today() ? 'Today' : d === tomorrow() ? 'Tomorrow' : new Date(d + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -1290,7 +1291,7 @@ function spKey(k) {
 }
 function spClear() { if (Object.keys(sp.qty).length && !confirm('Clear this order and start again?')) return; spReset(); render(); }
 async function spSave(status) {
-  draft = { ...blankOrder(), group: 'Conventional', customer_id: sp.cust === SP_NONE ? '' : sp.cust, required_date: sp.req, special_order: sp.spo, qty: { ...sp.qty } };
+  draft = { ...blankOrder(), group: 'Conventional', customer_id: sp.cust === SP_NONE ? '' : sp.cust, required_date: sp.req, special_order: sp.spo, qty: { ...sp.qty }, speed: true };
   await saveOrder(status);
   if (draft) { draft = null; return; } // not saved: saveOrder said why, and the Speed Screen order is kept
   spReset(); go('speed', false);
