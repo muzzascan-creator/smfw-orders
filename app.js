@@ -1224,7 +1224,7 @@ function spProducts() {
 }
 // Customers who can order Conventional, busiest first (by orders loaded) until a letter or CID is chosen.
 function spCustomers() {
-  const cs = S.customers.filter(c => custAllows(c, 'Conventional'));
+  const cs = S.customers.filter(c => custAllows(c, 'Conventional') && String(c.cid) !== String(CONVENTIONAL_CID)); // 1183 is the Main Conventional Order button
   if (sp.cid) return cs.filter(c => String(c.cid).startsWith(sp.cid)).sort((a, b) => a.cid - b.cid);
   if (sp.letter) return cs.filter(c => (c.name || '').trim().toUpperCase().startsWith(sp.letter)).sort(byName);
   const n = {}; S.orders.forEach(o => { if (o.customer_id) n[o.customer_id] = (n[o.customer_id] || 0) + 1; });
