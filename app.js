@@ -1297,7 +1297,7 @@ function viewSpeed() {
     ${sp.cust ? `<div class="spdays">${spDays().map(d => `<button type="button" class="${d === sp.req ? 'on' : ''}" onclick="sp.req='${d}';render()">${esc(spDayLabel(d))}</button>`).join('')}</div>
       <label class="spspo"><input type="checkbox" ${sp.spo ? 'checked' : ''} onchange="sp.spo=this.checked;render()"> Special Order</label>` : ''}
     <div class="splines">${lines.length ? lines.map(x => `<div class="spline ${x.id === sp.pack ? 'on' : ''}" onclick="spSelLine('${x.id}')"><div class="spl-name"><b>${esc(x.f.p.name)}</b><span>${esc(x.f.k.name)}</span></div>
-        <button type="button" class="spq" onclick="event.stopPropagation();spStep('${x.id}',-1)">−</button><span class="spn">${x.q}</span><button type="button" class="spq" onclick="event.stopPropagation();spStep('${x.id}',1)">+</button></div>`).join('') : `<p class="muted spempty">${sp.cust ? 'Tap a product, then its pack, to add it.' : 'Choose a customer to start.'}</p>`}</div>
+        <span class="spn">${x.q}</span><button type="button" class="spdel" title="Delete this line" aria-label="Delete this line" onclick="event.stopPropagation();spDel('${x.id}')"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg></button></div>`).join('') : `<p class="muted spempty">${sp.cust ? 'Tap a product, then its pack, to add it.' : 'Choose a customer to start.'}</p>`}</div>
     <div class="spactions"><span class="muted">${lines.length} line${lines.length === 1 ? '' : 's'} · ${total} in total</span>
       <div class="row"><button type="button" onclick="spClear()">Clear</button><button type="button" class="primary" onclick="spSave('complete')" ${sp.cust && lines.length && sp.req ? '' : 'disabled'}>Transmit Order</button></div></div>
   </aside>`;
@@ -1308,6 +1308,7 @@ function spPickCust(id) { sp.cust = id; sp.letter = ''; sp.cid = ''; sp.req = ''
 function spChangeCust() { sp.cust = ''; sp.pack = ''; sp.pad = ''; render(); }
 function spPickPack(id) { sp.qty[id] = (+sp.qty[id] || 0) + 1; sp.pack = id; sp.pad = ''; render(); }
 function spSelLine(id) { sp.pack = id; sp.pad = ''; render(); }
+function spDel(id) { delete sp.qty[id]; if (sp.pack === id) sp.pack = ''; sp.pad = ''; render(); }
 function spStep(id, n) { const q = (+sp.qty[id] || 0) + n; if (q > 0) sp.qty[id] = q; else { delete sp.qty[id]; if (sp.pack === id) sp.pack = ''; } sp.pad = ''; render(); }
 function spKey(k) {
   if (!sp.cust) { sp.letter = ''; sp.cid = k === 'C' ? '' : k === '⌫' ? sp.cid.slice(0, -1) : (sp.cid + k).slice(0, 6); return render(); }
