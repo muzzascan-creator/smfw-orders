@@ -1300,7 +1300,7 @@ function viewSpeed() {
     <div class="spactions"><span class="muted">${lines.length} line${lines.length === 1 ? '' : 's'} · ${total} in total</span>
       <div class="row"><button type="button" onclick="spClear()">Clear</button><button type="button" class="primary" onclick="spSave('complete')" ${sp.cust && lines.length && sp.req ? '' : 'disabled'}>Transmit Order</button></div></div>
   </aside>`;
-  return `<div class="speed"><div class="spbar"><h1>Speed Screen</h1><span class="muted">Conventional orders</span>${SPEED_PAGE ? `<span class="muted">${esc(profile?.full_name || profile?.email || '')}</span><button type="button" class="spexit" onclick="sb.auth.signOut()">Sign out</button>` : `<button type="button" class="spexit" onclick="go('orders')">Exit</button>`}</div>
+  return `<div class="speed"><div class="spbar"><img class="splogo" src="logo.png?v=2" alt="Coolibah Salads Sydney"><h1>Speed Screen</h1><span class="muted">Conventional orders</span>${SPEED_PAGE ? `<span class="muted">${esc(profile?.full_name || profile?.email || '')}</span><button type="button" class="spexit" onclick="sb.auth.signOut()">Sign out</button>` : `<button type="button" class="spexit" onclick="go('orders')">Exit</button>`}</div>
     <div class="spbody"><section class="spmainarea">${main}</section>${padcol}${side}</div></div>`;
 }
 function spPickCust(id) { sp.cust = id; sp.letter = ''; sp.cid = ''; sp.req = ''; sp.spo = false; render(); }
