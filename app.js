@@ -1304,7 +1304,7 @@ function viewSpeed() {
     <div class="spbody"><section class="spmainarea">${main}</section>${padcol}${side}</div></div>`;
 }
 function spPickCust(id) { sp.cust = id; sp.letter = ''; sp.cid = ''; sp.req = ''; sp.spo = false; render(); }
-function spChangeCust() { sp.cust = ''; sp.pack = ''; sp.pad = ''; render(); }
+function spChangeCust() { spReset(); render(); } // a new customer starts a new order
 function spPickPack(id) { sp.qty[id] = (+sp.qty[id] || 0) + 1; sp.pack = id; sp.pad = ''; render(); }
 function spSelLine(id) { sp.pack = id; sp.pad = ''; render(); }
 function spDel(id) { delete sp.qty[id]; if (sp.pack === id) sp.pack = ''; sp.pad = ''; render(); }
