@@ -1222,13 +1222,12 @@ function spProducts() {
   const hide = p => spSmfw() && smfwSection(p.section) && !(p.product_packs || []).some(k => +sp.qty[k.id] > 0);
   return S.products.filter(p => groupOf(p) === 'Conventional' && (p.active !== false || (p.product_packs || []).some(k => +sp.qty[k.id] > 0)) && !hide(p) && spPacks(p).length).sort(bySort);
 }
-// Customers who can order Conventional, busiest first (by orders loaded) until a letter or CID is chosen.
+// Customers who can order Conventional: none until a letter is tapped or a CID typed.
 function spCustomers() {
   const cs = S.customers.filter(c => custAllows(c, 'Conventional') && String(c.cid) !== String(CONVENTIONAL_CID)); // 1183 is the Main Conventional Order button
   if (sp.cid) return cs.filter(c => String(c.cid).startsWith(sp.cid)).sort((a, b) => a.cid - b.cid);
   if (sp.letter) return cs.filter(c => (c.name || '').trim().toUpperCase().startsWith(sp.letter)).sort(byName);
-  const n = {}; S.orders.forEach(o => { if (o.customer_id) n[o.customer_id] = (n[o.customer_id] || 0) + 1; });
-  return cs.sort((a, b) => (n[b.id] || 0) - (n[a.id] || 0) || byName(a, b)).slice(0, 24);
+  return [];
 }
 function spDays() {
   // Today first and the default (staff can enter orders after the cut-off), then the next delivery days.
@@ -1244,10 +1243,10 @@ function viewSpeed() {
   let main;
   if (!sp.cust) {
     const cs = spCustomers();
-    main = `<div class="sphead"><h2>Choose the customer</h2><span class="muted">${sp.cid ? `CID starting ${esc(sp.cid)}` : sp.letter ? `Names starting ${esc(sp.letter)}` : 'Most used'}</span></div>
+    main = `<div class="sphead"><h2>Choose the customer</h2><span class="muted">${sp.cid ? `CID starting ${esc(sp.cid)}` : sp.letter ? `Names starting ${esc(sp.letter)}` : 'Tap a letter, or type a CID'}</span></div>
       <div class="spletters">${[...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(l => `<button type="button" class="${sp.letter === l ? 'on' : ''}" onclick="sp.letter=sp.letter==='${l}'?'':'${l}';sp.cid='';render()">${l}</button>`).join('')}</div>
       <div class="spgrid spcusts"><button type="button" class="spbtn spmain" onclick="spPickCust('${SP_NONE}')"><b>Main Conventional Order</b><span>No customer · CID 1183</span></button>
-        ${cs.map(c => `<button type="button" class="spbtn" onclick="spPickCust('${c.id}')"><b>${esc(c.name)}</b><span>CID ${esc(c.cid)}</span></button>`).join('') || '<p class="muted">No customers match.</p>'}</div>`;
+        ${cs.map(c => `<button type="button" class="spbtn" onclick="spPickCust('${c.id}')"><b>${esc(c.name)}</b><span>CID ${esc(c.cid)}</span></button>`).join('') || (sp.letter || sp.cid ? '<p class="muted">No customers match.</p>' : '')}</div>`;
   } else {
     const ps = spProducts(), secs = [...new Set(ps.map(p => p.section || 'Other'))];
     if (!secs.includes(sp.sec)) sp.sec = secs[0] || '';
