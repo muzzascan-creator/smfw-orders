@@ -392,7 +392,7 @@ body.speedmode .wrap{max-width:none;padding:0}
 .sppad{display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(5px,.7vh,8px)}
 .sppad button{min-height:clamp(44px,6.2vh,76px);font-size:clamp(22px,1.8vw,30px);font-weight:700}
 .spactions{display:flex;flex-direction:column;gap:8px}
-.spactions .row{display:grid;grid-template-columns:1fr 1fr 1.6fr;gap:8px}
+.spactions .row{display:grid;grid-template-columns:1fr 2fr;gap:8px}
 .spactions button{min-height:clamp(48px,5.6vh,64px);font-size:18px;font-weight:600}
 @media (max-width:1000px){.spbody{grid-template-columns:minmax(0,1fr) 220px 260px}.spletters{grid-template-columns:repeat(9,1fr)}}
 @media (max-width:760px){.speed{height:auto}.spbody{grid-template-columns:1fr}.spside,.sppadcol{border-left:0;border-top:1px solid var(--line)}}
