@@ -1213,11 +1213,29 @@ async function deleteOrder(btn) {
 // It saves through saveOrder, so the order follows the same rules as New order and lands on the Orders tab.
 const SP_NONE = 'none'; // No customer: SMFW's own Main Conventional Order (CID 1183)
 let sp = null;
-const spReset = () => { sp = { cust: '', letter: '', cid: '', sec: '', prod: '', pack: '', pad: '', qty: {}, req: '', spo: false }; };
+const spReset = () => { sp = { cust: '', letter: '', cid: '', sec: '', pack: '', pad: '', qty: {}, req: '', spo: false }; };
 const spCust = () => sp.cust && sp.cust !== SP_NONE ? custOf(sp.cust) : null;
 const spCustName = () => sp.cust === SP_NONE ? 'Main Conventional Order (CID 1183)' : spCust() ? `${spCust().name} (CID ${spCust().cid})` : '';
 const spSmfw = () => smfwOrder({ customer_id: sp.cust === SP_NONE ? null : sp.cust, special_order: sp.spo });
 const spPacks = p => (p.product_packs || []).filter(k => k.available || +sp.qty[k.id] > 0);
+// Speed Screen headings. Each button is one product in one pack; tapping it adds 1.
+// Vegetables, Herbs and Drinks go by the product's section; the rest by pack: clam shells, flow packs, and
+// everything else (cartons, pillow packs) under Loose Leaf.
+const SP_TABS = ['Loose Leaf', 'Clam Packs', 'Flow Packs', 'Vegetables', 'Herbs', 'Drinks'];
+function spTab(p, k) {
+  const sec = String(p.section || '').toLowerCase(), pk = String(k.name || '').toLowerCase();
+  return /drink/.test(sec) ? 'Drinks' : /herb/.test(sec) ? 'Herbs' : /veg/.test(sec) ? 'Vegetables' : /clam/.test(pk) ? 'Clam Packs' : /flow/.test(pk) ? 'Flow Packs' : 'Loose Leaf';
+}
+// A pack's weight in grams from its name ("3kg CARTON" 3000, "BOX of 3 x 500g Pillow" 1500), for sorting Loose Leaf.
+function packGrams(name) {
+  const m = String(name || '').match(/(?:(\d+)\s*[x×]\s*)?(\d+(?:\.\d+)?)\s*(kg|g)\b/i);
+  return m ? (+m[1] || 1) * +m[2] * (m[3].toLowerCase() === 'kg' ? 1000 : 1) : 0;
+}
+function spTiles() {
+  const out = spProducts().flatMap(p => spPacks(p).map(k => ({ p, k, tab: spTab(p, k) })));
+  const az = (a, b) => byName(a.p, b.p) || (a.k.name || '').localeCompare(b.k.name || '');
+  return out.sort((a, b) => SP_TABS.indexOf(a.tab) - SP_TABS.indexOf(b.tab) || (a.tab === 'Loose Leaf' ? packGrams(b.k.name) - packGrams(a.k.name) || (a.k.name || '').localeCompare(b.k.name || '') || byName(a.p, b.p) : az(a, b)));
+}
 function spProducts() {
   const hide = p => spSmfw() && smfwSection(p.section) && !(p.product_packs || []).some(k => +sp.qty[k.id] > 0);
   return S.products.filter(p => groupOf(p) === 'Conventional' && (p.active !== false || (p.product_packs || []).some(k => +sp.qty[k.id] > 0)) && !hide(p) && spPacks(p).length).sort(bySort);
@@ -1249,12 +1267,11 @@ function viewSpeed() {
         ${cs.map(c => `<button type="button" class="spbtn" onclick="spPickCust('${c.id}')"><b>${esc(c.name)}</b><span>CID ${esc(c.cid)}</span></button>`).join('') || (sp.letter && sp.letter !== 'M' || sp.cid && !String(CONVENTIONAL_CID).startsWith(sp.cid) ? '<p class="muted">No customers match.</p>' : '')}</div>
       <div class="spletters">${[...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(l => `<button type="button" class="${sp.letter === l ? 'on' : ''}" onclick="sp.letter=sp.letter==='${l}'?'':'${l}';sp.cid='';render()">${l}</button>`).join('')}</div>`;
   } else {
-    const ps = spProducts(), secs = [...new Set(ps.map(p => p.section || 'Other'))];
-    if (!secs.includes(sp.sec)) sp.sec = secs[0] || '';
-    const inSec = ps.filter(p => (p.section || 'Other') === sp.sec), prod = ps.find(p => p.id === sp.prod);
-    main = `<div class="sptabs">${secs.map(s => `<button type="button" class="${s === sp.sec ? 'on' : ''}" onclick="sp.sec=${esc(JSON.stringify(s))};sp.prod='';render()">${esc(s)}</button>`).join('')}</div>
-      <div class="spgrid spprods">${inSec.map(p => { const n = spPacks(p).reduce((a, k) => a + (+sp.qty[k.id] || 0), 0); return `<button type="button" class="spbtn ${p.id === sp.prod ? 'on' : ''} ${n ? 'has' : ''}" onclick="spPickProd('${p.id}')"><b>${esc(p.name)}</b><span>${esc(p.code || '')}${n ? ` · ${n} on order` : ''}</span></button>`; }).join('') || '<p class="muted">No products in this section.</p>'}</div>
-      ${prod ? `<div class="sppacks"><div class="sphead"><h2>${esc(prod.name)}: choose the pack</h2></div><div class="spgrid">${spPacks(prod).map(k => `<button type="button" class="spbtn sppack ${k.id === sp.pack ? 'on' : ''} ${+sp.qty[k.id] ? 'has' : ''}" onclick="spPickPack('${k.id}')"><b>${esc(k.name)}</b><span>${+sp.qty[k.id] ? `${sp.qty[k.id]} on order` : 'Tap to add'}</span></button>`).join('')}</div></div>` : ''}`;
+    const tiles = spTiles(), tabs = SP_TABS.filter(t => tiles.some(x => x.tab === t));
+    if (!tabs.includes(sp.sec)) sp.sec = tabs[0] || '';
+    const shown = tiles.filter(x => x.tab === sp.sec);
+    main = `<div class="sptabs">${tabs.map(t => `<button type="button" class="${t === sp.sec ? 'on' : ''}" onclick="sp.sec='${t}';render()">${t}</button>`).join('')}</div>
+      <div class="spgrid spprods">${shown.map(({ p, k }) => { const q = +sp.qty[k.id] || 0; return `<button type="button" class="spbtn ${k.id === sp.pack ? 'on' : ''} ${q ? 'has' : ''}" onclick="spPickPack('${k.id}')"><b>${esc(p.name)}</b><span>${esc(k.name)}${q ? ` · <strong>${q}</strong> on order` : ''}</span></button>`; }).join('') || '<p class="muted">No products here.</p>'}</div>`;
   }
   const lines = Object.entries(sp.qty).filter(([, q]) => +q > 0).map(([id, q]) => ({ id, q: +q, f: packOf(id) })).filter(x => x.f);
   const total = lines.reduce((a, x) => a + x.q, 0);
@@ -1272,14 +1289,8 @@ function viewSpeed() {
     <div class="spbody"><section class="spmainarea">${main}</section>${side}</div></div>`;
 }
 function spPickCust(id) { sp.cust = id; sp.letter = ''; sp.cid = ''; sp.req = ''; sp.spo = false; render(); }
-function spChangeCust() { sp.cust = ''; sp.prod = ''; sp.pack = ''; sp.pad = ''; render(); }
-function spPickProd(id) {
-  const p = prodOf(id), ks = p ? spPacks(p) : [];
-  sp.prod = sp.prod === id ? '' : id;
-  if (ks.length === 1) return spPickPack(ks[0].id); // one pack: add it straight away
-  render();
-}
-function spPickPack(id) { if (!(+sp.qty[id] > 0)) sp.qty[id] = 1; sp.pack = id; sp.pad = ''; render(); }
+function spChangeCust() { sp.cust = ''; sp.pack = ''; sp.pad = ''; render(); }
+function spPickPack(id) { sp.qty[id] = (+sp.qty[id] || 0) + 1; sp.pack = id; sp.pad = ''; render(); }
 function spSelLine(id) { sp.pack = id; sp.pad = ''; render(); }
 function spStep(id, n) { const q = (+sp.qty[id] || 0) + n; if (q > 0) sp.qty[id] = q; else { delete sp.qty[id]; if (sp.pack === id) sp.pack = ''; } sp.pad = ''; render(); }
 function spKey(k) {
