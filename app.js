@@ -1285,7 +1285,7 @@ function viewSpeed() {
     if (!tabs.includes(sp.sec)) sp.sec = tabs[0] || '';
     const shown = tiles.filter(x => x.tab === sp.sec);
     main = `<div class="sptabs">${tabs.map(t => `<button type="button" class="${t === sp.sec ? 'on' : ''}" onclick="sp.sec='${t}';render()">${t}</button>`).join('')}</div>
-      <div class="spgrid spprods">${shown.map(({ p, k }) => { const q = +sp.qty[k.id] || 0; return `<button type="button" class="spbtn ${k.id === sp.pack ? 'on' : ''} ${q ? 'has' : ''}" onclick="spPickPack('${k.id}')"><b>${esc(p.name)}</b><span>${esc(k.name)}${q ? ` · <strong>${q}</strong> on order` : ''}</span></button>`; }).join('') || '<p class="muted">No products here.</p>'}</div>`;
+      <div class="spgrid spprods">${shown.map(({ p, k }) => { const q = +sp.qty[k.id] || 0; return `<button type="button" class="spbtn ${k.id === sp.pack ? 'on' : ''} ${q ? 'has' : ''}" onclick="spPickPack('${k.id}')"><b>${esc(p.name)}</b><div class="spsub"><span class="sppk">${esc(k.name)}</span>${q ? `<span><strong>${q}</strong> on order</span>` : ''}</div></button>`; }).join('') || '<p class="muted">No products here.</p>'}</div>`;
   }
   const lines = Object.entries(sp.qty).filter(([, q]) => +q > 0).map(([id, q]) => ({ id, q: +q, f: packOf(id) })).filter(x => x.f);
   const total = lines.reduce((a, x) => a + x.q, 0);
