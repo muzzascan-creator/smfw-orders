@@ -87,8 +87,12 @@ let adminTab = 'customers';
 const adminTabs = () => ADMIN_TABS.filter(([t]) => !isManager() || !ADMIN_ONLY.includes(t));
 // Receivers see every order read-only (migrations/010).
 const isReceiver = () => profile?.role === 'receiver' && profile?.approved;
+// Speed Screen logins (migration 040) only use the Speed Screen, at its own address (csorders.org/speed).
+const isSpeed = () => profile?.role === 'speed' && profile?.approved;
+const SPEED_PAGE = /\/speed\/?$/.test(location.pathname);
+const canSpeed = () => isSpeed() || isAdmin(); // Admins and Managers can open the Speed Screen too
 // SMFW can enter a Conventional order for its own supply, with no customer; every other order needs one.
-const needsCustomer = d => !(isAdmin() && d.group === 'Conventional');
+const needsCustomer = d => !((isAdmin() || isSpeed()) && d.group === 'Conventional');
 // Lookups by id use an index that is rebuilt whenever the list is reloaded, so long lists stay quick.
 const custIdx = (() => { let list, m; return () => { if (list !== S.customers) { list = S.customers; m = new Map(list.map(c => [c.id, c])); } return m; }; })();
 const prodIdx = (() => { let list, m; return () => { if (list !== S.products) { list = S.products; m = new Map(list.map(p => [p.id, p])); } return m; }; })();
@@ -135,7 +139,13 @@ async function loadAll() {
   // Cut-off rules: receivers don't need them. If they can't be fetched, the last ones fetched stay in use.
   const cuts = isReceiver() ? [] : [sb.from('cutoff_rules').select('*'), sb.from('cutoff_settings').select('*')];
   let base, cr, cs;
-  if (isReceiver()) {
+  if (isSpeed()) {
+    // Speed Screen logins: customers who order Conventional, products and cut-offs; orders only their own.
+    let c, p, o;
+    [c, p, o, cr, cs] = await Promise.all([allRows(() => sb.from('customers').select('id,cid,name,product_group,sunday_delivery').order('id')), prods, orders, ...cuts]);
+    base = [c, p, o];
+    S.customers = c.data || []; S.suppliers = []; S.products = p.data || [];
+  } else if (isReceiver()) {
     const [c, s, p, o] = base = await Promise.all([allRows(() => sb.from('customers').select('id,cid,name,phone').order('id')), sb.from('suppliers').select('*'), prods, orders]);
     S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || [];
   } else if (isAdmin()) {
@@ -322,11 +332,14 @@ async function enter() {
   authMsg = '';
   clearInterval(deviceTimer); deviceTimer = setInterval(() => { if (!document.hidden) stillMyDevice(); }, 30000);
   await loadProfile();
-  if (!profile || !profile.approved || (!isAdmin() && !isReceiver() && !profile.customer_id)) { $('#top').hidden = true; return renderPending(); }
+  if (!profile || !profile.approved || (!isAdmin() && !isReceiver() && !isSpeed() && !profile.customer_id)) { $('#top').hidden = true; return renderPending(); }
+  // The Speed Screen page is for Speed Screen, Admin and Manager logins; a Speed Screen login only uses that page.
+  if (SPEED_PAGE && !canSpeed()) { authMode = 'signin'; authMsg = '!This login can’t use the Speed Screen. Customers order at csorders.org.'; await sb.auth.signOut({ scope: 'local' }); return; }
+  if (isSpeed() && !SPEED_PAGE) { location.href = new URL('speed/', location.href).href; return; }
   $('#top').hidden = false;
   document.body.classList.toggle('staff', isAdmin()); // Admin / Manager lists use tight rows (styles.css)
   $('#contact').hidden = isAdmin() || isReceiver(); // customers see who to call or email
-  $('#whoami').textContent = (profile.full_name || profile.email) + (isManager() ? ' · Manager' : isAdmin() ? ' · Admin' : isReceiver() ? ' · Receiver' : '');
+  $('#whoami').textContent = (profile.full_name || profile.email) + (isManager() ? ' · Manager' : isAdmin() ? ' · Admin' : isReceiver() ? ' · Receiver' : isSpeed() ? ' · Speed Screen' : '');
   await loadAll();
   if (isAdmin()) { await loadCsvDir(1); await loadCsvDir(2); autoCsv2(); }
   listenForOrders();
@@ -348,11 +361,11 @@ function renderAuth() {
   const app = $('#app');
   const msg = authMsg ? `<p class="${authMsg.startsWith('!') ? 'err' : 'ok'}">${esc(authMsg.replace(/^!/, ''))}</p>` : '';
   const forms = {
-    signin: `<h1>Sign in</h1><p class="sub">Place and track your orders with SMFW.</p>${msg}
+    signin: `<h1>${SPEED_PAGE ? 'Speed Screen' : 'Sign in'}</h1><p class="sub">${SPEED_PAGE ? 'Sign in to enter Conventional orders on the touch screen.' : 'Place and track your orders with SMFW.'}</p>${msg}
       <form id="af" class="grid"><label class="f">Email<input id="a-email" type="email" autocomplete="email" required></label>
       <label class="f">Password<input id="a-pass" type="password" autocomplete="current-password" required></label>
       <button class="primary" type="submit">Sign in</button></form>
-      <div class="links"><button class="link" data-mode="signup">Create an account</button><button class="link" data-mode="forgot">Forgot password?</button></div>`,
+      <div class="links">${SPEED_PAGE ? "" : `<button class="link" data-mode="signup">Create an account</button>`}<button class="link" data-mode="forgot">Forgot password?</button></div>`,
     signup: `<h1>Create an account</h1><p class="sub">Once SMFW links your account to your business, you can start ordering.</p>${msg}
       <form id="af" class="grid"><label class="f">Your name<input id="a-name" autocomplete="name" required></label>
       <label class="f">Business name<input id="a-biz" autocomplete="organization" required></label>
@@ -405,11 +418,11 @@ function renderPending() {
 }
 
 // ---------- navigation ----------
-const homeView = () => isAdmin() ? 'inbox' : isReceiver() ? 'recv' : 'mine';
+const homeView = () => SPEED_PAGE || isSpeed() ? 'speed' : isAdmin() ? 'inbox' : isReceiver() ? 'recv' : 'mine';
 function navItems() {
   if (isReceiver()) return [['recv', 'Orders']];
   return isAdmin()
-    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['speed', 'Speed Screen'], ['batch', 'Batch Code'], ['recv', 'Receiver'], ['admin', 'Administration']].filter(([v]) => !isManager() || !ADMIN_ONLY.includes(v))
+    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['batch', 'Batch Code'], ['recv', 'Receiver'], ['admin', 'Administration']].filter(([v]) => !isManager() || !ADMIN_ONLY.includes(v))
     : [['mine', 'My orders'], ['entry', 'New order']];
 }
 function inboxCount() { return S.orders.filter(o => o.status === 'submitted').length; }
@@ -446,7 +459,7 @@ function render() {
   const locked = !isAdmin() && !isReceiver() && view === 'entry' && !!draft?.id && !canEditDraft();
   nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" ${locked ? 'disabled title="Press Close to leave this order"' : ''} aria-current="${(v === view || v === 'recv' && view === 'recvorder' || v === 'admin' && adminTabs().some(([t]) => t === view)) && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
   const views = { pomatch: viewPoMatch, recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, speed: viewSpeed, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, batch: viewBatch, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers, sms: viewSms, cutoffs: viewCutoffs, settings: viewSettings };
-  const allowed = isManager() ? Object.keys(views).filter(v => !ADMIN_ONLY.includes(v) && !v.startsWith('recv')) : isAdmin() ? null : isReceiver() ? ['recv', 'recvorder'] : ['mine', 'entry'];
+  const allowed = SPEED_PAGE || isSpeed() ? ['speed'] : isManager() ? Object.keys(views).filter(v => !ADMIN_ONLY.includes(v) && !v.startsWith('recv')) : isAdmin() ? null : isReceiver() ? ['recv', 'recvorder'] : ['mine', 'entry'];
   // The Receiver screens are for Receivers, and for an Admin through the Receiver tab (not Managers).
   if (!views[view] || ['recv', 'recvorder'].includes(view) && !isReceiver() && !(isAdmin() && !isManager()) || (allowed && !allowed.includes(view))) view = homeView();
   if (view === 'entry' && !draft) draft = blankOrder();
@@ -1169,18 +1182,18 @@ async function saveOrder(status) {
     // Only checked when the order is placed, so older orders can still be processed after their date.
     const first = draft.speed ? today() : earliestReq(draft.group || 'Organic', custOf(draft.customer_id)); // Speed Screen orders may be for today
     if (draft.status === 'draft' && draft.required_date < first) return toast(`The date required must be ${first === sydNow().date ? 'today' : 'tomorrow'} (${fmtDate(first)}) or later.`);
-    if (!isAdmin() && draft.status === 'draft' && draft.required_date) { const why = orderProblem(draft.group || 'Organic', draft.required_date, custOf(draft.customer_id)); if (why) return toast(why); }
+    if (!isAdmin() && !isSpeed() && draft.status === 'draft' && draft.required_date) { const why = orderProblem(draft.group || 'Organic', draft.required_date, custOf(draft.customer_id)); if (why) return toast(why); }
   } else if (needsCustomer(draft) && !draft.customer_id) return toast('Choose a customer first.');
   // Today's date is fixed: an order is dated the day it's saved, and keeps that date once it's sent.
   const row = { customer_id: draft.customer_id || null, order_date: draft.status === 'draft' ? today() : draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
-  if (isAdmin()) row.special_order = draft.group === 'Conventional' && !!draft.special_order;
+  if (isAdmin() || isSpeed()) row.special_order = draft.group === 'Conventional' && !!draft.special_order;
   else if (hasCustNotes) row.customer_notes = (draft.customer_notes || '').trim().slice(0, CUST_NOTES_MAX) || null; // buyers' Special Requirements: never on the supplier form
   if (draft.direct) row.csv_at = null; // back on the Received tab until its CSV is created again (same file name)
   saving = true;
   // An existing order only saves if no one else (another PC, a Receiver) has changed it since it was opened.
   let q = draft.id ? sb.from('orders').update(row).eq('id', draft.id) : null;
   if (q && draft.updated_at) q = q.eq('updated_at', draft.updated_at);
-  const { data, error } = await (q ? q.select().maybeSingle() : sb.from('orders').insert({ ...row, source: isAdmin() ? 'admin' : 'customer' }).select().single());
+  const { data, error } = await (q ? q.select().maybeSingle() : sb.from('orders').insert({ ...row, source: isAdmin() || isSpeed() ? 'admin' : 'customer' }).select().single());
   saving = false;
   if (error) return toast(friendly(error));
   if (!data) {
@@ -1285,7 +1298,7 @@ function viewSpeed() {
     <div class="spactions"><span class="muted">${lines.length} line${lines.length === 1 ? '' : 's'} · ${total} in total</span>
       <div class="row"><button type="button" onclick="spClear()">Clear</button><button type="button" onclick="spSave('draft')" ${sp.cust && lines.length ? '' : 'disabled'}>Save draft</button><button type="button" class="primary" onclick="spSave('complete')" ${sp.cust && lines.length && sp.req ? '' : 'disabled'}>Transmit Order</button></div></div>
   </aside>`;
-  return `<div class="speed"><div class="spbar"><h1>Speed Screen</h1><span class="muted">Conventional orders</span><button type="button" class="spexit" onclick="go('orders')">Exit</button></div>
+  return `<div class="speed"><div class="spbar"><h1>Speed Screen</h1><span class="muted">Conventional orders</span>${SPEED_PAGE ? `<span class="muted">${esc(profile?.full_name || profile?.email || '')}</span><button type="button" class="spexit" onclick="sb.auth.signOut()">Sign out</button>` : `<button type="button" class="spexit" onclick="go('orders')">Exit</button>`}</div>
     <div class="spbody"><section class="spmainarea">${main}</section>${side}</div></div>`;
 }
 function spPickCust(id) { sp.cust = id; sp.letter = ''; sp.cid = ''; sp.req = ''; sp.spo = false; render(); }
@@ -1369,7 +1382,7 @@ function viewUsers() {
   <div class="row"><input class="search" id="usearch" placeholder="Search logins" title="Name, email, mobile, business, role or linked customer" value="${esc(userSearch)}" oninput="userSearch=this.value;filterUsers()"><span class="muted" id="uscount">${userSearch.trim() ? `${us.filter(userMatch).length} of ${us.length}` : ''}</span></div></div>
   <div class="tablewrap stickyhead"><table><thead><tr><th>Name</th><th>Email</th><th>Mobile</th><th>Business they gave</th><th>Role</th><th>Linked customer</th><th>Access</th><th></th></tr></thead><tbody>
   ${us.map(u => `<tr data-ufind="${esc(userFindText(u))}" ${userMatch(u) ? '' : 'hidden'}><td>${esc(u.full_name)}</td><td class="mono">${esc(u.email)}</td><td style="white-space:nowrap">${esc(u.mobile || '')}</td><td>${esc(u.business || '')}</td><td>${u.role === 'admin' ? 'Admin' : u.role === 'manager' ? 'Manager' : u.role === 'receiver' ? 'Receiver' : 'Customer'}</td>
-    <td>${['admin', 'manager'].includes(u.role) ? '<span class="muted">All customers</span>' : u.role === 'receiver' ? '<span class="muted">All orders, view only</span>' : loginCustIds(u).map(id => esc(custOf(id)?.name || '')).sort().join('<br>')}</td>
+    <td>${['admin', 'manager'].includes(u.role) ? '<span class="muted">All customers</span>' : u.role === 'receiver' ? '<span class="muted">All orders, view only</span>' : u.role === 'speed' ? '<span class="muted">Speed Screen only</span>' : loginCustIds(u).map(id => esc(custOf(id)?.name || '')).sort().join('<br>')}</td>
     <td>${u.approved ? '<span class="pill complete">Active</span>' : '<span class="pill draft">Waiting</span>'}</td>
     <td class="num">${u.id === profile.id ? '<span class="muted">You</span>' : `<button class="ghost" onclick="editLogin('${u.id}')">${u.approved ? 'Edit' : 'Approve'}</button>`}</td></tr>`).join('')}
   </tbody></table></div>`;
@@ -2280,8 +2293,8 @@ function editLogin(uid) {
   openDialog(u.approved ? 'Edit login' : 'Approve login',
     `<p style="margin:0"><b>${esc(u.full_name || u.email)}</b><br><span class="mono muted">${esc(u.email)}</span>${u.business ? `<br>Business they gave: ${esc(u.business)}` : ''}</p>
     <label class="f">Mobile number<input name="mobile" id="f-mobile" type="tel" placeholder="04XX XXX XXX" value="${esc(u.mobile || '')}"></label>
-    <label class="f">Role<select name="role" id="f-role" onchange="document.getElementById('custpick').hidden = this.value!=='customer'"><option value="customer" ${!['admin', 'manager', 'receiver'].includes(u.role) ? 'selected' : ''}>Customer: orders for the businesses ticked below</option><option value="receiver" ${u.role === 'receiver' ? 'selected' : ''}>Receiver: checks deliveries and marks orders received</option><option value="manager" ${u.role === 'manager' ? 'selected' : ''}>Manager: orders, customers and products, not Suppliers or Administration</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin: full access, like you</option></select></label>
-    ${`<div class="custpick" id="custpick" ${['admin', 'manager', 'receiver'].includes(u.role) ? 'hidden' : ''}>Customers this login orders for<input class="search" placeholder="Find a customer" oninput="for(const l of document.querySelectorAll('#custlist label'))l.hidden=!l.textContent.toLowerCase().includes(this.value.toLowerCase())"><div class="custlist" id="custlist">${S.customers.slice().sort(byName).map(c => `<label><input type="checkbox" name="customer_ids" value="${c.id}" ${loginCustIds(u).includes(c.id) ? 'checked' : ''}> ${esc(c.name)}</label>`).join('')}</div><span class="muted" style="font-size:12px">Tick more than one and the customer picks which business each order is for.</span></div>`}
+    <label class="f">Role<select name="role" id="f-role" onchange="document.getElementById('custpick').hidden = this.value!=='customer'"><option value="customer" ${!['admin', 'manager', 'receiver', 'speed'].includes(u.role) ? 'selected' : ''}>Customer: orders for the businesses ticked below</option><option value="receiver" ${u.role === 'receiver' ? 'selected' : ''}>Receiver: checks deliveries and marks orders received</option><option value="manager" ${u.role === 'manager' ? 'selected' : ''}>Manager: orders, customers and products, not Suppliers or Administration</option><option value="speed" ${u.role === 'speed' ? 'selected' : ''}>Speed Screen: enters Conventional orders on the touch screen (csorders.org/speed) only</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin: full access, like you</option></select></label>
+    ${`<div class="custpick" id="custpick" ${['admin', 'manager', 'receiver', 'speed'].includes(u.role) ? 'hidden' : ''}>Customers this login orders for<input class="search" placeholder="Find a customer" oninput="for(const l of document.querySelectorAll('#custlist label'))l.hidden=!l.textContent.toLowerCase().includes(this.value.toLowerCase())"><div class="custlist" id="custlist">${S.customers.slice().sort(byName).map(c => `<label><input type="checkbox" name="customer_ids" value="${c.id}" ${loginCustIds(u).includes(c.id) ? 'checked' : ''}> ${esc(c.name)}</label>`).join('')}</div><span class="muted" style="font-size:12px">Tick more than one and the customer picks which business each order is for.</span></div>`}
     <label class="f">Access<select name="approved" id="f-approved"><option value="1" selected>Allowed to sign in</option><option value="0">Blocked</option></select></label>`,
     async f => {
       const role = f.get('role'), approved = f.get('approved') === '1', mtxt = f.get('mobile').trim(), mobile = auMobile(mtxt);
