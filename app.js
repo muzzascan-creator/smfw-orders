@@ -1188,6 +1188,7 @@ async function saveOrder(status) {
   const row = { customer_id: draft.customer_id || null, order_date: draft.status === 'draft' ? today() : draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
   if (isAdmin() || isSpeed()) row.special_order = draft.group === 'Conventional' && !!draft.special_order;
   else if (hasCustNotes) row.customer_notes = (draft.customer_notes || '').trim().slice(0, CUST_NOTES_MAX) || null; // buyers' Special Requirements: never on the supplier form
+  if (draft.speed && status === 'complete' && !draft.id) row.direct = true; // Speed Screen orders go straight to the Received tab
   if (draft.direct) row.csv_at = null; // back on the Received tab until its CSV is created again (same file name)
   saving = true;
   // An existing order only saves if no one else (another PC, a Receiver) has changed it since it was opened.
@@ -1208,7 +1209,7 @@ async function saveOrder(status) {
   await reloadOrders();
   const wasDirect = draft.direct;
   draft = null; go(isAdmin() ? (status === 'complete' ? 'orders' : view === 'entry' && data.source === 'customer' ? 'inbox' : 'orders') : 'mine', false);
-  if (wasDirect) autoCsv2();
+  if ((wasDirect || data.direct) && isAdmin()) autoCsv2();
 }
 async function reopenOrder() {
   const o = S.orders.find(x => x.id === draft.id); if (!o) return;
