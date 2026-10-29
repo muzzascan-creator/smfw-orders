@@ -1315,7 +1315,7 @@ function spKey(k) {
   if (sp.pad) sp.qty[sp.pack] = +sp.pad; else if (k === 'C') { delete sp.qty[sp.pack]; sp.pack = ''; }
   render();
 }
-function spClear() { if (Object.keys(sp.qty).length && !confirm('Clear this order and start again?')) return; spReset(); render(); }
+function spClear() { spReset(); render(); }
 async function spSave(status) {
   draft = { ...blankOrder(), group: 'Conventional', customer_id: sp.cust === SP_NONE ? '' : sp.cust, required_date: sp.req, special_order: sp.spo, qty: { ...sp.qty }, speed: true };
   await saveOrder(status);
