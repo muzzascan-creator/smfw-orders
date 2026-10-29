@@ -1228,7 +1228,7 @@ const SP_NONE = 'none'; // No customer: SMFW's own Main Conventional Order (CID 
 let sp = null;
 const spReset = () => { sp = { cust: '', letter: '', cid: '', sec: '', pack: '', pad: '', qty: {}, req: '', spo: false }; };
 const spCust = () => sp.cust && sp.cust !== SP_NONE ? custOf(sp.cust) : null;
-const spCustName = () => sp.cust === SP_NONE ? 'Main Conventional Order (CID 1183)' : spCust() ? `${spCust().name} (CID ${spCust().cid})` : '';
+const spCustName = () => sp.cust === SP_NONE ? 'Main Conventional Order' : spCust()?.name || '';
 const spSmfw = () => smfwOrder({ customer_id: sp.cust === SP_NONE ? null : sp.cust, special_order: sp.spo });
 const spPacks = p => (p.product_packs || []).filter(k => k.available || +sp.qty[k.id] > 0);
 // Speed Screen headings. Each button is one product in one pack; tapping it adds 1.
