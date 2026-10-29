@@ -1245,9 +1245,9 @@ function viewSpeed() {
   if (!sp.cust) {
     const cs = spCustomers();
     main = `<div class="sphead"><h2>Choose the customer</h2><span class="muted">${sp.cid ? `CID starting ${esc(sp.cid)}` : sp.letter ? `Names starting ${esc(sp.letter)}` : 'Tap a letter, or type a CID'}</span></div>
-      <div class="spletters">${[...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(l => `<button type="button" class="${sp.letter === l ? 'on' : ''}" onclick="sp.letter=sp.letter==='${l}'?'':'${l}';sp.cid='';render()">${l}</button>`).join('')}</div>
       <div class="spgrid spcusts">${sp.letter === 'M' || (sp.cid && String(CONVENTIONAL_CID).startsWith(sp.cid)) ? `<button type="button" class="spbtn spmain" onclick="spPickCust('${SP_NONE}')"><b>Main Conventional Order</b><span>No customer · CID 1183</span></button>` : ''}
-        ${cs.map(c => `<button type="button" class="spbtn" onclick="spPickCust('${c.id}')"><b>${esc(c.name)}</b><span>CID ${esc(c.cid)}</span></button>`).join('') || (sp.letter && sp.letter !== 'M' || sp.cid && !String(CONVENTIONAL_CID).startsWith(sp.cid) ? '<p class="muted">No customers match.</p>' : '')}</div>`;
+        ${cs.map(c => `<button type="button" class="spbtn" onclick="spPickCust('${c.id}')"><b>${esc(c.name)}</b><span>CID ${esc(c.cid)}</span></button>`).join('') || (sp.letter && sp.letter !== 'M' || sp.cid && !String(CONVENTIONAL_CID).startsWith(sp.cid) ? '<p class="muted">No customers match.</p>' : '')}</div>
+      <div class="spletters">${[...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(l => `<button type="button" class="${sp.letter === l ? 'on' : ''}" onclick="sp.letter=sp.letter==='${l}'?'':'${l}';sp.cid='';render()">${l}</button>`).join('')}</div>`;
   } else {
     const ps = spProducts(), secs = [...new Set(ps.map(p => p.section || 'Other'))];
     if (!secs.includes(sp.sec)) sp.sec = secs[0] || '';
