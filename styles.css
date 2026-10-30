@@ -412,3 +412,4 @@ body.speedmode .wrap{max-width:none;padding:0}
 .sptcolors{display:flex;flex-wrap:wrap;gap:4px;max-width:220px}
 .sptcol{width:30px;height:30px;padding:0;border-radius:6px;border:1.5px solid var(--line);color:var(--muted);font-size:14px}
 .sptcol.on{outline:3px solid var(--accent);outline-offset:1px}
+.spbtn[style*="--tile"] .sppk{background:transparent;border-color:transparent;padding-left:0;padding-right:0}
