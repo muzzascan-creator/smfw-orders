@@ -79,7 +79,7 @@ const isManager = () => profile?.role === 'manager' && profile?.approved;
 const canCsv = () => isAdmin() && !isManager();
 const ADMIN_ONLY = ['suppliers', 'emails', 'users', 'sms', 'cutoffs', 'settings', 'recv'];
 // The Administration tab holds Emails, Logins, SMS and Cut-offs; it opens on whichever was used last.
-const ADMIN_TABS = [['customers', 'Customers'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['emails', 'Emails'], ['users', 'Logins'], ['sms', 'SMS'], ['cutoffs', 'Cut-offs'], ['pomatch', 'PO Matching'], ['settings', 'Settings']];
+const ADMIN_TABS = [['customers', 'Customers'], ['products', 'Products'], ['suppliers', 'Suppliers'], ['emails', 'Emails'], ['users', 'Logins'], ['sms', 'SMS'], ['cutoffs', 'Cut-offs'], ['pomatch', 'PO Matching'], ['sptiles', 'Speed Screen'], ['settings', 'Settings']];
 // The top bar's height, so sticky bits (the Administration switch) sit just under it.
 new ResizeObserver(() => document.documentElement.style.setProperty('--hdr', $('#top').offsetHeight + 'px')).observe(document.getElementById('top'));
 let adminTab = 'customers';
@@ -167,6 +167,8 @@ async function loadAll() {
     if (!ps.error && ps.data?.[0]) S.settings = { ...S.settings, promo_hide_refs: ps.data[0].value };
     await loadFavs();
   }
+  // Speed Screen tile settings (migration 041): alias, place and colour per pack. Left empty until 041 is run.
+  if (isAdmin() || isSpeed()) { const { data, error } = await sb.from('speed_tiles').select('*'); S.spt = error ? null : Object.fromEntries((data || []).map(r => [r.pack_id, r])); }
   const bad = [...base, cr, cs].find(r => r?.error);
   if (bad) toast(friendly(bad.error));
   if (cr && !cr.error) S.cutRules = cr.data; if (cs && !cs.error) S.cutSettings = cs.data;
@@ -459,7 +461,7 @@ function render() {
   // A customer looking at an order they can't change uses Close to leave it; the tabs wait until then.
   const locked = !isAdmin() && !isReceiver() && view === 'entry' && !!draft?.id && !canEditDraft();
   nav.innerHTML = navItems().map(([v, label]) => `<button data-v="${v}" ${locked ? 'disabled title="Press Close to leave this order"' : ''} aria-current="${(v === view || v === 'recv' && view === 'recvorder' || v === 'admin' && adminTabs().some(([t]) => t === view)) && !(v === 'entry' && draft?.id) ? 'page' : 'false'}">${label}${v === 'inbox' ? `<span class="badge" ${inboxCount() ? '' : 'hidden'}>${inboxCount()}</span>` : ''}</button>`).join('');
-  const views = { pomatch: viewPoMatch, recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, speed: viewSpeed, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, batch: viewBatch, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers, sms: viewSms, cutoffs: viewCutoffs, settings: viewSettings };
+  const views = { pomatch: viewPoMatch, recv: viewRecv, recvorder: viewRecvOrder, inbox: viewInbox, orders: viewOrders, speed: viewSpeed, mine: viewMine, entry: viewEntry, customers: viewCustomers, products: viewProducts, batch: viewBatch, suppliers: viewSuppliers, emails: viewEmails, users: viewUsers, sms: viewSms, cutoffs: viewCutoffs, settings: viewSettings, sptiles: viewSpTiles };
   const allowed = SPEED_PAGE || isSpeed() ? ['speed'] : isManager() ? Object.keys(views).filter(v => !ADMIN_ONLY.includes(v) && !v.startsWith('recv')) : isAdmin() ? null : isReceiver() ? ['recv', 'recvorder'] : ['mine', 'entry'];
   // The Receiver screens are for Receivers, and for an Admin through the Receiver tab (not Managers).
   if (!views[view] || ['recv', 'recvorder'].includes(view) && !isReceiver() && !(isAdmin() && !isManager()) || (allowed && !allowed.includes(view))) view = homeView();
@@ -1246,10 +1248,17 @@ function packGrams(name) {
   const m = String(name || '').match(/(?:(\d+)\s*[x×]\s*)?(\d+(?:\.\d+)?)\s*(kg|g)\b/i);
   return m ? (+m[1] || 1) * +m[2] * (m[3].toLowerCase() === 'kg' ? 1000 : 1) : 0;
 }
+// Tiles follow the order set in Administration › Speed Screen; any not placed there yet come after, in the
+// standard order (Loose Leaf by pack size, the rest by name).
+const spSet = k => S.spt?.[k.id] || {};
+const spName = (p, k) => spSet(k).alias || p.name;
+function spCmp(a, b) {
+  const az = (x, y) => byName(x.p, y.p) || (x.k.name || '').localeCompare(y.k.name || '');
+  return SP_TABS.indexOf(a.tab) - SP_TABS.indexOf(b.tab) || (spSet(a.k).sort ?? 1e9) - (spSet(b.k).sort ?? 1e9)
+    || (a.tab === 'Loose Leaf' ? packGrams(b.k.name) - packGrams(a.k.name) || (a.k.name || '').localeCompare(b.k.name || '') || byName(a.p, b.p) : az(a, b));
+}
 function spTiles() {
-  const out = spProducts().flatMap(p => spPacks(p).map(k => ({ p, k, tab: spTab(p, k) })));
-  const az = (a, b) => byName(a.p, b.p) || (a.k.name || '').localeCompare(b.k.name || '');
-  return out.sort((a, b) => SP_TABS.indexOf(a.tab) - SP_TABS.indexOf(b.tab) || (a.tab === 'Loose Leaf' ? packGrams(b.k.name) - packGrams(a.k.name) || (a.k.name || '').localeCompare(b.k.name || '') || byName(a.p, b.p) : az(a, b)));
+  return spProducts().flatMap(p => spPacks(p).map(k => ({ p, k, tab: spTab(p, k) }))).sort(spCmp);
 }
 function spProducts() {
   const hide = p => spSmfw() && smfwSection(p.section) && !(p.product_packs || []).some(k => +sp.qty[k.id] > 0);
@@ -1286,24 +1295,69 @@ function viewSpeed() {
     if (!tabs.includes(sp.sec)) sp.sec = tabs[0] || '';
     const shown = tiles.filter(x => x.tab === sp.sec);
     main = `<div class="sptabs">${tabs.map(t => `<button type="button" class="${t === sp.sec ? 'on' : ''}" onclick="sp.sec='${t}';render()">${t}</button>`).join('')}</div>
-      <div class="spgrid spprods">${shown.map(({ p, k }) => { const q = +sp.qty[k.id] || 0; return `<button type="button" class="spbtn ${k.id === sp.pack ? 'on' : ''} ${q ? 'has' : ''}" onclick="spPickPack('${k.id}')"><b>${esc(p.name)}</b><div class="spsub"><span class="sppk">${esc(k.name)}</span>${q ? `<span><strong>${q}</strong> on order</span>` : ''}</div></button>`; }).join('') || '<p class="muted">No products here.</p>'}</div>`;
+      <div class="spgrid spprods">${shown.map(({ p, k }) => { const q = +sp.qty[k.id] || 0; return `<button type="button" class="spbtn ${k.id === sp.pack ? 'on' : ''} ${q ? 'has' : ''}" ${spSet(k).color ? `style="--tile:${spSet(k).color}"` : ''} onclick="spPickPack('${k.id}')"><b>${esc(spName(p, k))}</b><div class="spsub"><span class="sppk">${esc(k.name)}</span>${q ? `<span><strong>${q}</strong> on order</span>` : ''}</div></button>`; }).join('') || '<p class="muted">No products here.</p>'}</div>`;
   }
   const lines = Object.entries(sp.qty).filter(([, q]) => +q > 0).map(([id, q]) => ({ id, q: +q, f: packOf(id) })).filter(x => x.f);
   const total = lines.reduce((a, x) => a + x.q, 0);
   const padcol = `<aside class="sppadcol">
     <div class="spcustbox"><span class="muted">Customer</span><b>${sp.cust ? esc(spCustName()) : 'Not chosen yet'}</b>${sp.cust ? `<button type="button" onclick="spChangeCust()">Change customer</button>` : ''}${sp.cust && hasCustNotes ? `
       <label class="spnotes"><span>Special Requirements <span class="muted" id="sp-cncount">${sp.notes.length}/${CUST_NOTES_MAX}</span></span><textarea rows="3" maxlength="${CUST_NOTES_MAX}" placeholder="e.g. Deliver to back door" oninput="sp.notes=this.value.slice(0, CUST_NOTES_MAX);$('#sp-cncount').textContent=sp.notes.length+'/'+CUST_NOTES_MAX">${esc(sp.notes)}</textarea></label>` : ''}</div>
-    <div class="sppadwrap"><div class="sppadlabel">${!sp.cust ? 'Type a CID' : sp.pack && packOf(sp.pack) ? `Quantity for ${esc(packOf(sp.pack).p.name)}, ${esc(packOf(sp.pack).k.name)}` : 'Select a line to change its quantity'}<span class="sppadval">${esc(!sp.cust ? sp.cid : sp.pad)}</span></div>${pad}</div>
+    <div class="sppadwrap"><div class="sppadlabel">${!sp.cust ? 'Type a CID' : sp.pack && packOf(sp.pack) ? `Quantity for ${esc(spName(packOf(sp.pack).p, packOf(sp.pack).k))}, ${esc(packOf(sp.pack).k.name)}` : 'Select a line to change its quantity'}<span class="sppadval">${esc(!sp.cust ? sp.cid : sp.pad)}</span></div>${pad}</div>
   </aside>`;
   const side = `<aside class="spside">
     ${sp.cust ? `<div class="spdays">${spDays().map(d => `<button type="button" class="${d === sp.req ? 'on' : ''}" onclick="sp.req='${d}';render()">${esc(spDayLabel(d))}</button>`).join('')}</div>` : ''}
-    <div class="splines">${lines.length ? lines.map(x => `<div class="spline ${x.id === sp.pack ? 'on' : ''}" onclick="spSelLine('${x.id}')"><div class="spl-name"><b>${esc(x.f.p.name)}</b><span>${esc(x.f.k.name)}</span></div>
+    <div class="splines">${lines.length ? lines.map(x => `<div class="spline ${x.id === sp.pack ? 'on' : ''}" onclick="spSelLine('${x.id}')"><div class="spl-name"><b>${esc(spName(x.f.p, x.f.k))}</b><span>${esc(x.f.k.name)}</span></div>
         <span class="spn">${x.q}</span><button type="button" class="spdel" title="Delete this line" aria-label="Delete this line" onclick="event.stopPropagation();spDel('${x.id}')"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg></button></div>`).join('') : `<p class="muted spempty">${sp.cust ? 'Tap a product, then its pack, to add it.' : 'Choose a customer to start.'}</p>`}</div>
     <div class="spactions"><span class="muted">${lines.length} line${lines.length === 1 ? '' : 's'} · ${total} in total</span>
       <div class="row"><button type="button" onclick="spClear()">Clear</button><button type="button" class="primary" onclick="spSave('complete')" ${sp.cust && lines.length && sp.req ? '' : 'disabled'}>Transmit Order</button></div></div>
   </aside>`;
   return `<div class="speed"><div class="spbar"><img class="splogo" src="logo.png?v=2" alt="Coolibah Salads Sydney"><h1>Speed Screen</h1><span class="muted">Conventional orders</span>${SPEED_PAGE ? `<span class="muted">${esc(profile?.full_name || profile?.email || '')}</span><button type="button" class="spexit" onclick="sb.auth.signOut()">Sign out</button>` : `<button type="button" class="spexit" onclick="go('orders')">Exit</button>`}</div>
     <div class="spbody"><section class="spmainarea">${main}</section>${padcol}${side}</div></div>`;
+}
+// ---------- admin: Speed Screen tiles (migration 041) ----------
+// Every Conventional pack that can show on the Speed Screen, by heading, in its Speed Screen order. Changes are kept
+// here until Save.
+const SP_COLORS = [['', 'None'], ['#dcfce7', 'Green'], ['#fef9c3', 'Yellow'], ['#ffedd5', 'Orange'], ['#fee2e2', 'Red'], ['#fce7f3', 'Pink'], ['#ede9fe', 'Purple'], ['#dbeafe', 'Blue'], ['#ccfbf1', 'Teal'], ['#e5e7eb', 'Grey']];
+let spt = null, sptTab = SP_TABS[0];
+function sptLoad() {
+  const all = S.products.filter(p => groupOf(p) === 'Conventional' && p.active !== false).flatMap(p => (p.product_packs || []).filter(k => k.available).map(k => ({ p, k, tab: spTab(p, k) }))).sort(spCmp);
+  spt = { dirty: false, rows: all.map(x => ({ ...x, alias: spSet(x.k).alias || '', color: spSet(x.k).color || '' })) };
+}
+function viewSpTiles() {
+  if (S.spt === null) return `<div class="pagehead"><h1>Speed Screen</h1></div><div class="card empty">Run migration 041 (Speed Screen tile settings) in Supabase first, then press Ctrl+F5.</div>`;
+  if (!spt) sptLoad();
+  const rows = spt.rows.filter(r => r.tab === sptTab);
+  return `<div class="pagehead"><div class="row spread"><div><h1>Speed Screen</h1><p class="sub">Set the name shown on each tile (alias), the order of the tiles, and their colour. Orders still show the real product name.</p></div>
+    <div class="row"><button type="button" onclick="spt=null;render()" ${spt.dirty ? '' : 'disabled'}>Undo changes</button><button type="button" class="primary" onclick="sptSave(this)" ${spt.dirty ? '' : 'disabled'}>Save</button></div></div>
+    <div class="grpswitch sptabs-admin" role="tablist">${SP_TABS.map(t => `<button type="button" role="tab" aria-selected="${t === sptTab}" class="${t === sptTab ? 'primary' : ''}" onclick="sptTab='${t}';render()">${t} <span class="muted">${spt.rows.filter(r => r.tab === t).length}</span></button>`).join('')}</div></div>
+    ${rows.length ? `<div class="card tablewrap"><table class="spttbl"><thead><tr><th>Order</th><th>Tile</th><th>Product · pack</th><th>Alias (name on the tile)</th><th>Colour</th></tr></thead><tbody>
+    ${rows.map((r, i) => `<tr><td class="nowrap"><button type="button" class="ghost" title="Move up" ${i ? '' : 'disabled'} onclick="sptMove('${r.k.id}',-1)">▲</button><button type="button" class="ghost" title="Move down" ${i < rows.length - 1 ? '' : 'disabled'} onclick="sptMove('${r.k.id}',1)">▼</button><span class="mono muted"> ${i + 1}</span></td>
+      <td><div class="spbtn sptprev" ${r.color ? `style="--tile:${r.color}"` : ''}><b>${esc(r.alias || r.p.name)}</b><div class="spsub"><span class="sppk">${esc(r.k.name)}</span></div></div></td>
+      <td>${esc(r.p.name)}<div class="muted">${esc(r.k.name)}</div></td>
+      <td><input type="text" maxlength="40" value="${esc(r.alias)}" placeholder="${esc(r.p.name)}" oninput="sptAlias('${r.k.id}',this.value)"></td>
+      <td><div class="sptcolors">${SP_COLORS.map(([c, n]) => `<button type="button" class="sptcol ${r.color === c ? 'on' : ''}" title="${n}" aria-label="${n}" style="background:${c || '#fff'}" onclick="sptColor('${r.k.id}','${c}')">${c ? '' : '×'}</button>`).join('')}</div></td></tr>`).join('')}
+    </tbody></table></div>` : '<div class="card empty">No products under this heading.</div>'}`;
+}
+const sptRow = id => spt.rows.find(r => r.k.id === id);
+function sptMove(id, n) {
+  const tab = spt.rows.filter(r => r.tab === sptTab), i = tab.findIndex(r => r.k.id === id), j = i + n;
+  if (j < 0 || j >= tab.length) return;
+  const a = spt.rows.indexOf(tab[i]), b = spt.rows.indexOf(tab[j]);
+  [spt.rows[a], spt.rows[b]] = [spt.rows[b], spt.rows[a]]; spt.dirty = true; render();
+}
+function sptAlias(id, v) {
+  sptRow(id).alias = v; const was = spt.dirty; spt.dirty = true;
+  const prev = document.activeElement?.closest('tr')?.querySelector('.sptprev b'); if (prev) prev.textContent = v.trim() || sptRow(id).p.name;
+  if (!was) document.querySelectorAll('.pagehead button[disabled]').forEach(b => b.disabled = false);
+}
+function sptColor(id, c) { sptRow(id).color = c; spt.dirty = true; render(); }
+async function sptSave(btn) {
+  btn.disabled = true;
+  const now = new Date().toISOString(), out = [];
+  SP_TABS.forEach(t => spt.rows.filter(r => r.tab === t).forEach((r, i) => out.push({ pack_id: r.k.id, alias: r.alias.trim() || null, sort: i + 1, color: r.color || null, updated_at: now })));
+  const { error } = await sb.from('speed_tiles').upsert(out);
+  if (error) { btn.disabled = false; return toast(friendly(error)); }
+  S.spt = Object.fromEntries(out.map(r => [r.pack_id, r])); spt = null; render(); toast('Speed Screen tiles saved.', true);
 }
 function spPickCust(id) { sp.cust = id; sp.letter = ''; sp.cid = ''; sp.req = ''; sp.spo = false; render(); }
 function spChangeCust() { spReset(); render(); } // a new customer starts a new order

@@ -39,5 +39,6 @@ select item, case when ok then 'OK' else 'NOT DONE' end as status from (values
   ('038 Condition 3 Promo', exists (select 1 from pg_policies where tablename = 'staff_settings' and policyname = 'promo_read')),
   ('039 Auto CSV Off at Conventional cut-off', case when to_regclass('cron.job') is not null then
       (xpath('//row/c/text()', query_to_xml('select count(*) as c from cron.job where jobname = ''auto-csv-cutoff''', false, false, '')))[1]::text::int > 0 else false end),
-  ('040 Speed Screen logins', exists (select 1 from pg_proc where proname = 'is_speed'))
+  ('040 Speed Screen logins', exists (select 1 from pg_proc where proname = 'is_speed')),
+  ('041 Speed Screen tile settings', to_regclass('public.speed_tiles') is not null)
 ) as t(item, ok);

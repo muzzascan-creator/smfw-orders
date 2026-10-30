@@ -404,3 +404,11 @@ body.speedmode .wrap{max-width:none;padding:0}
 @media (max-width:1500px){.spdays{grid-template-columns:repeat(2,1fr)}}
 .spnotes{align-self:stretch;margin-top:clamp(10px,3vh,40px);display:flex;flex-direction:column;gap:6px;font-size:15px;font-weight:600;text-align:left}.spnotes>span{display:flex;justify-content:space-between}
 .spnotes textarea{font-size:20px;padding:10px 12px;resize:none;font-family:inherit}
+.spbtn[style*="--tile"]{background:var(--tile)}
+.spbtn.has[style*="--tile"]{border-color:var(--warn);border-width:3px}
+.sptabs-admin{margin-top:10px}
+.spttbl td{vertical-align:middle}.spttbl input{width:100%;min-width:180px}
+.sptprev{min-height:64px;width:200px;cursor:default}
+.sptcolors{display:flex;flex-wrap:wrap;gap:4px;max-width:220px}
+.sptcol{width:30px;height:30px;padding:0;border-radius:6px;border:1.5px solid var(--line);color:var(--muted);font-size:14px}
+.sptcol.on{outline:3px solid var(--accent);outline-offset:1px}
