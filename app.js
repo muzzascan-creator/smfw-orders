@@ -1263,7 +1263,7 @@ function spCustomers() {
   return [];
 }
 function spDays() {
-  // Today first and the default (staff can enter orders after the cut-off), then the next delivery days.
+  // Today first (staff can enter orders after the cut-off), then the next delivery days.
   const out = [today()];
   for (let i = 1; out.length < 4 && i < 10; i++) { const d = shiftDate(today(), i); if (!orderProblem('Conventional', d, spCust())) out.push(d); }
   return out;
@@ -1271,7 +1271,7 @@ function spDays() {
 const spDayLabel = d => d === today() ? 'Today' : d === tomorrow() ? 'Tomorrow' : new Date(d + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
 function viewSpeed() {
   if (!sp) spReset();
-  if (sp.cust && (!sp.req || !spDays().includes(sp.req))) sp.req = sp.req || spDays()[0] || '';
+  if (sp.cust && (!sp.req || !spDays().includes(sp.req))) sp.req = sp.req || spDays().find(d => !orderProblem('Conventional', d, spCust())) || spDays()[0] || ''; // default: the next day still open before its cut-off
   const pad = `<div class="sppad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map(k => `<button type="button" onclick="spKey('${k}')">${k}</button>`).join('')}</div>`;
   let main;
   if (!sp.cust) {
