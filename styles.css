@@ -413,3 +413,11 @@ body.speedmode .wrap{max-width:none;padding:0}
 .sptcol{width:30px;height:30px;padding:0;border-radius:6px;border:1.5px solid var(--line);color:var(--muted);font-size:14px}
 .sptcol.on{outline:3px solid var(--accent);outline-offset:1px}
 .spbtn[style*="--tile"] .sppk{background:transparent;border-color:transparent;padding-left:0;padding-right:0}
+.spcols{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;align-items:start}
+.spcol{display:flex;flex-direction:column;gap:10px;min-width:0}
+.sptboard{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;align-items:start;margin-bottom:14px}
+.sptcolumn{display:flex;flex-direction:column;gap:8px;min-width:0}
+.sptcolhead{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.sptcard{display:flex;flex-direction:column;gap:4px}
+.sptboard .sptprev{width:auto;min-height:64px}
+.sptarrows{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}.sptarrows button{padding:4px 0;font-size:14px}

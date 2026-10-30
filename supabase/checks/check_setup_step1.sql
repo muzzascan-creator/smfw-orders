@@ -40,5 +40,6 @@ select item, case when ok then 'OK' else 'NOT DONE' end as status from (values
   ('039 Auto CSV Off at Conventional cut-off', case when to_regclass('cron.job') is not null then
       (xpath('//row/c/text()', query_to_xml('select count(*) as c from cron.job where jobname = ''auto-csv-cutoff''', false, false, '')))[1]::text::int > 0 else false end),
   ('040 Speed Screen logins', exists (select 1 from pg_proc where proname = 'is_speed')),
-  ('041 Speed Screen tile settings', to_regclass('public.speed_tiles') is not null)
+  ('041 Speed Screen tile settings', to_regclass('public.speed_tiles') is not null),
+  ('042 Speed Screen columns', exists (select 1 from information_schema.columns where table_name = 'speed_tiles' and column_name = 'col'))
 ) as t(item, ok);

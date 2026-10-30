@@ -1257,6 +1257,17 @@ function spCmp(a, b) {
   return SP_TABS.indexOf(a.tab) - SP_TABS.indexOf(b.tab) || (spSet(a.k).sort ?? 1e9) - (spSet(b.k).sort ?? 1e9)
     || (a.tab === 'Loose Leaf' ? packGrams(b.k.name) - packGrams(a.k.name) || (a.k.name || '').localeCompare(b.k.name || '') || byName(a.p, b.p) : az(a, b));
 }
+// Tiles run top to bottom in SP_COLS columns. A tile given a column in Administration › Speed Screen goes there,
+// in its set place; any others go to the shortest column. With none set, the standard order fills column 1 first.
+const SP_COLS = 5;
+function spColumns(tiles, colOf = x => spSet(x.k).col) {
+  const cols = Array.from({ length: SP_COLS }, () => []), ok = x => colOf(x) >= 1 && colOf(x) <= SP_COLS;
+  const placed = tiles.filter(ok), rest = tiles.filter(x => !ok(x));
+  placed.forEach(x => cols[colOf(x) - 1].push(x));
+  if (placed.length) rest.forEach(x => cols.reduce((a, c) => c.length < a.length ? c : a).push(x));
+  else { const per = Math.ceil(rest.length / SP_COLS) || 1; rest.forEach((x, i) => cols[Math.floor(i / per)].push(x)); }
+  return cols;
+}
 function spTiles() {
   return spProducts().flatMap(p => spPacks(p).map(k => ({ p, k, tab: spTab(p, k) }))).sort(spCmp);
 }
@@ -1295,7 +1306,7 @@ function viewSpeed() {
     if (!tabs.includes(sp.sec)) sp.sec = tabs[0] || '';
     const shown = tiles.filter(x => x.tab === sp.sec);
     main = `<div class="sptabs">${tabs.map(t => `<button type="button" class="${t === sp.sec ? 'on' : ''}" onclick="sp.sec='${t}';render()">${t}</button>`).join('')}</div>
-      <div class="spgrid spprods">${shown.map(({ p, k }) => { const q = +sp.qty[k.id] || 0; return `<button type="button" class="spbtn ${k.id === sp.pack ? 'on' : ''} ${q ? 'has' : ''}" ${spSet(k).color ? `style="--tile:${spSet(k).color}"` : ''} onclick="spPickPack('${k.id}')"><b>${esc(spName(p, k))}</b><div class="spsub"><span class="sppk">${esc(k.name)}</span>${q ? `<span><strong>${q}</strong> on order</span>` : ''}</div></button>`; }).join('') || '<p class="muted">No products here.</p>'}</div>`;
+      <div class="spcols spprods">${shown.length ? spColumns(shown).map(col => `<div class="spcol">${col.map(({ p, k }) => { const q = +sp.qty[k.id] || 0; return `<button type="button" class="spbtn ${k.id === sp.pack ? 'on' : ''} ${q ? 'has' : ''}" ${spSet(k).color ? `style="--tile:${spSet(k).color}"` : ''} onclick="spPickPack('${k.id}')"><b>${esc(spName(p, k))}</b><div class="spsub"><span class="sppk">${esc(k.name)}</span>${q ? `<span><strong>${q}</strong> on order</span>` : ''}</div></button>`; }).join('')}</div>`).join('') : '<p class="muted">No products here.</p>'}</div>`;
   }
   const lines = Object.entries(sp.qty).filter(([, q]) => +q > 0).map(([id, q]) => ({ id, q: +q, f: packOf(id) })).filter(x => x.f);
   const total = lines.reduce((a, x) => a + x.q, 0);
@@ -1321,42 +1332,54 @@ const SP_COLORS = [['', 'None'], ['#dcfce7', 'Green'], ['#fef9c3', 'Yellow'], ['
 let spt = null, sptTab = SP_TABS[0];
 function sptLoad() {
   const all = S.products.filter(p => groupOf(p) === 'Conventional' && p.active !== false).flatMap(p => (p.product_packs || []).filter(k => k.available).map(k => ({ p, k, tab: spTab(p, k) }))).sort(spCmp);
-  spt = { dirty: false, rows: all.map(x => ({ ...x, alias: spSet(x.k).alias || '', color: spSet(x.k).color || '' })) };
+  const rows = [];
+  SP_TABS.forEach(t => spColumns(all.filter(x => x.tab === t)).forEach((col, c) => col.forEach(x => rows.push({ ...x, col: c + 1, alias: spSet(x.k).alias || '', color: spSet(x.k).color || '' }))));
+  spt = { dirty: false, rows };
+}
+// The tab's tiles as columns (each in its place), and back again after a move.
+const sptCols = () => Array.from({ length: SP_COLS }, (_, c) => spt.rows.filter(r => r.tab === sptTab && r.col === c + 1));
+function sptSetCols(cols) {
+  spt.rows = spt.rows.filter(r => r.tab !== sptTab).concat(cols.flatMap((col, c) => col.map(r => ({ ...r, col: c + 1 }))));
+  spt.dirty = true; render();
 }
 function viewSpTiles() {
   if (S.spt === null) return `<div class="pagehead"><h1>Speed Screen</h1></div><div class="card empty">Run migration 041 (Speed Screen tile settings) in Supabase first, then press Ctrl+F5.</div>`;
+  if (S.spt === undefined) return '<div class="card empty">Loading…</div>';
   if (!spt) sptLoad();
-  const rows = spt.rows.filter(r => r.tab === sptTab);
-  return `<div class="pagehead"><div class="row spread"><div><h1>Speed Screen</h1><p class="sub">Set the name shown on each tile (alias), the order of the tiles, and their colour. Orders still show the real product name.</p></div>
+  const cols = sptCols(), rows = cols.flat();
+  const card = (r, c, i) => `<div class="sptcard"><div class="spbtn sptprev" ${r.color ? `style="--tile:${r.color}"` : ''}><b>${esc(r.alias || r.p.name)}</b><div class="spsub"><span class="sppk">${esc(r.k.name)}</span></div></div>
+    <div class="sptarrows"><button type="button" title="Move to the column on the left" ${c ? '' : 'disabled'} onclick="sptMove('${r.k.id}',-1,0)">◀</button><button type="button" title="Move up" ${i ? '' : 'disabled'} onclick="sptMove('${r.k.id}',0,-1)">▲</button><button type="button" title="Move down" ${i < cols[c].length - 1 ? '' : 'disabled'} onclick="sptMove('${r.k.id}',0,1)">▼</button><button type="button" title="Move to the column on the right" ${c < SP_COLS - 1 ? '' : 'disabled'} onclick="sptMove('${r.k.id}',1,0)">▶</button></div></div>`;
+  return `<div class="pagehead"><div class="row spread"><div><h1>Speed Screen</h1><p class="sub">Tiles run top to bottom in ${SP_COLS} columns, as on the Speed Screen. Move a tile with the arrows: ◀ ▶ to another column, ▲ ▼ within its column. Set the name shown on the tile (alias) and its colour in the list below. Orders still show the real product name.</p></div>
     <div class="row"><button type="button" onclick="spt=null;render()" ${spt.dirty ? '' : 'disabled'}>Undo changes</button><button type="button" class="primary" onclick="sptSave(this)" ${spt.dirty ? '' : 'disabled'}>Save</button></div></div>
     <div class="grpswitch sptabs-admin" role="tablist">${SP_TABS.map(t => `<button type="button" role="tab" aria-selected="${t === sptTab}" class="${t === sptTab ? 'primary' : ''}" onclick="sptTab='${t}';render()">${t} <span class="muted">${spt.rows.filter(r => r.tab === t).length}</span></button>`).join('')}</div></div>
-    ${rows.length ? `<div class="card tablewrap"><table class="spttbl"><thead><tr><th>Order</th><th>Tile</th><th>Product · pack</th><th>Alias (name on the tile)</th><th>Colour</th></tr></thead><tbody>
-    ${rows.map((r, i) => `<tr><td class="nowrap"><button type="button" class="ghost" title="Move up" ${i ? '' : 'disabled'} onclick="sptMove('${r.k.id}',-1)">▲</button><button type="button" class="ghost" title="Move down" ${i < rows.length - 1 ? '' : 'disabled'} onclick="sptMove('${r.k.id}',1)">▼</button><span class="mono muted"> ${i + 1}</span></td>
-      <td><div class="spbtn sptprev" ${r.color ? `style="--tile:${r.color}"` : ''}><b>${esc(r.alias || r.p.name)}</b><div class="spsub"><span class="sppk">${esc(r.k.name)}</span></div></div></td>
+    ${rows.length ? `<div class="card sptboard">${cols.map((col, c) => `<div class="sptcolumn"><div class="sptcolhead">Column ${c + 1}</div>${col.map((r, i) => card(r, c, i)).join('') || '<p class="muted">Empty</p>'}</div>`).join('')}</div>
+    <div class="card tablewrap"><table class="spttbl"><thead><tr><th>Place</th><th>Product · pack</th><th>Alias (name on the tile)</th><th>Colour</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td class="nowrap mono muted">Col ${r.col} · ${cols[r.col - 1].indexOf(r) + 1}</td>
       <td>${esc(r.p.name)}<div class="muted">${esc(r.k.name)}</div></td>
       <td><input type="text" maxlength="40" value="${esc(r.alias)}" placeholder="${esc(r.p.name)}" oninput="sptAlias('${r.k.id}',this.value)"></td>
       <td><div class="sptcolors">${SP_COLORS.map(([c, n]) => `<button type="button" class="sptcol ${r.color === c ? 'on' : ''}" title="${n}" aria-label="${n}" style="background:${c || '#fff'}" onclick="sptColor('${r.k.id}','${c}')">${c ? '' : '×'}</button>`).join('')}</div></td></tr>`).join('')}
     </tbody></table></div>` : '<div class="card empty">No products under this heading.</div>'}`;
 }
 const sptRow = id => spt.rows.find(r => r.k.id === id);
-function sptMove(id, n) {
-  const tab = spt.rows.filter(r => r.tab === sptTab), i = tab.findIndex(r => r.k.id === id), j = i + n;
-  if (j < 0 || j >= tab.length) return;
-  const a = spt.rows.indexOf(tab[i]), b = spt.rows.indexOf(tab[j]);
-  [spt.rows[a], spt.rows[b]] = [spt.rows[b], spt.rows[a]]; spt.dirty = true; render();
+// dc moves to the next column (keeping its place where it can), di moves up or down within the column.
+function sptMove(id, dc, di) {
+  const cols = sptCols(), c = cols.findIndex(col => col.some(r => r.k.id === id)), i = cols[c].findIndex(r => r.k.id === id);
+  if (di) { const j = i + di; if (j < 0 || j >= cols[c].length) return; [cols[c][i], cols[c][j]] = [cols[c][j], cols[c][i]]; }
+  else { const t = c + dc; if (t < 0 || t >= SP_COLS) return; const [r] = cols[c].splice(i, 1); cols[t].splice(Math.min(i, cols[t].length), 0, r); }
+  sptSetCols(cols);
 }
 function sptAlias(id, v) {
   sptRow(id).alias = v; const was = spt.dirty; spt.dirty = true;
-  const prev = document.activeElement?.closest('tr')?.querySelector('.sptprev b'); if (prev) prev.textContent = v.trim() || sptRow(id).p.name;
+  document.querySelectorAll('.sptboard .sptcard').forEach(el => { if (el.querySelector(`[onclick*="${id}"]`)) el.querySelector('.sptprev b').textContent = v.trim() || sptRow(id).p.name; });
   if (!was) document.querySelectorAll('.pagehead button[disabled]').forEach(b => b.disabled = false);
 }
 function sptColor(id, c) { sptRow(id).color = c; spt.dirty = true; render(); }
 async function sptSave(btn) {
   btn.disabled = true;
   const now = new Date().toISOString(), out = [];
-  SP_TABS.forEach(t => spt.rows.filter(r => r.tab === t).forEach((r, i) => out.push({ pack_id: r.k.id, alias: r.alias.trim() || null, sort: i + 1, color: r.color || null, updated_at: now })));
+  spt.rows.forEach(r => out.push({ pack_id: r.k.id, alias: r.alias.trim() || null, col: r.col, sort: spt.rows.filter(x => x.tab === r.tab && x.col === r.col).indexOf(r) + 1, color: r.color || null, updated_at: now }));
   const { error } = await sb.from('speed_tiles').upsert(out);
-  if (error) { btn.disabled = false; return toast(friendly(error)); }
+  if (error) { btn.disabled = false; return toast(/col/.test(error.message) ? 'Run migration 042 (Speed Screen columns) in Supabase first, then try again.' : friendly(error)); }
   S.spt = Object.fromEntries(out.map(r => [r.pack_id, r])); spt = null; render(); toast('Speed Screen tiles saved.', true);
 }
 function spPickCust(id) { sp.cust = id; sp.letter = ''; sp.cid = ''; sp.req = ''; sp.spo = false; render(); }
