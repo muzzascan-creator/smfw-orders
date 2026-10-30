@@ -1380,9 +1380,12 @@ async function sptSave(btn) {
   btn.disabled = true;
   const now = new Date().toISOString(), out = [];
   spt.rows.forEach(r => out.push({ pack_id: r.k.id, alias: r.alias.trim() || null, col: r.col, sort: spt.rows.filter(x => x.tab === r.tab && x.col === r.col).indexOf(r) + 1, color: r.color || null, updated_at: now }));
-  const { error } = await sb.from('speed_tiles').upsert(out);
-  if (error) { btn.disabled = false; return toast(/col/.test(error.message) ? 'Run migration 042 (Speed Screen columns) in Supabase first, then try again.' : friendly(error)); }
-  S.spt = Object.fromEntries(out.map(r => [r.pack_id, r])); spt = null; render(); toast('Speed Screen tiles saved.', true);
+  let { error } = await sb.from('speed_tiles').upsert(out), noCols = false;
+  // Before migration 042 there are no columns: names, colours and order still save, columns don't.
+  if (error && /\bcol\b/.test(error.message)) { noCols = true; ({ error } = await sb.from('speed_tiles').upsert(out.map(({ col, ...r }) => r))); }
+  if (error) { btn.disabled = false; return toast(friendly(error)); }
+  S.spt = Object.fromEntries(out.map(r => [r.pack_id, noCols ? { ...r, col: null } : r])); spt = null; render();
+  toast(noCols ? 'Saved, except the columns: run migration 042 (Speed Screen columns) in Supabase to keep those.' : 'Speed Screen tiles saved.', true);
 }
 function spPickCust(id) { sp.cust = id; sp.letter = ''; sp.cid = ''; sp.req = ''; sp.spo = false; render(); }
 function spChangeCust() { spReset(); render(); } // a new customer starts a new order
