@@ -472,6 +472,7 @@ function render() {
   const sub = adminTabs().some(([t]) => t === view) ? `<div class="adminbar"><div class="grpswitch" role="tablist" aria-label="Administration">${adminTabs().map(([t, l]) => `<button type="button" role="tab" aria-selected="${t === view}" class="${t === view ? 'on' : ''}" onclick="go('${t}');refreshInBackground()">${l}</button>`).join('')}</div></div>` : '';
   document.body.classList.toggle('speedmode', view === 'speed');
   $('#app').innerHTML = sub + views[view]();
+  if (view === 'speed') spSizeTiles();
   if (view === 'entry') wireEntry();
   if (view === 'orders') wireOrderSearch();
   setPageHeadHeight();
@@ -1262,6 +1263,17 @@ function spCmp(a, b) {
 // Tiles run top to bottom in SP_COLS columns. A tile given a column in Administration › Speed Screen goes there,
 // in its set place; any others go to the shortest column. With none set, the standard order fills column 1 first.
 const SP_COLS = 5;
+// Every tile is the size of the largest one, measured with "on order" showing, across all the headings so tiles keep
+// their size when you switch. Test tiles in a column measure them at the screen's current size.
+function spSizeTiles() {
+  const col = $('.spcol'); if (!col) return;
+  const box = document.createElement('div'); box.style.cssText = 'visibility:hidden;position:absolute;left:0;right:0;display:flex;flex-direction:column';
+  box.innerHTML = spTiles().map(({ p, k }) => `<div class="spbtn" style="height:auto"><b>${esc(spName(p, k))}</b><div class="spsub"><span class="sppk">${esc(k.name)}</span><span><strong>99</strong> on order</span></div></div>`).join('');
+  col.style.position = 'relative'; col.appendChild(box);
+  const h = Math.max(0, ...[...box.children].map(t => t.offsetHeight)); box.remove();
+  if (h) $('.spcols').style.setProperty('--sph', h + 'px');
+}
+addEventListener('resize', () => { if (view === 'speed') spSizeTiles(); });
 function spColumns(tiles, colOf = x => spSet(x.k).col) {
   const cols = Array.from({ length: SP_COLS }, () => []), ok = x => colOf(x) >= 1 && colOf(x) <= SP_COLS;
   const placed = tiles.filter(ok), rest = tiles.filter(x => !ok(x));

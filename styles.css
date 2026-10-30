@@ -421,3 +421,5 @@ body.speedmode .wrap{max-width:none;padding:0}
 .sptcard{display:flex;flex-direction:column;gap:4px}
 .sptboard .sptprev{width:auto;min-height:64px}
 .sptarrows{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}.sptarrows button{padding:4px 0;font-size:14px}
+.spcols .spbtn{height:var(--sph,auto);overflow:hidden}
+.spcols .spbtn b,.spbtn .sppk{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
