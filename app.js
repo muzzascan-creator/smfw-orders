@@ -169,6 +169,7 @@ async function loadAll() {
   }
   // Speed Screen tile settings (migration 041): alias, place and colour per pack. Left empty until 041 is run.
   if (isAdmin() || isSpeed()) { const { data, error } = await sb.from('speed_tiles').select('*'); S.spt = error ? null : Object.fromEntries((data || []).map(r => [r.pack_id, r])); }
+  if (spt && !spt.dirty) spt = null; // the Speed Screen settings page picks up new or changed products
   const bad = [...base, cr, cs].find(r => r?.error);
   if (bad) toast(friendly(bad.error));
   if (cr && !cr.error) S.cutRules = cr.data; if (cs && !cs.error) S.cutSettings = cs.data;
@@ -347,9 +348,10 @@ async function enter() {
   if (isAdmin()) { await loadCsvDir(1); await loadCsvDir(2); autoCsv2(); }
   listenForOrders();
   // Admin dashboards and receiver tablets refresh themselves every 30 seconds (skipped while the tab is hidden; no
-  // redraw mid-edit): changed orders each time, everything else every 5 minutes.
+  // redraw mid-edit): changed orders each time, everything else every 5 minutes. The Speed Screen reloads its
+  // products and tile settings every minute, so new or changed products show on it without a restart.
   let ticks = 0;
-  clearInterval(autoRefresh); autoRefresh = setInterval(() => { if (document.hidden || !profile) return; if (isAdmin() || isReceiver()) refreshInBackground(++ticks % 10 === 0); checkVersion(); }, 30000);
+  clearInterval(autoRefresh); autoRefresh = setInterval(() => { if (document.hidden || !profile) return; if (isAdmin() || isReceiver()) refreshInBackground(++ticks % 10 === 0); else if (isSpeed()) refreshInBackground(++ticks % 2 === 0); checkVersion(); }, 30000);
   if (!view) view = homeView();
   render();
 }
@@ -441,7 +443,7 @@ const canRedraw = () => !['entry', 'emails', 'sms', 'cutoffs'].includes(view) &&
 // all = false fetches only changed orders (the 30-second timer); a tab press or a long time away fetches everything.
 function refreshInBackground(all = true) {
   if (refreshing) return refreshing;
-  const v = view, snap = () => JSON.stringify([S.customers, S.suppliers, S.products, S.orders, S.profiles, S.emails, S.sections, S.links]);
+  const v = view, snap = () => JSON.stringify([S.customers, S.suppliers, S.products, S.orders, S.profiles, S.emails, S.sections, S.links, S.spt]);
   const before = snap();
   const sw = isAdmin() && S.settings?.auto_csv_2;
   return refreshing = (all ? loadAll() : reloadOrders()).then(async () => {
