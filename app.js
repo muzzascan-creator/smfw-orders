@@ -141,10 +141,11 @@ async function loadAll() {
   let base, cr, cs;
   if (isSpeed()) {
     // Speed Screen logins: customers who order Conventional, products and cut-offs; orders only their own.
-    let c, p, o;
-    [c, p, o, cr, cs] = await Promise.all([allRows(() => sb.from('customers').select('id,cid,name,product_group,sunday_delivery').order('id')), prods, orders, ...cuts]);
+    let c, p, o, ps;
+    [c, p, o, ps, cr, cs] = await Promise.all([allRows(() => sb.from('customers').select('id,cid,name,product_group,sunday_delivery,promo').order('id')), prods, orders, sb.from('staff_settings').select('key,value').eq('key', 'promo_hide_refs'), ...cuts]);
     base = [c, p, o];
     S.customers = c.data || []; S.suppliers = []; S.products = p.data || [];
+    if (!ps.error && ps.data?.[0]) S.settings = { ...S.settings, promo_hide_refs: ps.data[0].value };
   } else if (isReceiver()) {
     const [c, s, p, o] = base = await Promise.all([allRows(() => sb.from('customers').select('id,cid,name,phone').order('id')), sb.from('suppliers').select('*'), prods, orders]);
     S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || [];
@@ -1231,7 +1232,7 @@ const spReset = () => { sp = { cust: '', letter: '', cid: '', sec: '', pack: '',
 const spCust = () => sp.cust && sp.cust !== SP_NONE ? custOf(sp.cust) : null;
 const spCustName = () => sp.cust === SP_NONE ? 'Main Conventional Order' : spCust()?.name || '';
 const spSmfw = () => smfwOrder({ customer_id: sp.cust === SP_NONE ? null : sp.cust, special_order: sp.spo });
-const spPacks = p => (p.product_packs || []).filter(k => k.available || +sp.qty[k.id] > 0);
+const spPacks = p => (p.product_packs || []).filter(k => (k.available && promoShown(k, spCust())) || +sp.qty[k.id] > 0); // Condition 3 Promo, as on the customer's order form
 // Speed Screen headings. Each button is one product in one pack; tapping it adds 1.
 // Vegetables, Herbs and Drinks go by the product's section; the rest by pack: clam shells, flow packs, and
 // everything else (cartons, pillow packs) under Loose Leaf.
