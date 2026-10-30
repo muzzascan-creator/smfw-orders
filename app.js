@@ -133,7 +133,7 @@ async function run(promise, okMsg) { const { data, error } = await promise; if (
 let hasCustNotes = false;
 const CUST_NOTES_MAX = 50; // characters; the database holds it to the same (migration 035)
 async function loadAll() {
-  if (!hasCustNotes) sb.from('orders').select('customer_notes').limit(1).then(({ error }) => { if (!error && !hasCustNotes) { hasCustNotes = true; if (view === 'entry' && !isAdmin()) render(); } });
+  if (!hasCustNotes) sb.from('orders').select('customer_notes').limit(1).then(({ error }) => { if (!error && !hasCustNotes) { hasCustNotes = true; if (view === 'entry' && !isAdmin() || view === 'speed') render(); } });
   const prods = fetchProducts(!isAdmin() && !isReceiver());
   const orders = reloadOrders();
   // Cut-off rules: receivers don't need them. If they can't be fetched, the last ones fetched stay in use.
@@ -1188,7 +1188,7 @@ async function saveOrder(status) {
   // Today's date is fixed: an order is dated the day it's saved, and keeps that date once it's sent.
   const row = { customer_id: draft.customer_id || null, order_date: draft.status === 'draft' ? today() : draft.order_date || today(), required_date: draft.required_date || null, special: draft.special || null, status, lines };
   if (isAdmin() || isSpeed()) row.special_order = draft.group === 'Conventional' && !!draft.special_order;
-  else if (hasCustNotes) row.customer_notes = (draft.customer_notes || '').trim().slice(0, CUST_NOTES_MAX) || null; // buyers' Special Requirements: never on the supplier form
+  if (hasCustNotes && (!isAdmin() && !isSpeed() || draft.speed)) row.customer_notes = (draft.customer_notes || '').trim().slice(0, CUST_NOTES_MAX) || null; // buyers' Special Requirements: never on the supplier form
   if (draft.speed && status === 'complete' && !draft.id) row.direct = true; // Speed Screen orders go straight to the Received tab
   if (draft.direct) row.csv_at = null; // back on the Received tab until its CSV is created again (same file name)
   saving = true;
@@ -1228,7 +1228,7 @@ async function deleteOrder(btn) {
 // It saves through saveOrder, so the order follows the same rules as New order and lands on the Orders tab.
 const SP_NONE = 'none'; // No customer: SMFW's own Main Conventional Order (CID 1183)
 let sp = null;
-const spReset = () => { sp = { cust: '', letter: '', cid: '', sec: '', pack: '', pad: '', qty: {}, req: '', spo: false }; };
+const spReset = () => { sp = { cust: '', letter: '', cid: '', sec: '', pack: '', pad: '', qty: {}, req: '', spo: false, notes: '' }; };
 const spCust = () => sp.cust && sp.cust !== SP_NONE ? custOf(sp.cust) : null;
 const spCustName = () => sp.cust === SP_NONE ? 'Main Conventional Order' : spCust()?.name || '';
 const spSmfw = () => smfwOrder({ customer_id: sp.cust === SP_NONE ? null : sp.cust, special_order: sp.spo });
@@ -1295,7 +1295,8 @@ function viewSpeed() {
     <div class="sppadwrap"><div class="sppadlabel">${!sp.cust ? 'Type a CID' : sp.pack && packOf(sp.pack) ? `Quantity for ${esc(packOf(sp.pack).p.name)}, ${esc(packOf(sp.pack).k.name)}` : 'Select a line to change its quantity'}<span class="sppadval">${esc(!sp.cust ? sp.cid : sp.pad)}</span></div>${pad}</div>
   </aside>`;
   const side = `<aside class="spside">
-    ${sp.cust ? `<div class="spdays">${spDays().map(d => `<button type="button" class="${d === sp.req ? 'on' : ''}" onclick="sp.req='${d}';render()">${esc(spDayLabel(d))}</button>`).join('')}</div>` : ''}
+    ${sp.cust ? `<div class="spdays">${spDays().map(d => `<button type="button" class="${d === sp.req ? 'on' : ''}" onclick="sp.req='${d}';render()">${esc(spDayLabel(d))}</button>`).join('')}</div>${hasCustNotes ? `
+      <label class="spnotes"><span>Special Requirements <span class="muted" id="sp-cncount">${sp.notes.length}/${CUST_NOTES_MAX}</span></span><input type="text" maxlength="${CUST_NOTES_MAX}" value="${esc(sp.notes)}" placeholder="e.g. Deliver to back door" oninput="sp.notes=this.value.slice(0, CUST_NOTES_MAX);$('#sp-cncount').textContent=sp.notes.length+'/'+CUST_NOTES_MAX"></label>` : ''}` : ''}
     <div class="splines">${lines.length ? lines.map(x => `<div class="spline ${x.id === sp.pack ? 'on' : ''}" onclick="spSelLine('${x.id}')"><div class="spl-name"><b>${esc(x.f.p.name)}</b><span>${esc(x.f.k.name)}</span></div>
         <span class="spn">${x.q}</span><button type="button" class="spdel" title="Delete this line" aria-label="Delete this line" onclick="event.stopPropagation();spDel('${x.id}')"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg></button></div>`).join('') : `<p class="muted spempty">${sp.cust ? 'Tap a product, then its pack, to add it.' : 'Choose a customer to start.'}</p>`}</div>
     <div class="spactions"><span class="muted">${lines.length} line${lines.length === 1 ? '' : 's'} · ${total} in total</span>
@@ -1319,7 +1320,7 @@ function spKey(k) {
 }
 function spClear() { spReset(); render(); }
 async function spSave(status) {
-  draft = { ...blankOrder(), group: 'Conventional', customer_id: sp.cust === SP_NONE ? '' : sp.cust, required_date: sp.req, special_order: sp.spo, qty: { ...sp.qty }, speed: true };
+  draft = { ...blankOrder(), group: 'Conventional', customer_id: sp.cust === SP_NONE ? '' : sp.cust, required_date: sp.req, special_order: sp.spo, customer_notes: sp.notes, qty: { ...sp.qty }, speed: true };
   await saveOrder(status);
   if (draft) { draft = null; return; } // not saved: saveOrder said why, and the Speed Screen order is kept
   spReset(); go('speed', false);

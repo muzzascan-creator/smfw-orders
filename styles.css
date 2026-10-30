@@ -402,3 +402,5 @@ body.speedmode .wrap{max-width:none;padding:0}
 .spcusts{flex:1;min-height:0;overflow:auto;align-content:start;grid-template-columns:repeat(5,minmax(0,1fr))}
 .spmainarea:has(.spcusts){overflow:hidden}
 @media (max-width:1500px){.spdays{grid-template-columns:repeat(2,1fr)}}
+.spnotes{display:flex;flex-direction:column;gap:4px;font-size:15px;font-weight:600}.spnotes>span{display:flex;justify-content:space-between}
+.spnotes input{font-size:18px;padding:10px 12px;min-height:clamp(44px,4.6vh,56px)}
