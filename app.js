@@ -427,7 +427,7 @@ const homeView = () => SPEED_PAGE || isSpeed() ? 'speed' : isAdmin() ? 'inbox' :
 function navItems() {
   if (isReceiver()) return [['recv', 'Orders']];
   return isAdmin()
-    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['batch', 'Batch Code'], ['recv', 'Receiver'], ['admin', 'Administration']].filter(([v]) => !isManager() || !ADMIN_ONLY.includes(v))
+    ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['speed', 'Speed Screen'], ['batch', 'Batch Code'], ['recv', 'Receiver'], ['admin', 'Administration']].filter(([v]) => !isManager() || !ADMIN_ONLY.includes(v))
     : [['mine', 'My orders'], ['entry', 'New order']];
 }
 function inboxCount() { return S.orders.filter(o => o.status === 'submitted').length; }
