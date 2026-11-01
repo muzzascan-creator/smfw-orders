@@ -472,7 +472,7 @@ function render() {
   const sub = adminTabs().some(([t]) => t === view) ? `<div class="adminbar"><div class="grpswitch" role="tablist" aria-label="Administration">${adminTabs().map(([t, l]) => `<button type="button" role="tab" aria-selected="${t === view}" class="${t === view ? 'on' : ''}" onclick="go('${t}');refreshInBackground()">${l}</button>`).join('')}</div></div>` : '';
   document.body.classList.toggle('speedmode', view === 'speed');
   $('#app').innerHTML = sub + views[view]();
-  if (view === 'speed') spSizeTiles();
+  if (view === 'speed') { spSizeTiles(); $('.spline.on')?.scrollIntoView({ block: 'nearest' }); } // keep the line just entered in sight
   if (view === 'entry') wireEntry();
   if (view === 'orders') wireOrderSearch();
   setPageHeadHeight();
