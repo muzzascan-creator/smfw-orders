@@ -136,8 +136,8 @@ async function loadAll() {
   if (!hasCustNotes) sb.from('orders').select('customer_notes').limit(1).then(({ error }) => { if (!error && !hasCustNotes) { hasCustNotes = true; if (view === 'entry' && !isAdmin() || view === 'speed') render(); } });
   const prods = fetchProducts(!isAdmin() && !isReceiver());
   const orders = reloadOrders();
-  // Cut-off rules: receivers don't need them. If they can't be fetched, the last ones fetched stay in use.
-  const cuts = isReceiver() ? [] : [sb.from('cutoff_rules').select('*'), sb.from('cutoff_settings').select('*')];
+  // Cut-off rules (receivers use them to show only the orders due). If they can't be fetched, the last ones stay in use.
+  const cuts = [sb.from('cutoff_rules').select('*'), sb.from('cutoff_settings').select('*')];
   let base, cr, cs;
   if (isSpeed()) {
     // Speed Screen logins: customers who order Conventional, products and cut-offs; orders only their own.
@@ -147,7 +147,9 @@ async function loadAll() {
     S.customers = c.data || []; S.suppliers = []; S.products = p.data || [];
     if (!ps.error && ps.data?.[0]) S.settings = { ...S.settings, promo_hide_refs: ps.data[0].value };
   } else if (isReceiver()) {
-    const [c, s, p, o] = base = await Promise.all([allRows(() => sb.from('customers').select('id,cid,name,phone').order('id')), sb.from('suppliers').select('*'), prods, orders]);
+    let c, s, p, o; // cut-offs decide which orders are due (viewRecv)
+    [c, s, p, o, cr, cs] = await Promise.all([allRows(() => sb.from('customers').select('id,cid,name,phone,sunday_delivery').order('id')), sb.from('suppliers').select('*'), prods, orders, ...cuts]);
+    base = [c, s, p, o];
     S.customers = c.data || []; S.suppliers = s.data || []; S.products = p.data || [];
   } else if (isAdmin()) {
     let c, s, p, o, u, m, sec, lk, bc, st;
@@ -500,13 +502,23 @@ function orderRow(o, opts = {}) {
     ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${pastDone(o) ? `disabled title="${o.direct ? 'Not emailed: CSV only' : 'Required date has passed'}"` : picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
 }
 // Receiver: completed orders not yet received.
+// Receiver logins only see orders due by the next delivery day still open for orders (its cut-off not yet passed),
+// by product location and the customer's Sunday delivery. Later orders appear once that cut-off passes. An Admin using
+// the Receiver tab sees them all.
+const recvLimit = memo => o => {
+  const g = orderGroup(o), c = custOf(o.customer_id), key = g + (c?.sunday_delivery ? 's' : '');
+  if (!(key in memo)) { memo[key] = ''; for (let i = 0; i < 14; i++) { const d = shiftDate(today(), i); if (!orderProblem(g, d, c)) { memo[key] = d; break; } } }
+  return memo[key];
+};
 function viewRecv() {
-  let os = S.orders.filter(o => o.status === 'complete' && !o.received_at && !o.direct); // direct orders never go to the Receiver
+  const limit = recvLimit({}), due = o => !isReceiver() || !o.required_date || !limit(o) || o.required_date <= limit(o);
+  const waiting = S.orders.filter(o => o.status === 'complete' && !o.received_at && !o.direct); // direct orders never go to the Receiver
+  let os = waiting.filter(due), later = waiting.length - os.length;
   const q = search.trim().toLowerCase();
   if (q) os = os.filter(o => [orderNo(o.number), custOf(o.customer_id)?.name, custOf(o.customer_id)?.cid].join(' ').toLowerCase().includes(q));
   const gr = o => orderGroup(o) === 'Conventional' ? 0 : 1;
   os = [...os].sort((x, y) => (x.required_date || '9999').localeCompare(y.required_date || '9999') || gr(x) - gr(y) || x.number - y.number); // earliest required date on top, Conventional before Organic
-  return `<h1>Orders</h1><p class="sub">Orders waiting to be received. Open an order to correct quantities or flag lines that didn’t arrive, save it, then press Mark received.</p>
+  return `<h1>Orders</h1><p class="sub">Orders waiting to be received. Open an order to correct quantities or flag lines that didn’t arrive, save it, then press Mark received.${later ? ` <span class="muted">${later} later order${later === 1 ? '' : 's'} will show after the next cut-off.</span>` : ''}</p>
     <div class="row" style="margin-bottom:12px"><input class="search" id="osearch" placeholder="Search order no., customer or CID" value="${esc(search)}"></div>
     ${os.length ? `<div class="tablewrap"><table class="recvlist"><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>Ticked</th><th class="acts"></th></tr></thead><tbody>${os.map(o => {
       const c = custOf(o.customer_id);
@@ -514,7 +526,7 @@ function viewRecv() {
         <td class="rcust">${c ? esc(c.name) : '<span class="muted">No customer</span>'}</td>
         <td>${(o.required_date || '') > today() ? `<strong class="rlater">${esc(fmtDate(o.required_date))}</strong>` : esc(fmtDate(o.required_date))}</td><td><span class="${tickedCount(o) < (o.lines || []).length ? 'ndtxt' : 'okgreen'}">${tickedCount(o)}/${(o.lines || []).length}</span></td>
         <td class="num acts recvacts"><button class="ghost ropen" onclick="openReceipt('${o.id}')">Open</button><button class="ghost rmark" onclick="markReceived('${o.id}', this)">Mark received</button></td></tr>`;
-    }).join('')}</tbody></table></div>` : `<div class="card empty">${S.orders.some(o => o.status === 'complete' && !o.received_at && !o.direct) ? 'No orders match this search.' : 'Nothing waiting. Every order has been received.'}</div>`}`;
+    }).join('')}</tbody></table></div>` : `<div class="card empty">${q && waiting.some(due) ? 'No orders match this search.' : later ? 'Nothing due yet. Later orders show here after the next cut-off.' : 'Nothing waiting. Every order has been received.'}</div>`}`;
 }
 // Receiver: one order's lines, with the quantity that arrived and a Not delivered tick for each.
 let receipt = null;
