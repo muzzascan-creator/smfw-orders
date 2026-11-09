@@ -698,7 +698,7 @@ async function createPoOrders(btn) {
       if (had) had.qty += q; else ls.push({ pack_id: f.k.id, product_id: f.p.id, sid: f.k.sid, code: f.p.code || '', product_name: f.p.name, pack_name: f.k.name, outer: outerOf(f.k), qty: q });
     });
     // An order holds one product location, so a store with both gets an Organic and a Conventional order. Conventional
-    // orders follow the Received tab rules (direct: no Inbox, no Receiver, CSV created by hand into the Condition 2 folder); Organic
+    // orders follow the Received tab rules (direct: no Inbox, no Receiver, CSV saved using Condition 1); Organic
     // ones go to the Inbox as usual.
     Object.entries(byGroup).forEach(([g, lines]) => rows.push({ customer_id: cust[i], order_date: today(), required_date: date, special, source: 'admin', lines,
       status: g === 'Conventional' ? 'complete' : 'submitted', direct: g === 'Conventional' }));
@@ -757,7 +757,7 @@ const finished = o => o.status === 'complete' && !!o.emailed_at && !!o.received_
 const pastDate = o => !!o.required_date && o.required_date < today();
 const pastDone = o => o.direct || (finished(o) && pastDate(o)); // Email column: direct orders are never emailed
 const nothingDelivered = o => (o.lines || []).length > 0 && o.lines.every(l => l.undelivered); // Receiver flagged every line Not delivered
-const noUpload = o => nothingDelivered(o) || (o.direct ? !!o.csv_at && pastDate(o) : finished(o) && pastDate(o)); // Upload column: direct orders get their CSV here (Condition 2 folder)
+const noUpload = o => nothingDelivered(o) || (o.direct ? !!o.csv_at && pastDate(o) : finished(o) && pastDate(o)); // Upload column: direct orders get their CSV here (Condition 1 folder)
 function viewOrders() {
   // Pending holds every transmitted order until it is Complete, Emailed, Received and has its CSV; then it moves to Complete.
   // Orders still in the Inbox (sent by a customer, not yet transmitted) stay out of Pending.
@@ -1565,8 +1565,8 @@ function viewSettings() {
         <button class="primary" onclick="savePromoRefs(this)">Save</button></div>
       <p class="muted" style="margin:8px 0 0;font-size:13px">Separate Refs with commas. Lines already on an order stay on it.</p></div>`;
   return `<h1>Settings</h1><p class="sub">Where the system copies CSV files, and who sees Promo products.</p>
-    ${card(1, 'Condition 1: Upload CSV', 'Created from the Orders tab with <b>Create upload CSV</b>. One file per order, as now.')}
-    ${card(2, 'Condition 2: Upload CSV', 'Created from the Received tab with <b>Create upload CSV</b>, for Conventional orders sent from customer logins and imported purchase orders. With <b>Auto CSV</b> On (Orders tab), they are saved straight away by any Admin or Manager PC that has this app open and is connected to this folder.')}
+    ${card(1, 'Condition 1: Upload CSV', 'Created from the Orders tab with <b>Create upload CSV</b>. One file per order, as now. Received tab orders (Conventional orders sent from customer logins, imported purchase orders and Speed Screen orders) are saved here too. With <b>Auto CSV</b> On (Orders tab), they are saved straight away by any Admin or Manager PC that has this app open and is connected to this folder.')}
+    ${DIRECT_COND === 2 ? card(2, 'Condition 2: Upload CSV', 'Created from the Received tab with <b>Create upload CSV</b>, for Conventional orders sent from customer logins and imported purchase orders. With <b>Auto CSV</b> On (Orders tab), they are saved straight away by any Admin or Manager PC that has this app open and is connected to this folder.') : ''}
     ${promo}`;
 }
 async function savePromoRefs(btn) {
@@ -2034,7 +2034,7 @@ async function chooseCsvFolder(n = 1) {
     if (!error) S.settings = { ...S.settings, ['csv_folder_' + n]: dir.name };
   }
   toast(`Condition ${n} CSV files will be saved in ${dir.name}.`, true);
-  render(); if (n === 2) autoCsv2(); return dir;
+  render(); if (n === DIRECT_COND) autoCsv2(); return dir;
 }
 async function csvFolder(n = 1) {
   if (!canPickFolder()) return null;
@@ -2044,26 +2044,29 @@ async function csvFolder(n = 1) {
   try { if (await ok('queryPermission') || await ok('requestPermission')) return dirs[n]; } catch {}
   return chooseCsvFolder(n); // folder moved, renamed or access refused: pick it again
 }
-// Condition 2: Conventional orders sent from customer logins and imported purchase orders (marked "direct") skip the
-// Inbox and sit on the Received tab. Create upload CSV saves their files in the Condition 2 folder.
+// Received tab: Conventional orders sent from customer logins, imported purchase orders and Speed Screen orders (marked
+// "direct") skip the Inbox and sit on the Received tab. Create upload CSV and Auto CSV save their files using Condition 1
+// (its folder and H line), like every other order. Change DIRECT_COND to 2 to send them to Condition 2 again.
+const DIRECT_COND = 1;
+const condOf = o => o.direct ? DIRECT_COND : 1;
 const csvName = o => safeName(`${orderNo(o.number)} ${custOf(o.customer_id)?.name || ''}`) + '.csv';
 // Auto CSV (switch on the Orders tab, shared by every staff login): while On, every order that lands on the Received
-// tab has its CSV saved in the Condition 2 folder straight away by any Admin or Manager PC that has this app open and is connected
+// tab has its CSV saved in the Condition 1 folder straight away by any Admin or Manager PC that has this app open and is connected
 // to that folder. Each order is claimed first, so two open PCs never both save it.
 const autoOn = () => S.settings?.auto_csv_2 === 'on';
 // Auto CSV switches itself Off when the day's Conventional cut-off arrives (Administration › Cut-offs; Supabase Cron, migration 039).
 let auto2Busy = false, auto2Issue = '';
 const auto2Due = () => autoOn() ? S.orders.filter(o => o.direct && !o.csv_at && !nothingDelivered(o)) : [];
-const autoSwitch = () => `<button type="button" class="autosw${autoOn() ? ' on' : ''}" role="switch" aria-checked="${autoOn()}" ${isManager() ? 'disabled title="Only an Admin can switch this"' : `title="When On, orders arriving on the Received tab get their CSV saved in the ${esc(csvTarget(2) || 'Condition 2')} folder straight away" onclick="toggleAutoCsv(this)"`}><span class="knob"></span>Auto CSV ${autoOn() ? 'On' : 'Off'}</button>`;
+const autoSwitch = () => `<button type="button" class="autosw${autoOn() ? ' on' : ''}" role="switch" aria-checked="${autoOn()}" ${isManager() ? 'disabled title="Only an Admin can switch this"' : `title="When On, orders arriving on the Received tab get their CSV saved in the ${esc(csvTarget(DIRECT_COND) || 'Condition ' + DIRECT_COND)} folder straight away" onclick="toggleAutoCsv(this)"`}><span class="knob"></span>Auto CSV ${autoOn() ? 'On' : 'Off'}</button>`;
 async function toggleAutoCsv(btn) {
   const v = autoOn() ? 'off' : 'on';
-  if (v === 'on' && !csvTarget(2)) return toast('Choose the Condition 2 folder in Administration › Settings first.');
+  if (v === 'on' && !csvTarget(DIRECT_COND)) return toast(`Choose the Condition ${DIRECT_COND} folder in Administration › Settings first.`);
   btn.disabled = true;
   const { error } = await sb.from('staff_settings').upsert({ key: 'auto_csv_2', value: v, updated_at: new Date().toISOString() });
   if (error) { btn.disabled = false; return toast(friendly(error)); }
   S.settings = { ...S.settings, auto_csv_2: v }; auto2Issue = '';
   render(); toast(v === 'on' ? 'Auto CSV is On: Received tab orders get their CSV saved straight away.' : 'Auto CSV is Off: create Received tab CSVs with Create upload CSV.', true);
-  if (v === 'on') { if (dirs[2] && sameName(dirs[2].name, csvTarget(2))) { try { await dirs[2].requestPermission({ mode: 'readwrite' }); } catch {} } autoCsv2(); }
+  if (v === 'on') { if (dirs[DIRECT_COND] && sameName(dirs[DIRECT_COND].name, csvTarget(DIRECT_COND))) { try { await dirs[DIRECT_COND].requestPermission({ mode: 'readwrite' }); } catch {} } autoCsv2(); }
 }
 function setAuto2(msg) { if (msg === auto2Issue) return; auto2Issue = msg; if (view === 'orders' && canRedraw()) render(); }
 async function autoCsv2() {
@@ -2073,15 +2076,15 @@ async function autoCsv2() {
     // Another PC may have just switched it Off.
     const { data: sw } = await sb.from('staff_settings').select('value').eq('key', 'auto_csv_2').maybeSingle();
     if (sw?.value !== 'on') { S.settings = { ...S.settings, auto_csv_2: sw?.value || 'off' }; if (view === 'orders' && canRedraw()) render(); return; }
-    if (!dirs[2]) await loadCsvDir(2);
-    const dir = dirs[2];
-    if (!csvTarget(2)) return setAuto2('no-folder');
-    if (!dir || !sameName(dir.name, csvTarget(2))) return setAuto2('connect');
+    if (!dirs[DIRECT_COND]) await loadCsvDir(DIRECT_COND);
+    const dir = dirs[DIRECT_COND];
+    if (!csvTarget(DIRECT_COND)) return setAuto2('no-folder');
+    if (!dir || !sameName(dir.name, csvTarget(DIRECT_COND))) return setAuto2('connect');
     let perm = 'denied'; try { perm = await dir.queryPermission({ mode: 'readwrite' }); } catch {}
     if (perm !== 'granted') return setAuto2('connect');
     const problems = []; let saved = 0;
     for (const o of auto2Due()) {
-      const { text, missing, lines } = orderCsv(o, 2);
+      const { text, missing, lines } = orderCsv(o, DIRECT_COND);
       if (missing.length) { problems.push(`${orderNo(o.number)}: no Ref for ${missing.join(', ')}`); continue; }
       if (!lines) continue;
       const { data, error } = await sb.from('orders').update({ csv_at: new Date().toISOString() }).eq('id', o.id).is('csv_at', null).select('id');
@@ -2094,31 +2097,31 @@ async function autoCsv2() {
   } finally { auto2Busy = false; }
 }
 async function reconnectCsv2() {
-  const dir = dirs[2] || await loadCsvDir(2);
-  if (dir && sameName(dir.name, csvTarget(2))) { try { if (await dir.requestPermission({ mode: 'readwrite' }) === 'granted') { auto2Issue = ''; return autoCsv2(); } } catch {} }
-  await chooseCsvFolder(2);
+  const dir = dirs[DIRECT_COND] || await loadCsvDir(DIRECT_COND);
+  if (dir && sameName(dir.name, csvTarget(DIRECT_COND))) { try { if (await dir.requestPermission({ mode: 'readwrite' }) === 'granted') { auto2Issue = ''; return autoCsv2(); } } catch {} }
+  await chooseCsvFolder(DIRECT_COND);
 }
 function auto2Banner() {
   const n = auto2Due().length; if (!n || !auto2Issue || !canCsv()) return '';
   const what = `Auto CSV is On, and ${n} order${n > 1 ? 's are' : ' is'} waiting for a CSV.`;
   if (!canPickFolder()) return `<div class="banner">${what} Open this app in Chrome or Edge on a PC to save them.</div>`;
-  if (auto2Issue === 'no-folder') return `<div class="banner">${what} Choose the Condition 2 folder in Administration › Settings.</div>`;
-  if (auto2Issue === 'connect') return `<div class="banner">${what} This PC isn’t connected to the ${esc(csvTarget(2))} folder. <button class="link" onclick="reconnectCsv2()">Connect</button></div>`;
+  if (auto2Issue === 'no-folder') return `<div class="banner">${what} Choose the Condition ${DIRECT_COND} folder in Administration › Settings.</div>`;
+  if (auto2Issue === 'connect') return `<div class="banner">${what} This PC isn’t connected to the ${esc(csvTarget(DIRECT_COND))} folder. <button class="link" onclick="reconnectCsv2()">Connect</button></div>`;
   return `<div class="banner">${what} Fix these, then they save on their own:<br>${esc(auto2Issue.slice(9)).replace(/\n/g, '<br>')}</div>`;
 }
 async function uploadCsvs() {
   if (!canCsv()) return toast('Only an Admin can create CSV files.');
   dropPastDone(); if (!upPicked.size) { render(); return toast('No CSV can be created for those orders: nothing was delivered, or their required date has passed.'); }
-  // Direct (Received tab) orders go to the Condition 2 folder, everything else to Condition 1.
+  // Direct (Received tab) orders use DIRECT_COND (Condition 1), everything else Condition 1.
   const os = S.orders.filter(o => upPicked.has(o.id)).sort((a, b) => a.number - b.number), folders = {};
-  for (const n of [...new Set(os.map(o => o.direct ? 2 : 1))]) {
+  for (const n of [...new Set(os.map(condOf))]) {
     if (n === 2 && canPickFolder() && !csvTarget(2)) return toast('Choose the Condition 2 folder in Administration › Settings first.');
     folders[n] = await csvFolder(n);
     if (canPickFolder() && !folders[n]) return toast(`Choose the ${csvTarget(n)} folder so the CSV files can be saved there.`);
   }
   const bad = [], made = [], used = new Set();
   for (const o of os) {
-    const n = o.direct ? 2 : 1, dir = folders[n];
+    const n = condOf(o), dir = folders[n];
     const { text, missing, lines } = orderCsv(o, n);
     if (missing.length) { bad.push(`${orderNo(o.number)}: no Ref for ${missing.join(', ')}`); continue; }
     if (!lines) { bad.push(`${orderNo(o.number)} has nothing delivered on it`); continue; }
