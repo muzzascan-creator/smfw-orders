@@ -1566,7 +1566,7 @@ function viewSettings() {
       <p class="muted" style="margin:8px 0 0;font-size:13px">Separate Refs with commas. Lines already on an order stay on it.</p></div>`;
   return `<h1>Settings</h1><p class="sub">Where the system copies CSV files, and who sees Promo products.</p>
     ${card(1, 'Condition 1: Upload CSV', 'Created from the Orders tab with <b>Create upload CSV</b>. One file per order, as now. Received tab orders (Conventional orders sent from customer logins, imported purchase orders and Speed Screen orders) are saved here too. With <b>Auto CSV</b> On (Orders tab), they are saved straight away by any Admin or Manager PC that has this app open and is connected to this folder.')}
-    ${DIRECT_COND === 2 ? card(2, 'Condition 2: Upload CSV', 'Created from the Received tab with <b>Create upload CSV</b>, for Conventional orders sent from customer logins and imported purchase orders. With <b>Auto CSV</b> On (Orders tab), they are saved straight away by any Admin or Manager PC that has this app open and is connected to this folder.') : ''}
+    ${card(2, 'Condition 2: Upload CSV', 'Created from the Received tab with <b>Create upload CSV</b>, for Conventional orders sent from customer logins and imported purchase orders. With <b>Auto CSV</b> On (Orders tab), they are saved straight away by any Admin or Manager PC that has this app open and is connected to this folder.')}
     ${promo}`;
 }
 async function savePromoRefs(btn) {
