@@ -862,10 +862,12 @@ function viewMine() {
 function openOrder(id) {
   const o = S.orders.find(x => x.id === id); if (!o) return;
   draft = { id, number: o.number, direct: !!o.direct, customer_id: o.customer_id, order_date: o.order_date, required_date: o.required_date || '', special: o.special || '', customer_notes: o.customer_notes || '', special_order: !!o.special_order, status: o.status, source: o.source, submitted_at: o.submitted_at, updated_at: o.updated_at, qty: {} };
-  (o.lines || []).forEach(l => { if (l.pack_id) draft.qty[l.pack_id] = l.qty; });
+  // A line whose pack type was removed and added again is moved onto the pack it now matches (same SID, or same product and pack name).
+  const pk = l => linePack(l)?.k.id || l.pack_id;
+  (o.lines || []).forEach(l => { if (l.pack_id) draft.qty[pk(l)] = l.qty; });
   // Keep what a Receiver recorded (ordered_qty, undelivered) when an admin re-saves the order.
-  draft.receipt = Object.fromEntries((o.lines || []).filter(l => l.pack_id && (l.ordered_qty != null || l.undelivered || l.received)).map(l => [l.pack_id, { ordered_qty: l.ordered_qty, undelivered: !!l.undelivered, received: !!l.received }]));
-  draft.missing = (o.lines || []).filter(l => !packOf(l.pack_id));
+  draft.receipt = Object.fromEntries((o.lines || []).filter(l => l.pack_id && (l.ordered_qty != null || l.undelivered || l.received)).map(l => [pk(l), { ordered_qty: l.ordered_qty, undelivered: !!l.undelivered, received: !!l.received }]));
+  draft.missing = (o.lines || []).filter(l => !linePack(l));
   // An order's location comes from its products; one with none it can find takes its customer's location
   // (SMFW's own orders with no customer are Conventional).
   const c = custOf(o.customer_id);
@@ -1996,15 +1998,31 @@ function hLine(o, cust, tpl = hTemplate()) {
   while (f.length > 1 && f[f.length - 1] === '') f.pop();
   return f;
 }
+// A Ref as the upload system needs it: plain letters, digits and simple punctuation. Refs pasted in from Excel or a
+// web page can carry hidden characters (non-breaking or zero-width spaces, curly quotes, a stray comma) that don't
+// show on screen but break the upload file, so they are taken out here.
+const cleanRef = r => String(r ?? '').normalize('NFKC').replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').replace(/[^\x21-\x7E]+/g, ' ').replace(/[",']/g, '').replace(/\s+/g, ' ').trim();
+// The pack an order line is for. Order lines keep the pack's id, its SID and the product/pack names; when a pack type
+// has been removed and added again on the product (new id), the line is matched by its SID, then by product and pack name,
+// so old orders still find their Ref.
+function linePack(l) {
+  const f = packOf(l.pack_id); if (f) return f;
+  const all = S.products.flatMap(p => (p.product_packs || []).map(k => ({ p, k })));
+  return (l.sid != null && all.find(x => String(x.k.sid) === String(l.sid)))
+    || all.find(x => x.p.id === l.product_id && x.k.name === l.pack_name)
+    || null;
+}
 function orderCsv(o, n = 1) {
   // An order goes under its customer's CID; a Conventional order SMFW enters without a customer goes under 1183.
   const cust = o.customer_id ? custOf(o.customer_id)?.cid ?? '' : orderGroup(o) === 'Conventional' ? CONVENTIONAL_CID : '';
   const missing = [], rows = [hLine(o, cust, hTemplate(n))];
   for (const l of o.lines || []) {
-    if (l.undelivered || !(+l.qty > 0)) continue; // undelivered lines never go in the upload
-    const k = packOf(l.pack_id)?.k, ref = (k?.ref || '').trim();
+    const q = Number(String(l.qty ?? '').replace(',', '.'));
+    if (l.undelivered || !(q > 0)) continue; // undelivered lines never go in the upload
+    const k = linePack(l)?.k, ref = cleanRef(k?.ref);
     if (!ref) { missing.push(`${l.product_name} (${l.pack_name})`); continue; }
-    rows.push(['D', ref, (+l.qty || 0) * (Number(l.outer) || Number(k?.outer_multiple) || 1)]);
+    const units = Math.round(q * (Number(l.outer) || Number(k?.outer_multiple) || 1) * 1000) / 1000;
+    rows.push(['D', ref, units]);
   }
   return { text: rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n', missing, lines: rows.length - 1 };
 }
@@ -2081,7 +2099,8 @@ async function autoCsv2() {
     if (perm !== 'granted') return setAuto2('connect');
     const problems = []; let saved = 0;
     for (const o of auto2Due()) {
-      const { text, missing, lines } = orderCsv(o, 2);
+      let csv; try { csv = orderCsv(o, 2); } catch (e) { problems.push(`${orderNo(o.number)}: couldn’t build its CSV (${e.message})`); continue; }
+      const { text, missing, lines } = csv;
       if (missing.length) { problems.push(`${orderNo(o.number)}: no Ref for ${missing.join(', ')}`); continue; }
       if (!lines) continue;
       const { data, error } = await sb.from('orders').update({ csv_at: new Date().toISOString() }).eq('id', o.id).is('csv_at', null).select('id');
@@ -2119,7 +2138,8 @@ async function uploadCsvs() {
   const bad = [], made = [], used = new Set();
   for (const o of os) {
     const n = o.direct ? 2 : 1, dir = folders[n];
-    const { text, missing, lines } = orderCsv(o, n);
+    let csv; try { csv = orderCsv(o, n); } catch (e) { bad.push(`${orderNo(o.number)}: couldn’t build its CSV (${e.message})`); continue; }
+    const { text, missing, lines } = csv;
     if (missing.length) { bad.push(`${orderNo(o.number)}: no Ref for ${missing.join(', ')}`); continue; }
     if (!lines) { bad.push(`${orderNo(o.number)} has nothing delivered on it`); continue; }
     const name = csvName(o);
@@ -2352,7 +2372,7 @@ function editProduct(id) {
     <label class="f">Show on order forms<select name="active" id="f-active"><option value="1" ${p.active !== false ? 'selected' : ''}>Yes</option><option value="0" ${p.active === false ? 'selected' : ''}>No, hide it</option></select></label></div>`,
     async f => {
       const name = f.get('name').trim(); if (!name) { toast('Enter a product name.'); return false; }
-      const names = f.getAll('pname').map(x => x.trim()), sids = f.getAll('psid'), refs = f.getAll('pref').map(x => x.trim()), outs = f.getAll('pouter'), avail = f.getAll('pavail'), batches = f.getAll('pbatch'), promos = f.getAll('ppromo'), pids = f.getAll('pid');
+      const names = f.getAll('pname').map(x => x.trim()), sids = f.getAll('psid'), refs = f.getAll('pref').map(cleanRef), outs = f.getAll('pouter'), avail = f.getAll('pavail'), batches = f.getAll('pbatch'), promos = f.getAll('ppromo'), pids = f.getAll('pid');
       const rows = []; const others = S.products.filter(x => x.id !== id).flatMap(x => (x.product_packs || []).map(k => ({ sid: k.sid, ref: (k.ref || '').trim().toUpperCase(), label: `${x.name} (${k.name})` })));
       for (let i = 0; i < names.length; i++) {
         if (!names[i]) continue;
