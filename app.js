@@ -34,6 +34,17 @@ const firstReq = () => `${thisYear()}-01-01`;
 const latestReq = () => `${thisYear() + 1}-12-31`;
 // Why a date required can't be used, or '' if it's fine. An order already saved with an earlier date keeps it.
 const reqYearProblem = (d, kept) => !d || d === kept ? '' : !/^\d{4}-\d{2}-\d{2}$/.test(d) || d < firstReq() || d > latestReq() ? `The date required must be in ${thisYear()} or ${thisYear() + 1}.` : '';
+// A date box still lets the year be typed freely (min/max only stop the calendar), so when the box is left the year is
+// put right: kept day and month, this year or next. A half-typed date is cleared. Returns true if it changed the box.
+function fixReqYear(el, kept) {
+  if (el.validity.badInput) { el.value = ''; toast(`Enter the whole date required: day, month and a year of ${thisYear()} or ${thisYear() + 1}.`); return true; }
+  const v = el.value; if (!v || v === kept || !reqYearProblem(v)) return false;
+  const lo = el.min > firstReq() ? el.min : firstReq(), md = v.slice(-5);
+  const y = [thisYear(), thisYear() + 1].find(y => { const d = `${y}-${md}`; return shiftDate(d, 0) === d && d >= lo && d <= latestReq(); });
+  el.value = y ? `${y}-${md}` : '';
+  toast(y ? `The date required must be in ${thisYear()} or ${thisYear() + 1}, so the year was changed to ${y}.` : reqYearProblem(v));
+  return true;
+}
 const tomorrow = () => shiftDate(today(), 1);
 // Order cut-offs, per product location (Sydney time). Set under Administration › Cut-offs (migrations/026); the database
 // holds customers to the same rules (orders_guard, migrations/027).
@@ -681,6 +692,7 @@ async function importPo(input) {
       return n ? `<p class="muted" style="margin:0">${n} store${n > 1 ? 's and products are' : ' or product is'} already matched and hidden above. <button type="button" class="link" onclick="document.querySelectorAll('#poform tr.pomatched').forEach(r => r.hidden = false);this.parentElement.remove()">Show them</button> · Change matches any time in Administration › PO Matching.</p>` : ''; })()}
     <p class="banner" style="margin:0">These orders go straight to the Received tab. Create their CSV there with Create upload CSV. Any Organic products become a separate order in the Inbox.</p>
     <div class="row" style="justify-content:flex-end"><button type="button" onclick="document.getElementById('dlg').close()">Cancel</button><button type="submit" class="primary" id="pogo">Create orders</button></div></form>`;
+  dlg.querySelector('#po-date').addEventListener('blur', e => fixReqYear(e.target));
   dlg.querySelector('#poform').onsubmit = e => { e.preventDefault(); createPoOrders(e.submitter); };
   dlg.classList.add('wide'); dlg.addEventListener('close', () => dlg.classList.remove('wide'), { once: true });
   dlg.showModal();
@@ -1157,6 +1169,7 @@ function wireEntry() {
     if (isAdmin() && draft.group === 'Conventional') render(); // Vegetables & Drinks shows only for real customers
   });
   $('#e-req')?.addEventListener('change', e => { draft.required_date = e.target.value; sync(); });
+  $('#e-req')?.addEventListener('blur', e => { if (fixReqYear(e.target, draft.saved_req)) { draft.required_date = e.target.value; sync(); } });
   $('#e-special')?.addEventListener('input', e => draft.special = e.target.value);
   $('#e-cnotes')?.addEventListener('input', e => { draft.customer_notes = e.target.value.slice(0, CUST_NOTES_MAX); $('#e-cncount').textContent = `${draft.customer_notes.length}/${CUST_NOTES_MAX}`; });
   $('#e-spo')?.addEventListener('change', e => { draft.special_order = e.target.checked; render(); }); // Special Orders hide Vegetables and Drinks
