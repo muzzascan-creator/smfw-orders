@@ -27,8 +27,13 @@ const $ = s => document.querySelector(s);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // Dates are Sydney dates, wherever the browser is.
 const today = () => sydNow().date;
-// Latest allowed date required: a year ahead. Also stops the date box accepting a 5- or 6-digit year.
-const latestReq = () => { const d = new Date(); d.setFullYear(d.getFullYear() + 1); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+// Dates required are limited to this year and next year (Sydney): 1 Jan this year to 31 Dec next year.
+// This also stops the date box accepting a 5- or 6-digit year.
+const thisYear = () => +today().slice(0, 4);
+const firstReq = () => `${thisYear()}-01-01`;
+const latestReq = () => `${thisYear() + 1}-12-31`;
+// Why a date required can't be used, or '' if it's fine. An order already saved with an earlier date keeps it.
+const reqYearProblem = (d, kept) => !d || d === kept ? '' : !/^\d{4}-\d{2}-\d{2}$/.test(d) || d < firstReq() || d > latestReq() ? `The date required must be in ${thisYear()} or ${thisYear() + 1}.` : '';
 const tomorrow = () => shiftDate(today(), 1);
 // Order cut-offs, per product location (Sydney time). Set under Administration › Cut-offs (migrations/026); the database
 // holds customers to the same rules (orders_guard, migrations/027).
@@ -663,7 +668,7 @@ async function importPo(input) {
   const dlg = $('#dlg');
   dlg.innerHTML = `<form class="grid" id="poform"><h2>Purchase order${po.no ? ' ' + esc(po.no) : ''}</h2>
     <p class="muted" style="margin:0">${esc(po.file)}${po.date ? ' · dated ' + esc(po.date) : ''}. One order is made for each store below.</p>
-    <label class="f" style="max-width:220px">Date required<input type="date" id="po-date" required min="${today()}"></label>
+    <label class="f" style="max-width:220px">Date required<input type="date" id="po-date" required min="${today()}" max="${latestReq()}"></label>
     <h3 style="margin:6px 0 0">Stores</h3>
     <div class="tablewrap"><table><thead><tr><th>Store on the PO</th><th class="num">Lines</th><th>Customer</th></tr></thead><tbody>
       ${po.cols.map((c, i) => `<tr${stores[poKey(c.label)] === 'skip' || custOf(stores[poKey(c.label)]) ? ' class="pomatched" hidden' : ''}><td><b>${esc(c.label)}</b>${c.hint ? `<div class="muted" style="font-size:12px">${esc(c.hint)}</div>` : ''}</td><td class="num">${c.lines}</td><td><select data-store="${i}" style="width:100%">${custOpts(stores[poKey(c.label)] === 'skip' || custOf(stores[poKey(c.label)]) ? stores[poKey(c.label)] : '')}</select></td></tr>`).join('')}
@@ -683,6 +688,7 @@ async function importPo(input) {
 async function createPoOrders(btn) {
   const date = $('#po-date').value;
   if (!date) return toast('Choose the date required first.');
+  if (reqYearProblem(date)) return toast(reqYearProblem(date));
   const cust = po.cols.map((c, i) => $(`select[data-store="${i}"]`).value), pk = po.lines.map((l, i) => $(`select[data-item="${i}"]`).value);
   const ci = cust.indexOf(''); if (ci >= 0) return toast(`Choose the customer for ${po.cols[ci].label}, or Don’t import this store.`);
   const pi = pk.indexOf(''); if (pi >= 0) return toast(`Choose our product for “${po.lines[pi].desc}”, or Skip this line.`);
@@ -861,7 +867,7 @@ function viewMine() {
 }
 function openOrder(id) {
   const o = S.orders.find(x => x.id === id); if (!o) return;
-  draft = { id, number: o.number, direct: !!o.direct, customer_id: o.customer_id, order_date: o.order_date, required_date: o.required_date || '', special: o.special || '', customer_notes: o.customer_notes || '', special_order: !!o.special_order, status: o.status, source: o.source, submitted_at: o.submitted_at, updated_at: o.updated_at, qty: {} };
+  draft = { id, number: o.number, direct: !!o.direct, customer_id: o.customer_id, order_date: o.order_date, required_date: o.required_date || '', saved_req: o.required_date || '', special: o.special || '', customer_notes: o.customer_notes || '', special_order: !!o.special_order, status: o.status, source: o.source, submitted_at: o.submitted_at, updated_at: o.updated_at, qty: {} };
   (o.lines || []).forEach(l => { if (l.pack_id) draft.qty[l.pack_id] = l.qty; });
   // Keep what a Receiver recorded (ordered_qty, undelivered) when an admin re-saves the order.
   draft.receipt = Object.fromEntries((o.lines || []).filter(l => l.pack_id && (l.ordered_qty != null || l.undelivered || l.received)).map(l => [l.pack_id, { ordered_qty: l.ordered_qty, undelivered: !!l.undelivered, received: !!l.received }]));
@@ -1069,7 +1075,7 @@ function viewEntry() {
       <div class="card grid g2">
         ${admin ? '' : '<div class="grid datecol">'}${custField}${locField}${admin ? '' : favPicker(d) + '</div><div class="grid datecol">'}
         ${admin ? `<label class="f">Today’s date<input type="date" id="e-date" disabled title="Set automatically" value="${esc(d.status === 'draft' ? today() : d.order_date)}"></label>` : `<div class="f datebox"><span class="dl">Today’s date</span><span class="dv">${esc(fmtDate(d.status === 'draft' ? today() : d.order_date))}</span>`}
-        ${admin ? '<div class="f">' : ''}<label for="e-req">Day / date required</label><div class="reqrow"><input type="date" id="e-req" ${dis} ${d.status === 'draft' ? `min="${earliestReq(d.group || 'Organic', custOf(d.customer_id))}"` : ''} max="${latestReq()}" value="${esc(d.required_date)}">${spoBox(d, dis)}</div>${!admin && d.status === 'draft' && custHint(d.group || 'Organic', custOf(d.customer_id)) ? `<span class="muted" style="font-size:12px;font-weight:400">${custHint(d.group || 'Organic', custOf(d.customer_id))}</span>` : ''}</div>${admin ? '' : '</div>'}
+        ${admin ? '<div class="f">' : ''}<label for="e-req">Day / date required</label><div class="reqrow"><input type="date" id="e-req" ${dis} min="${d.status === 'draft' ? earliestReq(d.group || 'Organic', custOf(d.customer_id)) : d.saved_req && d.saved_req < firstReq() ? d.saved_req : firstReq()}" max="${latestReq()}" value="${esc(d.required_date)}">${spoBox(d, dis)}</div>${!admin && d.status === 'draft' && custHint(d.group || 'Organic', custOf(d.customer_id)) ? `<span class="muted" style="font-size:12px;font-weight:400">${custHint(d.group || 'Organic', custOf(d.customer_id))}</span>` : ''}</div>${admin ? '' : '</div>'}
         ${admin && d.customer_notes ? `<div class="f custnote-view" style="grid-column:1/-1"><span>Buyer’s Special Requirements <span class="muted" style="font-size:12px;font-weight:400">From the customer. Not printed on the supplier order form.</span></span><div class="notebox">${esc(d.customer_notes)}</div></div>` : ''}
         ${admin ? `<label class="f" style="grid-column:1/-1">Special requirements<span class="muted" style="font-size:12px;font-weight:400">Printed on the supplier order form.</span><textarea id="e-special" ${dis}>${esc(d.special)}</textarea></label>` : ''}
       </div>
@@ -1192,7 +1198,7 @@ async function saveOrder(status) {
   if (!(await stillMyDevice())) return;
   if (saving) return;
   const lines = draftLines();
-  if (draft.required_date && (!/^\d{4}-\d{2}-\d{2}$/.test(draft.required_date) || draft.required_date > latestReq())) return toast(`The date required must be within the next 12 months (by ${fmtDate(latestReq())}).`);
+  if (draft.required_date && reqYearProblem(draft.required_date, draft.saved_req)) return toast(reqYearProblem(draft.required_date, draft.saved_req));
   if (status !== 'draft') {
     if (needsCustomer(draft) && !draft.customer_id) return toast('Choose a customer first.');
     if (!lines.length) return toast('Enter at least one quantity first.');
