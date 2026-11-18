@@ -135,6 +135,8 @@ tr.later td{background:#e8eef8}tr.later:hover td{background:#dbe4f3}
 .pill.grp-organic{background:var(--accent-soft);color:var(--accent)}
 .pill.grp-conventional{background:var(--sunk);color:var(--fg)}
 .pill.grp-both{background:#ede7f6;color:#4a2c82}
+/* Organic orders in the order lists: black text, red border (an inset ring keeps it the same size as the Conventional pill) */
+.pill.grp-organic-order{background:#fff;color:#000;box-shadow:inset 0 0 0 1.5px #d32f2f}
 .grpswitch{display:inline-flex;border:1px solid var(--line);border-radius:999px;padding:3px;background:var(--surface);margin:0 0 12px;gap:2px}
 .grpswitch button{border:0;border-radius:999px;padding:8px 16px;background:none;font-weight:600;color:var(--muted)}
 .grpswitch button.on{background:var(--accent);color:var(--accent-fg)}
