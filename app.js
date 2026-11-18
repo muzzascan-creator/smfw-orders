@@ -504,7 +504,7 @@ function render() {
 function orderRow(o, opts = {}) {
   const c = custOf(o.customer_id);
   return `<tr class="rowlink${opts.later ? ' later' : ''}" onclick="openOrder('${o.id}')">
-    <td class="mono c-no">${esc(orderNo(o.number))}${orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conventional</span>' : ''}${o.special_order && isAdmin() ? ' <span class="pill spo">Special Order</span>' : ''}${o.customer_notes && isAdmin() ? ` <span class="pill bnote" title="${esc(o.customer_notes)}">Buyer note</span>` : ''}</td>
+    <td class="mono c-no">${esc(orderNo(o.number))}${orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conventional</span>' : ' <span class="pill grp-organic-order">Organic</span>'}${o.special_order && isAdmin() ? ' <span class="pill spo">Special Order</span>' : ''}${o.customer_notes && isAdmin() ? ` <span class="pill bnote" title="${esc(o.customer_notes)}">Buyer note</span>` : ''}</td>
     ${opts.customer === false ? '' : `<td class="c-cust">${c ? esc(c.name) : o.customer_id ? 'Unknown customer' : '<span class="muted">No customer</span>'}</td>`}
     <td class="c-date">${o.required_date ? `<span class="c-lbl">Required </span>${esc(fmtDate(o.required_date))}` : '<span class="c-lbl muted">No date yet</span>'}</td>
     ${opts.sent ? `<td>${esc(fmtWhen(o.submitted_at))}</td>` : ''}
@@ -538,7 +538,7 @@ function viewRecv() {
     <div class="row" style="margin-bottom:12px"><input class="search" id="osearch" placeholder="Search order no., customer or CID" value="${esc(search)}"></div>
     ${os.length ? `<div class="tablewrap"><table class="recvlist"><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>Ticked</th><th class="acts"></th></tr></thead><tbody>${os.map(o => {
       const c = custOf(o.customer_id);
-      return `<tr><td class="mono">${esc(orderNo(o.number))}${orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conventional</span>' : ''}</td>
+      return `<tr><td class="mono">${esc(orderNo(o.number))}${orderGroup(o) === 'Conventional' ? ' <span class="pill grp-conventional">Conventional</span>' : ' <span class="pill grp-organic-order">Organic</span>'}</td>
         <td class="rcust">${c ? esc(c.name) : '<span class="muted">No customer</span>'}</td>
         <td>${(o.required_date || '') > today() ? `<strong class="rlater">${esc(fmtDate(o.required_date))}</strong>` : esc(fmtDate(o.required_date))}</td><td><span class="${tickedCount(o) < (o.lines || []).length ? 'ndtxt' : 'okgreen'}">${tickedCount(o)}/${(o.lines || []).length}</span></td>
         <td class="num acts recvacts"><button class="ghost ropen" onclick="openReceipt('${o.id}')">Open</button><button class="ghost rmark" onclick="markReceived('${o.id}', this)">Mark received</button></td></tr>`;
