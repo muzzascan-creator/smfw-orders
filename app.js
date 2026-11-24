@@ -2096,21 +2096,25 @@ async function autoCsv2() {
     const dir = dirs[2];
     if (!csvTarget(2)) return setAuto2('no-folder');
     if (!dir || !sameName(dir.name, csvTarget(2))) return setAuto2('connect');
-    let perm = 'denied'; try { perm = await dir.queryPermission({ mode: 'readwrite' }); } catch {}
+    let perm = 'denied'; try { perm = await inTime(dir.queryPermission({ mode: 'readwrite' }), 8000, 'no answer'); } catch (e) { if (e.message === 'no answer') return setAuto2('offline'); }
     if (perm !== 'granted') return setAuto2('connect');
-    const problems = []; let saved = 0;
+    const problems = []; let saved = 0, offline = false;
     for (const o of auto2Due()) {
       const { text, missing, lines } = orderCsv(o, 2);
       if (missing.length) { problems.push(`${orderNo(o.number)}: no Ref for ${missing.join(', ')}`); continue; }
       if (!lines) continue;
       const { data, error } = await sb.from('orders').update({ csv_at: new Date().toISOString() }).eq('id', o.id).is('csv_at', null).select('id');
       if (error || !data?.length) continue; // another PC got it first
-      try { const w = await (await dir.getFileHandle(csvName(o), { create: true })).createWritable(); await w.write(text); await w.close(); saved++; }
-      catch (e) { await sb.from('orders').update({ csv_at: null }).eq('id', o.id); problems.push(`${orderNo(o.number)}: couldn’t save to ${dir.name} (${e.message})`); }
+      try { await inTime((async () => { const w = await (await dir.getFileHandle(csvName(o), { create: true })).createWritable(); await w.write(text); await w.close(); })(), 15000, 'no answer'); saved++; }
+      catch (e) {
+        await sb.from('orders').update({ csv_at: null }).eq('id', o.id); // no file, so it waits for the next try
+        if (e.message === 'no answer') { offline = true; break; }
+        problems.push(`${orderNo(o.number)}: couldn’t save to ${dir.name} (${e.message})`);
+      }
     }
-    setAuto2(problems.length ? 'problems:' + problems.join('\n') : '');
-    if (saved) { await reloadOrders(); if (canRedraw()) render(); toast(`Auto CSV: ${saved} CSV file${saved > 1 ? 's' : ''} saved to ${dir.name}`, true); }
-  } finally { auto2Busy = false; }
+    setAuto2(offline ? 'offline' : problems.length ? 'problems:' + problems.join('\n') : '');
+    if (saved || offline) { await reloadOrders(); if (canRedraw()) render(); toast(`Auto CSV: ${saved} CSV file${saved > 1 ? 's' : ''} saved to ${dir.name}`, true); }
+  } catch (e) { setAuto2('problems:' + (e.message || e)); } finally { auto2Busy = false; }
 }
 async function reconnectCsv2() {
   const dir = dirs[2] || await loadCsvDir(2);
@@ -2122,6 +2126,7 @@ function auto2Banner() {
   const what = `Auto CSV is On, and ${n} order${n > 1 ? 's are' : ' is'} waiting for a CSV.`;
   if (!canPickFolder()) return `<div class="banner">${what} Open this app in Chrome or Edge on a PC to save them.</div>`;
   if (auto2Issue === 'no-folder') return `<div class="banner">${what} Choose the Condition 2 folder in Administration › Settings.</div>`;
+  if (auto2Issue === 'offline') return `<div class="banner">${what} The ${esc(csvTarget(2))} folder isn’t answering on this PC (is it on the office network?). It tries again every 30 seconds. <button class="link" onclick="reconnectCsv2()">Connect</button></div>`;
   if (auto2Issue === 'connect') return `<div class="banner">${what} This PC isn’t connected to the ${esc(csvTarget(2))} folder. <button class="link" onclick="reconnectCsv2()">Connect</button></div>`;
   return `<div class="banner">${what} Fix these, then they save on their own:<br>${esc(auto2Issue.slice(9)).replace(/\n/g, '<br>')}</div>`;
 }
