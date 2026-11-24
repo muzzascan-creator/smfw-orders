@@ -2125,17 +2125,34 @@ function auto2Banner() {
   if (auto2Issue === 'connect') return `<div class="banner">${what} This PC isn’t connected to the ${esc(csvTarget(2))} folder. <button class="link" onclick="reconnectCsv2()">Connect</button></div>`;
   return `<div class="banner">${what} Fix these, then they save on their own:<br>${esc(auto2Issue.slice(9)).replace(/\n/g, '<br>')}</div>`;
 }
+// A folder on the network can stop answering (laptop off the office network, drive asleep), and the browser then waits
+// with no error. Each folder step gets a time limit; after it the file goes to Downloads instead.
+const inTime = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(what)), ms))]);
+function downloadCsv(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+let csvBusy = false;
 async function uploadCsvs() {
+  if (csvBusy) return;
+  const btn = $('#pickup'), label = btn?.textContent;
+  csvBusy = true; if (btn) { btn.disabled = true; btn.textContent = 'Creating CSV…'; }
+  try { await makeUploadCsvs(); }
+  catch (e) { toast(`The CSV files couldn’t be created: ${e.message || e}`); }
+  finally { csvBusy = false; const b = $('#pickup'); if (b && b === btn) { b.textContent = label; b.disabled = !upPicked.size; } }
+}
+async function makeUploadCsvs() {
   if (!canCsv()) return toast('Only an Admin can create CSV files.');
   dropPastDone(); if (!upPicked.size) { render(); return toast('No CSV can be created for those orders: nothing was delivered, or their required date has passed.'); }
   // Direct (Received tab) orders go to the Condition 2 folder, everything else to Condition 1.
-  const os = S.orders.filter(o => upPicked.has(o.id)).sort((a, b) => a.number - b.number), folders = {};
+  const os = S.orders.filter(o => upPicked.has(o.id)).sort((a, b) => a.number - b.number), folders = {}, offline = new Set();
   for (const n of [...new Set(os.map(o => o.direct ? 2 : 1))]) {
     if (n === 2 && canPickFolder() && !csvTarget(2)) return toast('Choose the Condition 2 folder in Administration › Settings first.');
-    folders[n] = await csvFolder(n);
+    try { folders[n] = await inTime(csvFolder(n), 8000, 'no answer from the folder'); }
+    catch { folders[n] = null; offline.add(csvTarget(n) || `Condition ${n}`); continue; } // folder not answering: Downloads instead
     if (canPickFolder() && !folders[n]) return toast(`Choose the ${csvTarget(n)} folder so the CSV files can be saved there.`);
   }
-  const bad = [], made = [], used = new Set();
+  const bad = [], made = [], used = new Set(); let downloaded = 0;
   for (const o of os) {
     const n = o.direct ? 2 : 1, dir = folders[n];
     const { text, missing, lines } = orderCsv(o, n);
@@ -2149,25 +2166,28 @@ async function uploadCsvs() {
     const { data: got, error: cerr } = await claim.select('id');
     if (cerr) { bad.push(`${orderNo(o.number)}: ${friendly(cerr)}`); continue; }
     if (!got?.length) { bad.push(`${orderNo(o.number)}: its CSV was just created on another PC, so it was skipped`); continue; }
-    if (dir) {
-      try { const w = await (await dir.getFileHandle(name, { create: true })).createWritable(); await w.write(text); await w.close(); }
-      catch (e) { await sb.from('orders').update({ csv_at: was }).eq('id', o.id); bad.push(`${orderNo(o.number)}: couldn’t save to ${dir.name} (${e.message})`); continue; }
-      used.add(dir.name);
-    } else {
+    let saved = false;
+    if (dir && !offline.has(dir.name)) {
+      try { await inTime((async () => { const w = await (await dir.getFileHandle(name, { create: true })).createWritable(); await w.write(text); await w.close(); })(), 15000, 'no answer from the folder'); saved = true; used.add(dir.name); }
+      catch (e) { if (e.message !== 'no answer from the folder') { await sb.from('orders').update({ csv_at: was }).eq('id', o.id); bad.push(`${orderNo(o.number)}: couldn’t save to ${dir.name} (${e.message})`); continue; } offline.add(dir.name); }
+    }
+    if (!saved) {
       if (made.length) await new Promise(r => setTimeout(r, 400));
-      const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
-      const a = Object.assign(document.createElement('a'), { href: url, download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+      downloadCsv(name, text); if (dir || canPickFolder()) downloaded++;
     }
     made.push(o.id);
   }
   made.forEach(id => upPicked.delete(id));
   if (made.length || bad.length) await reloadOrders();
   render();
+  const away = downloaded ? `${downloaded} file${downloaded > 1 ? 's' : ''} went to Downloads, because the ${[...offline].join(' and ')} folder didn’t answer. Copy ${downloaded > 1 ? 'them' : 'it'} into that folder.` : '';
+  if (away) bad.unshift(away);
   if (bad.length) {
     const dlg = $('#dlg');
     dlg.innerHTML = `<div class="grid"><h2>${made.length ? `${made.length} CSV file${made.length > 1 ? 's' : ''} created` : 'No CSV files created'}</h2>
-      <p style="margin:0">These orders were skipped:</p>
-      <ul class="sumlist">${bad.map(b => `<li>${esc(b)}</li>`).join('')}</ul>
+      ${away ? `<p style="margin:0">${esc(away)}</p>` : ''}
+      ${bad.length > (away ? 1 : 0) ? `<p style="margin:0">These orders were skipped:</p>
+      <ul class="sumlist">${bad.slice(away ? 1 : 0).map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}
       <div class="row" style="justify-content:flex-end"><button type="button" class="primary" onclick="document.getElementById('dlg').close()">OK</button></div></div>`;
     dlg.showModal();
   } else toast(`${made.length} CSV file${made.length > 1 ? 's' : ''} ${used.size ? 'saved to ' + [...used].join(' and ') : 'created'}`, true);
