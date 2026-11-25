@@ -777,13 +777,12 @@ const pastDone = o => o.direct || (finished(o) && pastDate(o)); // Email column:
 const nothingDelivered = o => (o.lines || []).length > 0 && o.lines.every(l => l.undelivered); // Receiver flagged every line Not delivered
 const noUpload = o => nothingDelivered(o) || (o.direct ? !!o.csv_at && pastDate(o) : finished(o) && pastDate(o)); // Upload column: direct orders get their CSV here (Condition 2 folder)
 function viewOrders() {
-  // Pending holds every transmitted order until it is Complete, Emailed, Received and has its CSV; then it moves to Complete.
-  // Orders still in the Inbox (sent by a customer, not yet transmitted) stay out of Pending.
-  // Pending holds every order (Sent ones included) until it is Complete, Emailed, Received and has its CSV; then it
-  // moves to Complete. Received holds the Conventional orders customers send (they skip the Inbox); they stay there,
+  // Pending holds every order until it is Complete, Emailed, Received and has its CSV; then it moves to Complete.
+  // Orders still in the Inbox (Sent by a customer, not yet transmitted) stay out of Pending, so no order shows in both.
+  // Received holds the Conventional orders customers send (they skip the Inbox); they stay there,
   // showing CSV once someone has created it with Create upload CSV.
   // Direct orders sit on Received until they are Complete with their CSV saved, then move to Complete.
-  const inTab = (o, f) => o.direct ? f === (o.status === 'complete' && o.csv_at ? 'complete' : 'received') : f === 'pending' ? !finished(o) : f === 'complete' ? finished(o) : f !== 'received' && o.status === f;
+  const inTab = (o, f) => o.direct ? f === (o.status === 'complete' && o.csv_at ? 'complete' : 'received') : f === 'pending' ? o.status !== 'submitted' && !finished(o) : f === 'complete' ? finished(o) : f !== 'received' && o.status === f;
   dropPastDone();
   let os = S.orders.filter(o => inTab(o, listFilter));
   const q = search.trim().toLowerCase();
