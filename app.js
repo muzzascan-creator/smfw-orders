@@ -517,8 +517,8 @@ function orderRow(o, opts = {}) {
       : `<span class="pill ${esc(o.status)}">${esc(statusText(o.status))}</span>`}</td>
     ${opts.acts ? `<td class="num acts c-acts" onclick="event.stopPropagation()"><button class="ghost" onclick="openOrder('${o.id}')">View</button><button class="ghost" onclick="printOrder('${o.id}', this)">Print<span class="long"> Order</span></button></td>`
       : `<td class="num openc"><button class="ghost" onclick="event.stopPropagation();openOrder('${o.id}')">Open</button></td>`}
-    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${!canCsv() ? 'disabled title="Only an Admin can create CSV files"' : noUpload(o) ? `disabled title="${nothingDelivered(o) ? 'Nothing was delivered, so no CSV can be created' : 'Required date has passed'}"` : upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
-    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${pastDone(o) ? `disabled title="${o.direct ? 'Not emailed: CSV only' : 'Required date has passed'}"` : picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
+    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${!canCsv() ? 'disabled title="Only an Admin can create CSV files"' : noUpload(o) ? `disabled title="${notTransmitted(o) ? 'Transmit this order first' : nothingDelivered(o) ? 'Nothing was delivered, so no CSV can be created' : 'Required date has passed'}"` : upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
+    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${pastDone(o) ? `disabled title="${o.direct ? 'Not emailed: CSV only' : notTransmitted(o) ? 'Transmit this order first' : 'Required date has passed'}"` : picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
 }
 // Receiver: completed orders not yet received.
 // Receiver logins only see orders due by the next delivery day still open for orders (its cut-off not yet passed),
@@ -776,9 +776,12 @@ async function delPoMatch(kind, i) {
 const finished = o => o.status === 'complete' && !!o.emailed_at && !!o.received_at && !!o.csv_at;
 // Rule: a Complete-tab order whose required date has passed can't be emailed or uploaded again.
 const pastDate = o => !!o.required_date && o.required_date < today();
-const pastDone = o => o.direct || (finished(o) && pastDate(o)); // Email column: direct orders are never emailed
+// Rule: an order is emailed to the supplier or given a CSV only once it has been transmitted (Complete). A Sent order
+// (still in the Inbox) or a draft can't be ticked, so Select all can't send an order no one has checked.
+const notTransmitted = o => !o.direct && o.status !== 'complete';
+const pastDone = o => o.direct || notTransmitted(o) || (finished(o) && pastDate(o)); // Email column: direct orders are never emailed
 const nothingDelivered = o => (o.lines || []).length > 0 && o.lines.every(l => l.undelivered); // Receiver flagged every line Not delivered
-const noUpload = o => nothingDelivered(o) || (o.direct ? !!o.csv_at && pastDate(o) : finished(o) && pastDate(o)); // Upload column: direct orders get their CSV here (Condition 2 folder)
+const noUpload = o => notTransmitted(o) || nothingDelivered(o) || (o.direct ? !!o.csv_at && pastDate(o) : finished(o) && pastDate(o)); // Upload column: direct orders get their CSV here (Condition 2 folder)
 function viewOrders() {
   // Pending holds every order until it is Complete, Emailed, Received and has its CSV; then it moves to Complete.
   // Orders still in the Inbox (Sent by a customer, not yet transmitted) stay out of Pending, so no order shows in both.
@@ -1941,7 +1944,7 @@ function pickedBySupplier() {
 const sentSuppliers = new Set();
 function dropPastDone() { S.orders.forEach(o => { if (pastDone(o)) picked.delete(o.id); if (noUpload(o)) upPicked.delete(o.id); }); }
 function emailPicked() {
-  dropPastDone(); if (!picked.size) return toast('Those orders’ required date has passed, so they can’t be emailed.');
+  dropPastDone(); if (!picked.size) { render(); return toast('Those orders can’t be emailed: they haven’t been transmitted, or their required date has passed.'); }
   sentSuppliers.clear();
   const { os, groups } = pickedBySupplier();
   const empty = os.filter(o => !(o.lines || []).some(supplierOfLine));
@@ -2156,7 +2159,7 @@ async function uploadCsvs() {
 }
 async function makeUploadCsvs() {
   if (!canCsv()) return toast('Only an Admin can create CSV files.');
-  dropPastDone(); if (!upPicked.size) { render(); return toast('No CSV can be created for those orders: nothing was delivered, or their required date has passed.'); }
+  dropPastDone(); if (!upPicked.size) { render(); return toast('No CSV can be created for those orders: they haven’t been transmitted, nothing was delivered, or their required date has passed.'); }
   // Direct (Received tab) orders go to the Condition 2 folder, everything else to Condition 1.
   const os = S.orders.filter(o => upPicked.has(o.id)).sort((a, b) => a.number - b.number), folders = {}, offline = new Set();
   for (const n of [...new Set(os.map(o => o.direct ? 2 : 1))]) {
