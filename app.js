@@ -448,7 +448,10 @@ function navItems() {
     ? [['inbox', 'Inbox'], ['orders', 'Orders'], ['entry', 'New order'], ['speed', 'Speed Screen'], ['batch', 'Batch Code'], ['recv', 'Receiver'], ['admin', 'Administration']].filter(([v]) => !isManager() || !ADMIN_ONLY.includes(v))
     : [['mine', 'My orders'], ['entry', 'New order']];
 }
-function inboxCount() { return S.orders.filter(o => o.status === 'submitted').length; }
+// The Inbox and the Pending tab both use this one rule, so an order is in one or the other, never both.
+// Inbox: Sent by a customer (or reopened) and not yet transmitted.
+const inInbox = o => !o.direct && o.status === 'submitted';
+function inboxCount() { return S.orders.filter(inInbox).length; }
 function updateNavBadge() { const b = document.querySelector('#nav [data-v=inbox] .badge'); const n = inboxCount(); if (b) { b.textContent = n; b.hidden = !n; } }
 function go(v, fresh = true) { if (v === 'admin') v = adminTabs().some(([t]) => t === adminTab) ? adminTab : adminTabs()[0][0]; if (ADMIN_TABS.some(([t]) => t === v)) adminTab = v; view = v; if (v === 'entry' && fresh) draft = blankOrder(); render(); window.scrollTo(0, 0); }
 // A tab press shows the page straight away from what is already loaded, then fetches fresh data in the background
@@ -514,8 +517,8 @@ function orderRow(o, opts = {}) {
       : `<span class="pill ${esc(o.status)}">${esc(statusText(o.status))}</span>`}</td>
     ${opts.acts ? `<td class="num acts c-acts" onclick="event.stopPropagation()"><button class="ghost" onclick="openOrder('${o.id}')">View</button><button class="ghost" onclick="printOrder('${o.id}', this)">Print<span class="long"> Order</span></button></td>`
       : `<td class="num openc"><button class="ghost" onclick="event.stopPropagation();openOrder('${o.id}')">Open</button></td>`}
-    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${!canCsv() ? 'disabled title="Only an Admin can create CSV files"' : noUpload(o) ? `disabled title="${nothingDelivered(o) ? 'Nothing was delivered, so no CSV can be created' : 'Required date has passed'}"` : upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
-    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${pastDone(o) ? `disabled title="${o.direct ? 'Not emailed: CSV only' : 'Required date has passed'}"` : picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
+    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-up="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for an upload CSV" ${!canCsv() ? 'disabled title="Only an Admin can create CSV files"' : noUpload(o) ? `disabled title="${notTransmitted(o) ? 'Transmit this order first' : nothingDelivered(o) ? 'Nothing was delivered, so no CSV can be created' : 'Required date has passed'}"` : upPicked.has(o.id) ? 'checked' : ''}></td>` : ''}
+    ${opts.pick ? `<td class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-pick="${o.id}" aria-label="Select ${esc(orderNo(o.number))} for emailing" ${pastDone(o) ? `disabled title="${o.direct ? 'Not emailed: CSV only' : notTransmitted(o) ? 'Transmit this order first' : 'Required date has passed'}"` : picked.has(o.id) ? 'checked' : ''}></td>` : ''}</tr>`;
 }
 // Receiver: completed orders not yet received.
 // Receiver logins only see orders due by the next delivery day still open for orders (its cut-off not yet passed),
@@ -613,7 +616,7 @@ async function setReceived(id, btn) {
   await reloadOrders(); render(); toast(msg, true);
 }
 function viewInbox() {
-  const os = S.orders.filter(o => o.status === 'submitted').sort((a, b) => (a.submitted_at || '').localeCompare(b.submitted_at || ''));
+  const os = S.orders.filter(inInbox).sort((a, b) => (a.submitted_at || '').localeCompare(b.submitted_at || ''));
   return `<div class="row spread"><div><h1>Inbox</h1><p class="sub">Orders customers have sent that still need processing. Open one to check it and mark it complete.</p></div><button onclick="$('#pofile').click()">Import purchase order</button><input type="file" id="pofile" accept="application/pdf,.pdf" hidden onchange="importPo(this)"></div>
     ${os.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Required</th><th>Sent</th><th>From</th><th class="num lines">Lines</th><th>Status</th><th class="openc"></th></tr></thead><tbody>${os.map(o => orderRow(o, { sent: true, source: true })).join('')}</tbody></table></div>`
       : `<div class="card empty">No orders waiting. New customer orders appear here as soon as they’re sent.</div>`}`;
@@ -773,17 +776,19 @@ async function delPoMatch(kind, i) {
 const finished = o => o.status === 'complete' && !!o.emailed_at && !!o.received_at && !!o.csv_at;
 // Rule: a Complete-tab order whose required date has passed can't be emailed or uploaded again.
 const pastDate = o => !!o.required_date && o.required_date < today();
-const pastDone = o => o.direct || (finished(o) && pastDate(o)); // Email column: direct orders are never emailed
+// Rule: an order is emailed to the supplier or given a CSV only once it has been transmitted (Complete). A Sent order
+// (still in the Inbox) or a draft can't be ticked, so Select all can't send an order no one has checked.
+const notTransmitted = o => !o.direct && o.status !== 'complete';
+const pastDone = o => o.direct || notTransmitted(o) || (finished(o) && pastDate(o)); // Email column: direct orders are never emailed
 const nothingDelivered = o => (o.lines || []).length > 0 && o.lines.every(l => l.undelivered); // Receiver flagged every line Not delivered
-const noUpload = o => nothingDelivered(o) || (o.direct ? !!o.csv_at && pastDate(o) : finished(o) && pastDate(o)); // Upload column: direct orders get their CSV here (Condition 2 folder)
+const noUpload = o => notTransmitted(o) || nothingDelivered(o) || (o.direct ? !!o.csv_at && pastDate(o) : finished(o) && pastDate(o)); // Upload column: direct orders get their CSV here (Condition 2 folder)
 function viewOrders() {
-  // Pending holds every transmitted order until it is Complete, Emailed, Received and has its CSV; then it moves to Complete.
-  // Orders still in the Inbox (sent by a customer, not yet transmitted) stay out of Pending.
-  // Pending holds every order (Sent ones included) until it is Complete, Emailed, Received and has its CSV; then it
-  // moves to Complete. Received holds the Conventional orders customers send (they skip the Inbox); they stay there,
+  // Pending holds every order until it is Complete, Emailed, Received and has its CSV; then it moves to Complete.
+  // Orders still in the Inbox (Sent by a customer, not yet transmitted) stay out of Pending, so no order shows in both.
+  // Received holds the Conventional orders customers send (they skip the Inbox); they stay there,
   // showing CSV once someone has created it with Create upload CSV.
   // Direct orders sit on Received until they are Complete with their CSV saved, then move to Complete.
-  const inTab = (o, f) => o.direct ? f === (o.status === 'complete' && o.csv_at ? 'complete' : 'received') : f === 'pending' ? !finished(o) : f === 'complete' ? finished(o) : f !== 'received' && o.status === f;
+  const inTab = (o, f) => o.direct ? f === (o.status === 'complete' && o.csv_at ? 'complete' : 'received') : f === 'pending' ? !inInbox(o) && !finished(o) : f === 'complete' ? finished(o) : f !== 'received' && o.status === f;
   dropPastDone();
   let os = S.orders.filter(o => inTab(o, listFilter));
   const q = search.trim().toLowerCase();
@@ -1127,7 +1132,7 @@ function summaryHtml() {
     // Already transmitted: Close goes back to Orders untouched; once reopened, Close gives way to Save / Transmit Order.
     // A Received-tab order (imported PO or a customer's Conventional order) is edited in place; saving re-saves its CSV.
     if (d.status === 'complete' && d.direct) btns = `<button onclick="draft=null;go('orders',false)">Close</button><button class="primary" onclick="saveOrder('complete')">Save changes</button>`;
-    else if (d.status === 'complete') btns = `<button onclick="reopenOrder()">Reopen to edit</button><button class="primary" onclick="draft=null;go('orders',false)">Close</button>`;
+    else if (d.status === 'complete') btns = `<button onclick="reopenOrder(this)">Reopen to edit</button><button class="primary" onclick="draft=null;go('orders',false)">Close</button>`;
     else btns = `<button onclick="saveOrder('${d.status === 'submitted' ? 'submitted' : 'draft'}')">${d.status === 'submitted' ? 'Save changes' : 'Save draft'}</button><button class="primary" onclick="saveOrder('complete')">Transmit Order</button>`;
   } else if (d.status === 'draft') btns = `<button onclick="cancelOrder()">Cancel</button><button onclick="saveOrder('draft')">Save draft</button><button class="primary" onclick="saveOrder('submitted')">Send order</button>`;
   else btns = `<button class="primary" onclick="draft=null;go('mine',false)">Close</button>`;
@@ -1248,10 +1253,16 @@ async function saveOrder(status) {
   draft = null; go(isAdmin() ? (status === 'complete' ? 'orders' : view === 'entry' && data.source === 'customer' ? 'inbox' : 'orders') : 'mine', false);
   if ((wasDirect || data.direct) && isAdmin()) autoCsv2();
 }
-async function reopenOrder() {
+// Reopening takes a transmitted order back a step: a customer's order returns to the Inbox (Sent), an SMFW order to
+// Drafts. It stays there until Transmit Order is pressed again, so the button asks to be pressed twice and says so.
+async function reopenOrder(btn) {
   const o = S.orders.find(x => x.id === draft.id); if (!o) return;
-  const status = o.source === 'customer' ? 'submitted' : 'draft';
-  if (await run(sb.from('orders').update({ status, completed_at: null }).eq('id', draft.id), 'Order reopened')) { await reloadOrders(); draft.status = status; render(); }
+  const status = o.source === 'customer' ? 'submitted' : 'draft', where = status === 'submitted' ? 'the Inbox' : 'Drafts';
+  if (btn && !btn.classList.contains('armed')) {
+    btn.classList.add('armed'); btn.textContent = `Press again: it goes back to ${where}`;
+    setTimeout(() => { if (btn.isConnected) { btn.classList.remove('armed'); btn.textContent = 'Reopen to edit'; } }, 4000); return;
+  }
+  if (await run(sb.from('orders').update({ status, completed_at: null }).eq('id', draft.id), `Order ${orderNo(o.number)} reopened. It’s in ${where} until you press Transmit Order again.`)) { await reloadOrders(); draft.status = status; render(); }
 }
 async function deleteOrder(btn) {
   if (!btn.classList.contains('armed')) { btn.classList.add('armed'); btn.textContent = 'Press again to delete'; setTimeout(() => { if (btn.isConnected) { btn.classList.remove('armed'); btn.textContent = 'Delete order'; } }, 4000); return; }
@@ -1933,7 +1944,7 @@ function pickedBySupplier() {
 const sentSuppliers = new Set();
 function dropPastDone() { S.orders.forEach(o => { if (pastDone(o)) picked.delete(o.id); if (noUpload(o)) upPicked.delete(o.id); }); }
 function emailPicked() {
-  dropPastDone(); if (!picked.size) return toast('Those orders’ required date has passed, so they can’t be emailed.');
+  dropPastDone(); if (!picked.size) { render(); return toast('Those orders can’t be emailed: they haven’t been transmitted, or their required date has passed.'); }
   sentSuppliers.clear();
   const { os, groups } = pickedBySupplier();
   const empty = os.filter(o => !(o.lines || []).some(supplierOfLine));
@@ -2148,7 +2159,7 @@ async function uploadCsvs() {
 }
 async function makeUploadCsvs() {
   if (!canCsv()) return toast('Only an Admin can create CSV files.');
-  dropPastDone(); if (!upPicked.size) { render(); return toast('No CSV can be created for those orders: nothing was delivered, or their required date has passed.'); }
+  dropPastDone(); if (!upPicked.size) { render(); return toast('No CSV can be created for those orders: they haven’t been transmitted, nothing was delivered, or their required date has passed.'); }
   // Direct (Received tab) orders go to the Condition 2 folder, everything else to Condition 1.
   const os = S.orders.filter(o => upPicked.has(o.id)).sort((a, b) => a.number - b.number), folders = {}, offline = new Set();
   for (const n of [...new Set(os.map(o => o.direct ? 2 : 1))]) {
